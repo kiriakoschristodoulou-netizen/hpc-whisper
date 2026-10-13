@@ -1,6 +1,6 @@
 // Keeps the receiver on the phone, so it works with no internet and even if
 // this website is gone. Change VERSION whenever a file changes.
-const VERSION = 'whisper-1.0';
+const VERSION = 'whisper-1.0b';
 const FILES = ['./', 'index.html', 'modem.js', 'manifest.json',
   'icons/icon-32.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/maskable-192.png', 'icons/maskable-512.png'];
 self.addEventListener('install', e => {
