@@ -1,4 +1,4 @@
-# Builds the Android app on every change and publishes it, with the Jornada
+# Builds the Android app on every change and publishes it, with the handheld
 # program, as a release that anyone can download.
 name: Build app
 
@@ -33,21 +33,21 @@ jobs:
       - name: Collect the files
         run: |
           mkdir out
-          cp android/app/build/outputs/apk/release/app-release.apk out/J720-Whisper.apk
-          cp jornada/J720-Whisper-10.zip out/
+          cp android/app/build/outputs/apk/release/app-release.apk out/HPC-Whisper.apk
+          cp handheld/HPC-Whisper-10.zip out/
 
       - uses: actions/upload-artifact@v4
         with:
-          name: J720-Whisper
+          name: HPC-Whisper
           path: out/*
 
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: J720 Whisper (build ${{ github.run_number }})
+          name: HPC Whisper (build ${{ github.run_number }})
           make_latest: 'true'
           body: |
-            **J720-Whisper.apk** – the receiver as an Android app (works with no internet).
-            **J720-Whisper-10.zip** – the program for the HP Jornada 720 (copy the folder inside to the Jornada).
-            The receiver also runs in Chrome at https://kiriakoschristodoulou-netizen.github.io/j720-whisper/
+            **HPC-Whisper.apk** – the receiver as an Android app (works with no internet).
+            **HPC-Whisper-10.zip** – the program for Windows CE handheld PCs with an ARM processor, such as the HP Jornada 720 (copy the folder inside to the handheld).
+            The receiver also runs in Chrome at https://kiriakoschristodoulou-netizen.github.io/hpc-whisper/
           files: out/*

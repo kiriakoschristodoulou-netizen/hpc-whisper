@@ -1,5 +1,5 @@
 unit wmodem;
-{ J720 Whisper sound format, sending side. Must match web/modem.js.
+{ HPC Whisper sound format, sending side. Must match web/modem.js.
 
   Tones on a 100 Hz grid; a band is 16 neighbouring tones starting at
   BAND_HZ[b]. One tone per symbol = 4 bits. Frame: preamble (6 symbols),

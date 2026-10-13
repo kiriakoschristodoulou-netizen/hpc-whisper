@@ -1,7 +1,7 @@
-# The J720 Whisper sound format
+# The HPC Whisper sound format
 
 Everything needed to write a sender or a receiver for any device. The reference
-code is `jornada/wmodem.pas` (sender, whole numbers only) and `modem.js`
+code is `handheld/wmodem.pas` (sender, whole numbers only) and `modem.js`
 (sender for tests, and the receiver).
 
 ## Tones
@@ -16,7 +16,7 @@ code is `jornada/wmodem.pas` (sender, whole numbers only) and `modem.js`
 - The tone is a sine wave whose phase runs on without a jump from one symbol
   to the next. The frame fades in and out over 5 ms. Between frames there
   is at least 60 ms of silence.
-- The Jornada plays at 44,100 samples per second; the receiver may listen at
+- The handheld plays at 44,100 samples per second; the receiver may listen at
   any rate of 44,100 or more.
 
 ## Frame

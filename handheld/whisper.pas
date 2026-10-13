@@ -1,9 +1,10 @@
 program whisper;
-{ J720 Whisper: type on the Jornada, and the text appears on your phone,
+{ HPC Whisper: type on a Windows CE handheld PC (made on an HP Jornada 720),
+  and the text appears on your phone,
   carried by tones too high to hear (20 to 21.5 kHz by default).
 
   The phone listens with the receiver page (see README). The page finds the
-  band and speed by itself, so only the Jornada has settings.
+  band and speed by itself, so only the handheld has settings.
 
   Sound is made in a second thread as a continuous stream (silence between
   messages), so there is no click when a message starts. What you type goes
@@ -23,8 +24,8 @@ uses Windows, wmodem;
 const
   VERSION = '1.0';
   CREATOR = 'Kyriakos Christodoulou';
-  CLSNAME: UnicodeString = 'J720Whisper';
-  APPNAME: UnicodeString = 'J720 Whisper';
+  CLSNAME: UnicodeString = 'HPCWhisper';
+  APPNAME: UnicodeString = 'HPC Whisper';
   CFGNAME: UnicodeString = 'whisper.cfg';
   WM_UPDATE = WM_APP + 1;
 
@@ -516,7 +517,7 @@ begin
     y := y + MonoH;
   end;
   if DocN = 0 then
-    Txt(dc, 'Start typing. Open the receiver page on your phone, tap Listen, and hold it near the Jornada.',
+    Txt(dc, 'Start typing. Open the receiver page on your phone, tap Listen, and hold it near this handheld.',
         MkRect(TEXT_X + 12, TEXT_Y, CW - TEXT_X, TEXT_Y + 40), fNorm, COL_GREY, DT_LEFT or DT_WORDBREAK);
 end;
 

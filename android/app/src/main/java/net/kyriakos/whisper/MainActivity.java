@@ -20,7 +20,7 @@ import android.webkit.WebViewClient;
 
 import androidx.webkit.WebViewAssetLoader;
 
-/** J720 Whisper for Android: the receiver page, kept inside the app, so it
+/** HPC Whisper for Android: the receiver page, kept inside the app, so it
  *  needs no website and no internet. Created by Kyriakos Christodoulou. */
 public class MainActivity extends Activity {
     private static final int ASK_MIC = 1;
@@ -102,7 +102,7 @@ public class MainActivity extends Activity {
         public void copy(final String text) {
             runOnUiThread(() -> {
                 ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-                if (cm != null) cm.setPrimaryClip(ClipData.newPlainText("J720 Whisper", text));
+                if (cm != null) cm.setPrimaryClip(ClipData.newPlainText("HPC Whisper", text));
             });
         }
 

@@ -1,44 +1,61 @@
-![J720 Whisper](docs/banner.png)
+![HPC Whisper](docs/banner.png)
 
-# J720 Whisper
+# HPC Whisper
 
-Type on an HP Jornada 720 and the text appears on your phone, carried by tones
-too high to hear (18 to 21.5 kHz). No cable, no network, no extra hardware.
+Type on a Windows CE handheld PC and the text appears on your phone, carried by
+tones too high to hear (18 to 21.5 kHz). No cable, no network, no extra hardware.
 
-Created by Kyriakos Christodoulou.
+Made on, and for, the HP Jornada 720. Created by Kyriakos Christodoulou.
 
 ## Get it
 
-- **Phone, in Chrome:** <https://kiriakoschristodoulou-netizen.github.io/j720-whisper/>
+- **Phone, in Chrome:** <https://kiriakoschristodoulou-netizen.github.io/hpc-whisper/>
   Tap **Listen** and allow the microphone. Add it to the home screen: after the
   first visit it works with no internet.
-- **Phone, as an Android app:** `J720-Whisper.apk` from the
+- **Phone, as an Android app:** `HPC-Whisper.apk` from the
   [latest release](../../releases/latest). It needs no website at all.
-- **Jornada:** `J720-Whisper-10.zip` from the same release. Copy the folder
-  inside it to the Jornada and run `whisper.exe`.
+- **Handheld:** `HPC-Whisper-10.zip` from the same release. Copy the folder
+  inside it to the handheld and run `whisper.exe`.
+
+## Which handhelds
+
+The program is built for **ARM processors** running **Windows CE 3.0 or later**
+(Handheld PC 2000, and Pocket PC 2000 onwards).
+
+| | |
+| --- | --- |
+| Tested | HP Jornada 720 |
+| Should work | HP Jornada 728, NEC MobilePro 900/900c, other ARM handhelds with Windows CE 3.0+; ARM Pocket PCs (the layout is made for wide screens, so it is cramped in portrait) |
+| Will not run | MIPS and SH3 machines: HP Jornada 680/690, NEC MobilePro 770/780/800, Casio Cassiopeia and others. The sound format is open, so a version for them can be written |
+| Unknown | Handheld PC Pro (Windows CE 2.11) on ARM |
+
+Every machine's speaker is different: if the phone reads nothing, try a lower
+band, Slow, or more volume; if you can hear the tones, try a higher band or less
+volume. Please report what works on yours.
 
 ## Use
 
-Run the program on the Jornada and type. The phone follows a second or two
-behind; Backspace and Enter work too. On the Jornada:
+Run the program on the handheld and type. The phone follows a second or two
+behind; Backspace and Enter work too. On the handheld:
 
 | Key | Setting |
 | --- | --- |
 | Ctrl+B | Band: 18.0–19.5 up to 20.0–21.5 kHz (default 20.0–21.5) |
 | Ctrl+P | Speed: Slow, Normal, Fast (about 5, 8, 12 characters a second) |
-| Ctrl+V | Volume: 10 to 100 % (default 50 %; full volume distorts into audible sound) |
+| Ctrl+V | Volume: 10 to 100 % (default 50 %; full volume can distort into audible sound) |
 | Ctrl+T | Types a test sentence |
-| Ctrl+L | Clears the Jornada's screen |
+| Ctrl+L | Clears the handheld's screen |
 | Ctrl+Q | Exit |
 
 The phone finds the band and speed by itself. Keep it within about a metre.
 
 ## Host the receiver yourself
 
-The receiver is three files and an icon folder: `index.html`, `modem.js`,
-`manifest.json`, `sw.js` and `icons/`. Put them on any web space that serves
-**https** (GitHub Pages, Netlify, Cloudflare Pages, your own site); the
-microphone works only over https. Nothing runs on the server.
+The receiver is `index.html`, `modem.js`, `manifest.json`, `sw.js` and the
+`icons/` folder. Put them on any web space that serves **https** (GitHub Pages,
+Netlify, Cloudflare Pages, your own site); the microphone works only over https.
+Nothing runs on the server. The same files are in the handheld download, under
+`source/web`.
 
 ## How it works
 
@@ -52,7 +69,7 @@ any device, is in [docs/FORMAT.md](docs/FORMAT.md).
 | --- | --- |
 | `/` | the receiver page (served by GitHub Pages) |
 | `android/` | the Android app: the same page inside the app |
-| `jornada/` | the Jornada program (Free Pascal for Windows CE) and its download |
+| `handheld/` | the handheld program (Free Pascal for Windows CE, ARM) and its download |
 | `docs/` | the sound format and the artwork |
 
 The Android app is built by GitHub on every change (see `.github/workflows`).

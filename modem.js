@@ -1,4 +1,4 @@
-/* J720 Whisper sound format, shared by the receiver page and the tests.
+/* HPC Whisper sound format, shared by the receiver page and the tests.
 
    Tones: a grid of 100 Hz steps from 18.0 to 21.5 kHz. A band is 16 neighbouring
    grid tones (1.5 kHz wide) starting at 18.0, 18.5, 19.0, 19.5 or 20.0 kHz.

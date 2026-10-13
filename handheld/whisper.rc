@@ -7,10 +7,10 @@ BEGIN
   BEGIN
     BLOCK "040904B0"
     BEGIN
-      VALUE "CompanyName", "Jornada 720 project\0"
-      VALUE "FileDescription", "J720 Whisper\0"
+      VALUE "CompanyName", "Kyriakos Christodoulou\0"
+      VALUE "FileDescription", "HPC Whisper\0"
       VALUE "FileVersion", "1.0\0"
-      VALUE "ProductName", "J720 Whisper\0"
+      VALUE "ProductName", "HPC Whisper\0"
       VALUE "OriginalFilename", "whisper.exe\0"
     END
   END

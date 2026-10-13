@@ -1,7 +1,7 @@
 {
-  "name": "J720 Whisper",
+  "name": "HPC Whisper",
   "short_name": "Whisper",
-  "description": "Receives what you type on an HP Jornada 720, sent as tones too high to hear.",
+  "description": "Receives what you type on a Windows CE handheld PC, sent as tones too high to hear.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
