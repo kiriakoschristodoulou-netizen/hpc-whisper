@@ -83,8 +83,18 @@ frames carry at most 22 bytes: shorter frames get through more often.
   any window's strength is a difference of two sums.
 - Look for the preamble in every band and speed, all the time, even while
   frames are being read: in each of its eight windows, the expected tone
-  should be the strongest of the band's 16. Use the middle of each symbol
+  should be the strongest of the band's 16, or a close second (see ghosts). Use the middle of each symbol
   (from 25 % to 90 % of it), so echoes of the previous symbol do not count.
+- **Ghosts.** Some handhelds' sound chips convert the sound to their own
+  rate crudely and add a "ghost" of every tone at a fixed distance. The
+  HP Jornada 720 adds one 900 Hz lower: about half as strong as the tone at
+  20 kHz, up to five times stronger at 21.5 kHz, where the speaker is weak.
+  Since the preamble's tones are known, measure the ghosts there: for each
+  distance, how strong the sound is relative to the tone, at each of the
+  preamble's tones (filled in between for the others). Keep only ghosts that
+  show every time and stand far above the background. Then read each symbol
+  by comparing every candidate's expected pattern (the tone and its ghosts)
+  with what was heard, rather than taking the loudest tone.
 - Try the frame at each possible size *B*, smallest first, as soon as that
   much has been heard. A block that does not check out is tried again with
   its least certain symbols (the weakest share of their band's power) marked

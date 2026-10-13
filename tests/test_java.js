@@ -3,10 +3,12 @@ const W = require('../modem.js'), C = require('./common.js'), fs = require('fs')
 const TEXT = 'Typing on the Jornada, read by the keyboard: does Java agree with JavaScript? Yes, it should.';
 const out = path.join(process.env.TMPDIR || '/tmp', 'whisper-java.raw');
 let pass = 0, tot = 0;
-for (const [name, b, s, o] of [['clean', 4, 1, {}], ['fast + noise', 2, 2, { noise: 0.02, gain: 0.1 }], ['dropouts', 4, 1, { drop: 0.12 }], ['bursts', 3, 0, { burst: 0.1 }]]) {
+for (const [name, b, s, o] of [['clean', 4, 1, {}], ['fast + noise', 2, 2, { noise: 0.02, gain: 0.1 }], ['dropouts', 4, 1, { drop: 0.12 }], ['bursts', 3, 0, { burst: 0.1 }],
+                               ['ghosts 900 Hz', 4, 1, { chip: 43200 }], ['ghosts 2100 Hz, fast', 1, 2, { chip: 42000, noise: 0.01 }]]) {
   C.setSeed(7);
   const ev = C.script(TEXT);
-  const z = C.spoil(C.to48k(C.runSender(ev, b, s, 50).x), o);
+  const sx = C.runSender(ev, b, s, 50).x;
+  const z = C.spoil(C.to48k(o.chip ? C.chip(sx, o.chip) : sx), o);
   const buf = Buffer.alloc(z.length * 2);
   for (let i = 0; i < z.length; i++) buf.writeInt16LE(Math.max(-32767, Math.min(32767, Math.round(z[i] * 32767))), 2 * i);
   fs.writeFileSync(out, buf);

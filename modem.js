@@ -225,6 +225,90 @@
       return { s: best, share: sum > 0 ? bv / sum : 0, p: bv };
     }
 
+    // is tone want the strongest of the band, or a close second? share: its part of the band's power
+    ranked(band, a, b, want) {
+      let best = -1, second = -1, sum = 0;
+      const v = new Array(16);
+      for (let i = 0; i < 16; i++) { v[i] = this.pow(band + i, a, b); sum += v[i]; }
+      for (let i = 0; i < 16; i++) { if (best < 0 || v[i] > v[best]) { second = best; best = i; } else if (second < 0 || v[i] > v[second]) second = i; }
+      const share = sum > 0 ? v[want] / sum : 0;
+      const ok = (want === best && share >= 0.3) || (want === second && v[want] >= 0.2 * v[best] && (v[want] + v[best]) / sum >= 0.6);
+      return { ok, share: ok ? Math.max(share, 0.5) : 0 };
+    }
+
+    /* Some handhelds' sound chips add a "ghost" of every tone at a fixed distance
+       (the Jornada 720: 900 Hz lower, sometimes louder than the tone itself).
+       The preamble's tones are known, so measure the ghosts there: for each
+       distance d (in grid steps), how strong is the sound d steps away from the
+       tone, typically. Distances that are just the step between neighbouring
+       preamble tones are left out (that could be echo of the previous one). */
+    learnGhosts(F) {
+      const skip = new Set([0, 1, -1, 2, -2, 15, -15, 4, -4, 7, -7, 11, -11]);
+      const found = [];
+      for (let d = -35; d <= 35; d++) {
+        if (skip.has(d)) continue;
+        const byTone = {}, all = [];
+        for (let k = 0; k < PREAMBLE.length; k++) {
+          const v = PREAMBLE[k], g = F.band + v, t = g + d;
+          if (t < 0 || t >= GRID_N) continue;
+          const [a, b] = this.win(F.pstart, F.D, k);
+          const pg = this.pow(g, a, b);
+          if (!(pg > 0)) continue;
+          const r = this.pow(t, a, b) / pg;
+          (byTone[v] = byTone[v] || []).push(r);
+          all.push(r);
+        }
+        if (all.length < 3) continue;
+        all.sort((x, y) => x - y);
+        found.push({ d, med: all[all.length >> 1], low: all[(all.length - 1) >> 2], byTone });
+      }
+      if (!found.length) { F.ghosts = []; return; }
+      const meds = found.map(x => x.med).sort((x, y) => x - y);
+      const floor = meds[meds.length >> 1];
+      // a ghost is there every time (even its weakest showing stands out) and is clearly
+      // stronger than the background; weak ones do no harm, so at most the three strongest
+      const keep = found.filter(x => x.med >= Math.max(0.05, 8 * floor) && x.low >= Math.max(0.02, 3 * floor))
+                        .sort((x, y) => y.med - x.med).slice(0, 3);
+      // a ghost's strength changes along the band (the speaker is weaker at the top):
+      // measured at the preamble's tones, filled in between
+      F.ghosts = keep.map(x => {
+        const pts = Object.keys(x.byTone).map(Number).sort((p, q) => p - q)
+          .map(v => [v, Math.log(Math.max(1e-3, Math.min(8, x.byTone[v].reduce((s, r) => s + r, 0) / x.byTone[v].length)))]);
+        const w = new Array(16);
+        for (let v = 0; v < 16; v++) {
+          let lo = pts[0], hi = pts[pts.length - 1];
+          for (const p of pts) { if (p[0] <= v) lo = p; if (p[0] >= v && hi[0] >= p[0]) hi = p; }
+          if (pts.length === 1 || hi[0] === lo[0]) w[v] = Math.exp(lo[1]);
+          else w[v] = Math.exp(lo[1] + (hi[1] - lo[1]) * (v - lo[0]) / (hi[0] - lo[0]));
+          if (v < pts[0][0]) w[v] = Math.exp(pts[0][1]);
+          if (v > pts[pts.length - 1][0]) w[v] = Math.exp(pts[pts.length - 1][1]);
+        }
+        return [x.d, w];
+      });
+    }
+
+    // which of the band's 16 tones was sent: each candidate's expected pattern (the tone
+    // and its ghosts) is compared with what was heard, and the best match wins
+    symG(F, a, b) {
+      if (!F.ghosts || !F.ghosts.length) return this.sym(F.band, a, b);
+      const A = new Array(GRID_N);
+      for (let t = 0; t < GRID_N; t++) A[t] = Math.sqrt(this.pow(t, a, b));
+      let best = -1, bv = -1, sum = 0;
+      for (let v = 0; v < 16; v++) {
+        const g = F.band + v;
+        let dot = A[g], norm = 1;
+        for (const [d, w] of F.ghosts) {
+          const t = g + d, wv = w[v], sw = Math.sqrt(wv);
+          if (t >= 0 && t < GRID_N) { dot += sw * A[t]; norm += wv; }
+        }
+        const sc = dot / Math.sqrt(norm);
+        const e = sc * sc;
+        sum += e;
+        if (e > bv) { bv = e; best = v; }
+      }
+      return { s: best, share: sum > 0 ? bv / sum : 0, p: bv };
+    }
+
     win(start, D, k) {
       const a = start + Math.round(k * D + D * 0.25), b = start + Math.round(k * D + D * 0.9);
       return [a, Math.max(b, a + 1)];
@@ -241,12 +325,13 @@
           const start = now - Math.round(PREAMBLE.length * D);
           let hit = null;
           if (start > 1) {
-            // a burst of noise may drown one or two of the preamble's tones: 6 of 8 will do
+            // a burst of noise may drown one or two of the preamble's tones: 6 of 8 will do.
+            // The expected tone may also come second, behind a "ghost" of itself (see learnGhosts)
             let sum = 0, miss = 0;
             for (let k = 0; k < PREAMBLE.length && miss <= 2; k++) {
               const [a, b] = this.win(start, D, k);
-              const r = this.sym(band, a, b);
-              if (r.s !== PREAMBLE[k] || r.share < 0.3) { miss++; continue; }
+              const r = this.ranked(band, a, b, PREAMBLE[k]);
+              if (!r.ok) { miss++; continue; }
               sum += r.share;
             }
             if (miss <= 2 && sum >= 0.45 * (PREAMBLE.length - miss)) hit = { score: sum, full: miss === 0, band, bandHz: BANDS[bi], si, D, start };
@@ -274,7 +359,7 @@
     // symbol k after the preamble (0..14 header, then body), o blocks later from symbol p on
     symAt(F, k, p, o) {
       const [a, b] = this.win(F.start + (k >= p ? o : 0), F.D, k);
-      return this.sym(F.band, a, b);
+      return this.symG(F, a, b);
     }
 
     // D: a block that does not check out is tried again with its least certain symbols set aside
@@ -330,6 +415,7 @@
           F.B = 1;
           // how loud the preamble was: the yardstick for "the frame has ended"
           F.ref = this.bandPow(F.band, F.pstart, F.start);
+          this.learnGhosts(F);
         }
         let res = null;
         while (F.B <= maxB) {

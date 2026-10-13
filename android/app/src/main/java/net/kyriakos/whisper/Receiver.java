@@ -157,6 +157,8 @@ public final class Receiver {
     private static final class Cand { double score; boolean full; int band, bandHz, si; double D; int start, age; }
     private static final class Pending {
         int band, bandHz, si, start, pstart, B; double D, score, ref; boolean full;
+        int[] ghostD = new int[0];          // ghost distances (grid steps) ...
+        double[][] ghostW = new double[0][];  // ... and their strength for each of the 16 tones
     }
     private final Map<Integer, Cand> cands = new HashMap<>();
     private final List<Pending> pending = new ArrayList<>();
@@ -215,6 +217,98 @@ public final class Receiver {
         symS = best; symShare = sum > 0 ? bv / sum : 0; symP = bv;
     }
 
+    private final double[] rv = new double[16];
+
+    /** The expected tone's share of the band if it is the strongest, or a close second
+     *  (behind a ghost of itself); -1 if not. */
+    private double ranked(int band, int a, int b, int want) {
+        int best = -1, second = -1; double sum = 0;
+        for (int i = 0; i < 16; i++) { rv[i] = pow(band + i, a, b); sum += rv[i]; }
+        for (int i = 0; i < 16; i++) {
+            if (best < 0 || rv[i] > rv[best]) { second = best; best = i; }
+            else if (second < 0 || rv[i] > rv[second]) second = i;
+        }
+        double share = sum > 0 ? rv[want] / sum : 0;
+        boolean ok = (want == best && share >= 0.3)
+                || (want == second && rv[want] >= 0.2 * rv[best] && (rv[want] + rv[best]) / sum >= 0.6);
+        return ok ? Math.max(share, 0.5) : -1;
+    }
+
+    /** Some sound chips add a "ghost" of every tone at a fixed distance (the Jornada 720:
+     *  900 Hz lower, at the top of the band louder than the tone). Measured on the
+     *  preamble's known tones; see modem.js learnGhosts. */
+    private void learnGhosts(Pending F) {
+        java.util.Set<Integer> skip = new java.util.HashSet<>(Arrays.asList(0, 1, -1, 2, -2, 15, -15, 4, -4, 7, -7, 11, -11));
+        List<Object[]> found = new ArrayList<>();      // {d, med, low, sum[16], count[16]}
+        for (int d = -35; d <= 35; d++) {
+            if (skip.contains(d)) continue;
+            double[] sumT = new double[16]; int[] cntT = new int[16];
+            List<Double> all = new ArrayList<>();
+            for (int k = 0; k < PREAMBLE.length; k++) {
+                int v = PREAMBLE[k], g = F.band + v, t = g + d;
+                if (t < 0 || t >= GRID_N) continue;
+                int a = winA(F.pstart, F.D, k), b = winB(F.pstart, F.D, k);
+                double pg = pow(g, a, b);
+                if (!(pg > 0)) continue;
+                double r = pow(t, a, b) / pg;
+                sumT[v] += r; cntT[v]++;
+                all.add(r);
+            }
+            if (all.size() < 3) continue;
+            java.util.Collections.sort(all);
+            found.add(new Object[]{d, all.get(all.size() >> 1), all.get((all.size() - 1) >> 2), sumT, cntT});
+        }
+        if (found.isEmpty()) { F.ghostD = new int[0]; F.ghostW = new double[0][]; return; }
+        double[] meds = new double[found.size()];
+        for (int i = 0; i < meds.length; i++) meds[i] = (Double) found.get(i)[1];
+        Arrays.sort(meds);
+        double floor = meds[meds.length >> 1];
+        List<Object[]> keep = new ArrayList<>();
+        for (Object[] x : found)
+            if ((Double) x[1] >= Math.max(0.05, 8 * floor) && (Double) x[2] >= Math.max(0.02, 3 * floor)) keep.add(x);
+        keep.sort((x, y) -> Double.compare((Double) y[1], (Double) x[1]));
+        int nk = Math.min(3, keep.size());
+        F.ghostD = new int[nk]; F.ghostW = new double[nk][];
+        for (int i = 0; i < nk; i++) {
+            Object[] x = keep.get(i);
+            double[] sumT = (double[]) x[3]; int[] cntT = (int[]) x[4];
+            List<double[]> pts = new ArrayList<>();
+            for (int v = 0; v < 16; v++)
+                if (cntT[v] > 0) pts.add(new double[]{v, Math.log(Math.max(1e-3, Math.min(8, sumT[v] / cntT[v])))});
+            double[] w = new double[16];
+            for (int v = 0; v < 16; v++) {
+                double[] lo = pts.get(0), hi = pts.get(pts.size() - 1);
+                for (double[] p : pts) { if (p[0] <= v) lo = p; if (p[0] >= v && hi[0] >= p[0]) hi = p; }
+                if (pts.size() == 1 || hi[0] == lo[0]) w[v] = Math.exp(lo[1]);
+                else w[v] = Math.exp(lo[1] + (hi[1] - lo[1]) * (v - lo[0]) / (hi[0] - lo[0]));
+                if (v < pts.get(0)[0]) w[v] = Math.exp(pts.get(0)[1]);
+                if (v > pts.get(pts.size() - 1)[0]) w[v] = Math.exp(pts.get(pts.size() - 1)[1]);
+            }
+            F.ghostD[i] = (Integer) x[0]; F.ghostW[i] = w;
+        }
+    }
+
+    private final double[] amp = new double[GRID_N];
+
+    /** Which of the band's 16 tones was sent: each candidate's pattern (tone and ghosts) against what was heard. */
+    private void symG(Pending F, int a, int b) {
+        if (F.ghostD.length == 0) { sym(F.band, a, b); return; }
+        for (int t = 0; t < GRID_N; t++) amp[t] = Math.sqrt(pow(t, a, b));
+        int best = -1; double bv = -1, sum = 0;
+        for (int v = 0; v < 16; v++) {
+            int g = F.band + v;
+            double dot = amp[g], norm = 1;
+            for (int i = 0; i < F.ghostD.length; i++) {
+                int t = g + F.ghostD[i]; double wv = F.ghostW[i][v];
+                if (t >= 0 && t < GRID_N) { dot += Math.sqrt(wv) * amp[t]; norm += wv; }
+            }
+            double sc = dot / Math.sqrt(norm), e = sc * sc;
+            sum += e;
+            if (e > bv) { bv = e; best = v; }
+        }
+        symS = best; symShare = sum > 0 ? bv / sum : 0; symP = bv;
+    }
+
     private static int winA(int start, double D, int k) { return start + (int) Math.round(k * D + D * 0.25); }
     private static int winB(int start, double D, int k) {
         int a = winA(start, D, k), b = start + (int) Math.round(k * D + D * 0.9);
@@ -233,9 +327,9 @@ public final class Receiver {
                 if (start > 1) {
                     double sum = 0; int miss = 0;
                     for (int k = 0; k < PREAMBLE.length && miss <= 2; k++) {
-                        sym(band, winA(start, D, k), winB(start, D, k));
-                        if (symS != PREAMBLE[k] || symShare < 0.3) { miss++; continue; }
-                        sum += symShare;
+                        double sh = ranked(band, winA(start, D, k), winB(start, D, k), PREAMBLE[k]);
+                        if (sh < 0) { miss++; continue; }
+                        sum += sh;
                     }
                     if (miss <= 2 && sum >= 0.45 * (PREAMBLE.length - miss)) {
                         hit = new Cand();
@@ -262,6 +356,7 @@ public final class Receiver {
     private static void lockFrom(Cand c, Pending p) {
         p.band = c.band; p.bandHz = c.bandHz; p.si = c.si; p.D = c.D; p.score = c.score; p.full = c.full;
         p.start = c.start + (int) Math.round(PREAMBLE.length * c.D); p.pstart = c.start; p.B = 0;
+        p.ghostD = new int[0]; p.ghostW = new double[0][];
     }
 
     private RS decodeBlock(int[] w, double[] conf, boolean light) {
@@ -285,7 +380,7 @@ public final class Receiver {
         double[][] confs = new double[K][15];
         for (int t = 0; t < K * 15; t++) {
             int st = F.start + (t >= p ? o : 0);
-            sym(F.band, winA(st, F.D, t), winB(st, F.D, t));
+            symG(F, winA(st, F.D, t), winB(st, F.D, t));
             words[t % K][t / K] = symS; confs[t % K][t / K] = symShare;
         }
         RS hr = decodeBlock(words[0], confs[0], light);
@@ -327,7 +422,7 @@ public final class Receiver {
         int now = n, maxB = bodyBlocks(MAXLEN);
         for (int i = 0; i < pending.size(); i++) {
             Pending F = pending.get(i);
-            if (F.B == 0) { F.B = 1; F.ref = bandPow(F.band, F.pstart, F.start); }
+            if (F.B == 0) { F.B = 1; F.ref = bandPow(F.band, F.pstart, F.start); learnGhosts(F); }
             Frame res = null;
             while (F.B <= maxB) {
                 int e = winB(F.start, F.D, (F.B + 1) * 15 - 1);

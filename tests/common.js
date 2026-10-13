@@ -29,6 +29,20 @@ function runSender(ev, band, speed, vol) {
   for (let i = 0; i < x.length; i++) x[i] = b.readInt16LE(2 * i) / 32768;
   return { x, info: out.trim() };
 }
+// a handheld sound chip that really runs at another rate, converted crudely (linear
+// interpolation, as on the Jornada 720): every tone gets a ghost at (44100 - native) Hz lower
+function chip(x, native) {
+  const n = Math.floor(x.length * native / 44100), y = new Float32Array(n);
+  for (let i = 0; i < n; i++) { const t = i * 44100 / native, k = Math.floor(t), f = t - k; y[i] = (x[k] || 0) * (1 - f) + (x[k + 1] || 0) * f; }
+  // ... and plays it at its own rate: hand back 44100-rate samples of that sound (properly resampled)
+  const m = Math.floor(n * 44100 / native), z = new Float32Array(m), H = 12;
+  for (let i = 0; i < m; i++) {
+    const t = i * native / 44100, c = Math.floor(t); let s = 0;
+    for (let k = c - H + 1; k <= c + H; k++) { if (k < 0 || k >= n) continue; const d = t - k, w = 0.5 + 0.5 * Math.cos(Math.PI * d / H); s += y[k] * (d === 0 ? 1 : Math.sin(Math.PI * d) / (Math.PI * d)) * w; }
+    z[i] = s;
+  }
+  return z;
+}
 function to48k(x) {
   const n = Math.floor(x.length * 48000 / 44100), y = new Float32Array(n);
   for (let i = 0; i < n; i++) { const t = i * 44100 / 48000, k = Math.floor(t), f = t - k; y[i] = (x[k] || 0) * (1 - f) + (x[k + 1] || 0) * f; }
@@ -50,4 +64,4 @@ function spoil(y, o) {
   }
   return z;
 }
-module.exports = { rnd, setSeed, script, finalText, runSender, to48k, spoil };
+module.exports = { rnd, setSeed, script, finalText, runSender, chip, to48k, spoil };

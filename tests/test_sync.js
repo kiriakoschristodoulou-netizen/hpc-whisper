@@ -9,7 +9,7 @@ function run(name, band, speed, spoilOpts, seed) {
   const ev = C.script(TEXT);
   const want = C.finalText(ev);
   const { x, info } = C.runSender(ev, band, speed, 50);
-  const z = C.spoil(C.to48k(x), spoilOpts);
+  const z = C.spoil(C.to48k(spoilOpts.chip ? C.chip(x, spoilOpts.chip) : x), spoilOpts);
   const m = new W.Mirror(); let frames = 0;
   const rx = new W.Receiver(48000, { onFrame: f => { frames++; m.apply(f); } });
   for (let i = 0; i < z.length; i += 2048) rx.push(z.subarray(i, i + 2048));
@@ -30,6 +30,11 @@ const cases = [
   ['dropouts 30%', 4, 1, { drop: 0.30 }],
   ['noise bursts', 4, 1, { burst: 0.15 }],
   ['dropouts + bursts + hum, fast', 4, 2, { drop: 0.15, burst: 0.1, hum: 0.3 }],
+  ['ghosts 900 Hz (Jornada 720)', 4, 1, { chip: 43200 }],
+  ['ghosts 900 Hz, fast, noise', 4, 2, { chip: 43200, noise: 0.02, gain: 0.1 }],
+  ['ghosts 900 Hz, band 18.0, slow', 0, 0, { chip: 43200 }],
+  ['ghosts 2100 Hz (another chip)', 4, 1, { chip: 42000 }],
+  ['ghosts 600 Hz + bursts', 2, 1, { chip: 43500, burst: 0.1 }],
 ];
 for (const [n, b, s, o] of cases) for (const seed of [1, 2]) {
   tot++;

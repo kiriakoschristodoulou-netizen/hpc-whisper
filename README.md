@@ -77,7 +77,9 @@ Nothing runs on the server. The same files are in the handheld download, under
 document ("from offset o it reads ..."), protected by interleaved Reed-Solomon
 blocks (weak tones are set aside and rebuilt) and a CRC-16. The phone listens
 with its unprocessed microphone where the phone has one, with both microphones
-where it can. The full description, enough to write a sender or receiver for
+where it can, and learns each handheld's sound quirks from the start of every
+frame (the Jornada 720's sound chip adds a "ghost" of every tone 900 Hz lower,
+sometimes louder than the tone itself). The full description, enough to write a sender or receiver for
 any device, is in [docs/FORMAT.md](docs/FORMAT.md).
 
 ## Files
