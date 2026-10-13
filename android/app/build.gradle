@@ -11,7 +11,7 @@ android {
         minSdk 24
         targetSdk 34
         versionCode Integer.parseInt(System.getenv('BUILD_NUMBER') ?: '1')
-        versionName '1.0'
+        versionName '1.1'
     }
 
     // The key is kept in the repository on purpose: this is a hobby app, and a
@@ -38,20 +38,8 @@ android {
         abortOnError false
         checkReleaseBuilds false
     }
-    sourceSets {
-        main { assets.srcDirs += "$buildDir/generated/www-assets" }
-    }
 }
-
-// the receiver page itself, copied in from the top of the repository
-def copyWww = tasks.register('copyWww', Copy) {
-    from(rootProject.file('..')) {
-        include 'index.html', 'modem.js', 'manifest.json', 'icons/**'
-    }
-    into "$buildDir/generated/www-assets/www"
-}
-preBuild.dependsOn copyWww
 
 dependencies {
-    implementation 'androidx.webkit:webkit:1.11.0'
+    implementation 'androidx.core:core:1.13.1'
 }

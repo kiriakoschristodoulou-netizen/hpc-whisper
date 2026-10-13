@@ -11,6 +11,29 @@ permissions:
   contents: write
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Free Pascal (for the handheld's sender)
+        run: sudo apt-get update -q && sudo apt-get install -y -q fpc
+      - name: Sender, page receiver and keyboard receiver, checked against each other
+        working-directory: tests
+        run: |
+          fpc -O2 -Fu../handheld -Fi../handheld -FUlinux wmsim.pas
+          mkdir -p java/classes
+          javac -d java/classes ../android/app/src/main/java/net/kyriakos/whisper/Receiver.java ../android/app/src/main/java/net/kyriakos/whisper/Mirror.java java/Decode.java
+          node test_rs.js
+          node test_frames.js
+          node test_gap.js
+          node test_noise.js
+          node test_java.js
+          node test_sync.js
+
   build:
     runs-on: ubuntu-latest
     steps:
@@ -34,7 +57,7 @@ jobs:
         run: |
           mkdir out
           cp android/app/build/outputs/apk/release/app-release.apk out/HPC-Whisper.apk
-          cp handheld/HPC-Whisper-10.zip out/
+          cp handheld/HPC-Whisper-11.zip out/
 
       - uses: actions/upload-artifact@v4
         with:
@@ -47,7 +70,7 @@ jobs:
           name: HPC Whisper (build ${{ github.run_number }})
           make_latest: 'true'
           body: |
-            **HPC-Whisper.apk** – the receiver as an Android app (works with no internet).
-            **HPC-Whisper-10.zip** – the program for Windows CE handheld PCs with an ARM processor, such as the HP Jornada 720 (copy the folder inside to the handheld).
-            The receiver also runs in Chrome at https://kiriakoschristodoulou-netizen.github.io/hpc-whisper/
+            **HPC-Whisper.apk** – the HPC Whisper keyboard for Android: type on the handheld straight into any app.
+            **HPC-Whisper-11.zip** – the program for Windows CE handheld PCs with an ARM processor, such as the HP Jornada 720 (copy the folder inside to the handheld).
+            On an iPhone (Apple does not let keyboards use the microphone) or any other phone, use the receiver page: https://kiriakoschristodoulou-netizen.github.io/hpc-whisper/
           files: out/*

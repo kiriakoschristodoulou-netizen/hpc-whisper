@@ -2,20 +2,28 @@
 
 # HPC Whisper
 
-Type on a Windows CE handheld PC and the text appears on your phone, carried by
-tones too high to hear (18 to 21.5 kHz). No cable, no network, no extra hardware.
+Type on a Windows CE handheld PC and the text goes straight into any app on your
+phone (an email in Gmail, a message, a note), carried by tones too high to hear
+(18 to 21.5 kHz). No cable, no network, no extra hardware.
 
 Made on, and for, the HP Jornada 720. Created by Kyriakos Christodoulou.
 
 ## Get it
 
-- **Phone, in Chrome:** <https://kiriakoschristodoulou-netizen.github.io/hpc-whisper/>
-  Tap **Listen** and allow the microphone. Add it to the home screen: after the
-  first visit it works with no internet.
-- **Phone, as an Android app:** `HPC-Whisper.apk` from the
-  [latest release](../../releases/latest). It needs no website at all.
-- **Handheld:** `HPC-Whisper-10.zip` from the same release. Copy the folder
-  inside it to the handheld and run `whisper.exe`.
+- **Android: the HPC Whisper keyboard.** Install `HPC-Whisper.apk` from the
+  [latest release](../../releases/latest), open it and follow the three setup
+  steps. Then, in any app, switch to the HPC Whisper keyboard and type on the
+  handheld. New text appears underlined for a moment while it may still change,
+  then it is written for good. The app has no internet access.
+- **iPhone, or any phone: the receiver page** in the browser,
+  <https://kiriakoschristodoulou-netizen.github.io/hpc-whisper/>, with Copy and
+  Share. Tap **Listen** and allow the microphone. Add it to the home screen:
+  after the first visit it works with no internet.
+  *Apple does not let keyboards use the microphone at all, so an iPhone
+  keyboard is impossible; on an iPhone the page is the way.*
+- **Handheld:** `HPC-Whisper-11.zip` from the same release. Copy the folder
+  inside it to the handheld and run `whisper.exe`. Version 1.1 or later is
+  needed (the sound format changed in 1.1).
 
 ## Which handhelds
 
@@ -36,7 +44,8 @@ volume. Please report what works on yours.
 ## Use
 
 Run the program on the handheld and type. The phone follows a second or two
-behind; Backspace and Enter work too. On the handheld:
+behind; Backspace and Enter work too (Enter in a one-line field does what Enter
+does there: search, send, next). On the handheld:
 
 | Key | Setting |
 | --- | --- |
@@ -44,10 +53,15 @@ behind; Backspace and Enter work too. On the handheld:
 | Ctrl+P | Speed: Slow, Normal, Fast (about 5, 8, 12 characters a second) |
 | Ctrl+V | Volume: 10 to 100 % (default 50 %; full volume can distort into audible sound) |
 | Ctrl+T | Types a test sentence |
-| Ctrl+L | Clears the handheld's screen |
+| Ctrl+L | A new page: clears the handheld's screen; the phone starts a new paragraph |
 | Ctrl+Q | Exit |
 
 The phone finds the band and speed by itself. Keep it within about a metre.
+
+**Lost pieces fill themselves in.** The handheld sends new text at once and
+repeats it during your pauses. A piece lost to noise shows as · for a moment and
+fills in when the repeat arrives. If letters still go missing, the app's
+**Record 30 seconds** button saves what the phone hears, to send for diagnosis.
 
 ## Host the receiver yourself
 
@@ -59,8 +73,11 @@ Nothing runs on the server. The same files are in the handheld download, under
 
 ## How it works
 
-16 tones 100 Hz apart, 4 bits per tone, Reed-Solomon error correction and a
-CRC-16 check. The full description, enough to write a sender or receiver for
+16 tones 100 Hz apart, 4 bits per tone. Each frame carries a piece of the
+document ("from offset o it reads ..."), protected by interleaved Reed-Solomon
+blocks (weak tones are set aside and rebuilt) and a CRC-16. The phone listens
+with its unprocessed microphone where the phone has one, with both microphones
+where it can. The full description, enough to write a sender or receiver for
 any device, is in [docs/FORMAT.md](docs/FORMAT.md).
 
 ## Files
@@ -68,9 +85,10 @@ any device, is in [docs/FORMAT.md](docs/FORMAT.md).
 | Folder | What |
 | --- | --- |
 | `/` | the receiver page (served by GitHub Pages) |
-| `android/` | the Android app: the same page inside the app |
+| `android/` | the Android keyboard and its setup screen (Java) |
 | `handheld/` | the handheld program (Free Pascal for Windows CE, ARM) and its download |
 | `docs/` | the sound format and the artwork |
+| `tests/` | the sender, page receiver and keyboard receiver checked against each other, with noise, dropouts and stalls |
 
 The Android app is built by GitHub on every change (see `.github/workflows`).
 Its signing key is kept in the repository on purpose, so each new build

@@ -1,8 +1,11 @@
-# The HPC Whisper sound format
+# The HPC Whisper sound format (version 2)
 
 Everything needed to write a sender or a receiver for any device. The reference
-code is `handheld/wmodem.pas` (sender, whole numbers only) and `modem.js`
-(sender for tests, and the receiver).
+code is `handheld/wmodem.pas` (the sender, whole numbers only), `modem.js` (the
+receiver page, and a sender for tests) and
+`android/app/src/main/java/net/kyriakos/whisper/Receiver.java` (the keyboard's
+receiver, a line-by-line port of `modem.js`). The tests in `tests/` check all
+three against each other.
 
 ## Tones
 
@@ -21,47 +24,71 @@ code is `handheld/wmodem.pas` (sender, whole numbers only) and `modem.js`
 
 ## Frame
 
-1. **Preamble**, 6 symbols: `0 15 0 15 4 11`.
-2. **Data**, in blocks of 15 symbols.
+1. **Preamble**, 8 symbols: `0 15 0 15 11 4 11 4`. A receiver should accept
+   it with up to two of the eight drowned out.
+2. **Blocks**: a header block and *B* body blocks, each a Reed-Solomon
+   (15, 11) code word over GF(16), **interleaved**: symbol *t* after the
+   preamble is symbol ⌊*t* / (*B*+1)⌋ of block *t* mod (*B*+1), the header
+   being block 0. A burst of noise or a dropout so touches each block only
+   lightly.
 
-The data bytes are:
+The **header** block's 11 nibbles:
 
-| Byte | Meaning |
+| Nibbles | Meaning |
 | --- | --- |
-| 0 | length *n* of the text (0 to 48) |
-| 1 | sequence number (0 to 255, one more for each frame) |
-| 2 … *n*+1 | the text, UTF-8 |
-| *n*+2, *n*+3 | CRC-16 of bytes 0 … *n*+1 (CCITT: polynomial 0x1021, start 0xFFFF, high byte first) |
+| 0 | format version, 2 |
+| 1–2 | *n*, the number of text bytes (0 to 44) |
+| 3–4 | sequence number (one more for each frame) |
+| 5–6 | document id (changes when the handheld starts a new page) |
+| 7–10 | *L*, the document's length in bytes |
 
-Each byte becomes two nibbles, high nibble first. The nibbles are padded with
-zeros to a multiple of 11 and cut into groups of 11. Each group becomes a
-15-symbol block: the 11 nibbles, then 4 check nibbles of a Reed-Solomon
-(15, 11) code over GF(16):
+The **body** bytes, as nibbles (high first), padded with zeros to a multiple
+of 11 and cut into *B* = ⌈(*n* + 4) · 2 / 11⌉ blocks:
 
-- field polynomial *x*⁴ + *x* + 1 (0x13), α = 2
-- generator (*x* − α)(*x* − α²)(*x* − α³)(*x* − α⁴)
-- systematic: the check nibbles are the remainder of the data polynomial
-  · *x*⁴ divided by the generator, highest power first.
+| Bytes | Meaning |
+| --- | --- |
+| 0–1 | *o*, the offset in the document where the text starts |
+| 2 … *n*+1 | the text: document bytes *o* … *o*+*n*−1 (UTF-8) |
+| *n*+2, *n*+3 | CRC-16 (CCITT: polynomial 0x1021, start 0xFFFF, high byte first) of *n*, sequence, document id, *L* (2 bytes), *o* (2 bytes) and the text |
 
-A block corrects up to 2 wrong symbols. Number of blocks: ⌈(*n* + 4) · 2 / 11⌉,
-so a frame is 6 + 15 · blocks symbols long (21 to 156).
+Reed-Solomon code: field polynomial *x*⁴ + *x* + 1 (0x13), α = 2, generator
+(*x* − α)(*x* − α²)(*x* − α³)(*x* − α⁴), systematic (the check nibbles are the
+remainder of the data · *x*⁴ divided by the generator, highest power first).
+A block corrects *e* wrong symbols and *f* symbols marked as unreliable when
+2*e* + *f* ≤ 4.
 
-## Text
+## Meaning: a mirror of the document
 
-Plain UTF-8. Two control characters: **8** (backspace: remove the last
-character received) and **10** (new line).
+Each frame says: **the document is *L* bytes long, and from offset *o* it
+reads these bytes.** The receiver keeps a copy of the document: it sets the
+length to *L* (forgetting anything beyond) and writes the bytes at *o*.
+Bytes it has never received are missing, not wrong. A new document id means
+a new page: the previous one is finished.
+
+The handheld sends:
+
+- **new text at once**, starting a little earlier when there is room, so
+  that text which went out once goes out a second time with it;
+- in a **pause of 0.4 s**, anything that went out only once, again;
+- in a **pause of 1.5 s**, everything a third time;
+- in a **pause of 3 s**, the last 22 bytes once more;
+- in a **rest of 5 s**, one sweep over the last 300 bytes.
+
+So a frame lost on the way leaves a gap that fills in a moment later. Repeat
+frames carry at most 22 bytes: shorter frames get through more often.
 
 ## Receiving, in brief
 
 - Measure each grid tone in 1 ms steps (a running complex sum per tone), so
   any window's strength is a difference of two sums.
-- Look for the preamble in every band and speed at once: in each of its six
-  symbol windows, the expected tone must be the strongest of the band's 16.
-  Use the middle of each symbol (from 25 % to 90 % of it), so echoes of the
-  previous symbol do not count.
-- Read the first block to learn the length, then the rest; correct each
-  block; check the CRC.
-- If the check fails, the sender's sound may have stopped for a moment (a
-  gap delays every tone after it). Try each place and length of a gap
-  around the first block that needed correcting, and keep one that passes.
-- The same sequence number heard again within 1.5 s is an echo: show it once.
+- Look for the preamble in every band and speed, all the time, even while
+  frames are being read: in each of its eight windows, the expected tone
+  should be the strongest of the band's 16. Use the middle of each symbol
+  (from 25 % to 90 % of it), so echoes of the previous symbol do not count.
+- Try the frame at each possible size *B*, smallest first, as soon as that
+  much has been heard. A block that does not check out is tried again with
+  its least certain symbols (the weakest share of their band's power) marked
+  as unreliable, one to four of them.
+- If no size works, the sender's sound may have stopped for a moment, which
+  delays every later tone: at the sizes where the sound really ended, try
+  each place and length of such a gap, and keep one that passes the CRC.

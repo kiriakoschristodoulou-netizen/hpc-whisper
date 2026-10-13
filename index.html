@@ -65,6 +65,10 @@
   button.primary.on { background: var(--signal); border-color: var(--signal); color: var(--on-signal); }
   .note { color: var(--muted); font-size: 12.5px; margin: 0; }
   .note.err { color: var(--warn); }
+  details.about { color: var(--muted); font-size: 13px; }
+  details.about summary { cursor: pointer; font-weight: 600; color: var(--ink); }
+  details.about p { margin: 6px 0; }
+  details.about a { color: var(--signal); }
   @media (prefers-reduced-motion: reduce) { .scope i { transition: none; } }
 </style>
 </head>
@@ -86,6 +90,13 @@
 
   <div class="status" id="status" aria-live="polite"></div>
   <p class="note" id="note"></p>
+  <details class="about">
+    <summary>About</summary>
+    <p><b>Android:</b> install the HPC Whisper keyboard (<a href="https://github.com/kiriakoschristodoulou-netizen/hpc-whisper/releases/latest">HPC-Whisper.apk</a>) to type from the handheld straight into any app, such as an email in Gmail.</p>
+    <p><b>iPhone:</b> Apple does not let keyboards use the microphone at all, so an iPhone keyboard is impossible. On an iPhone, use this page, with Copy and Share.</p>
+    <p><b>On the handheld:</b> run whisper.exe, version 1.1 or later (<a href="https://github.com/kiriakoschristodoulou-netizen/hpc-whisper/releases/latest">download</a>). A piece lost on the way shows as · and fills in when the handheld repeats it, a moment later.</p>
+    <p>Nothing is sent anywhere: the sound is read on this phone. Created by Kyriakos Christodoulou.</p>
+  </details>
 
   <div class="bar">
     <button id="listen" class="primary">Listen</button>
@@ -111,7 +122,7 @@
   text.addEventListener('input', save);
 
   let ctx = null, stream = null, node = null, src = null, rx = null, wake = null, running = false;
-  let frames = 0, fixed = 0, bad = 0, last = null, lastSeq = -1, lastTime = 0;
+  let frames = 0, fixed = 0, bad = 0, last = null;
 
   function showStatus() {
     const parts = [];
@@ -124,27 +135,34 @@
   }
   showStatus();
 
-  function apply(str) {
-    let v = text.value;
-    for (const ch of str) {
-      if (ch === '\b') v = Array.from(v).slice(0, -1).join('');
-      else if (ch !== '\r') v += ch;
-    }
-    text.value = v;
+  // The handheld's document, mirrored: the text area shows what came before it
+  // (base) and the mirrored part after 'committed'. A lost piece shows as "·"
+  // until the handheld repeats it. Editing the text area by hand keeps your
+  // edits; new text then continues after them.
+  const mirror = new Whisper.Mirror();
+  let base = text.value, committed = 0;
+  function render() {
+    text.value = base + mirror.text(committed, mirror.L, '·');
     text.scrollTop = text.scrollHeight;
     save();
   }
+  text.addEventListener('input', () => { base = text.value; committed = mirror.L; });
 
   function onFrame(f) {
-    const now = Date.now();
-    // the same frame heard twice (for example through an echo) is shown once
-    if (f.seq === lastSeq && now - lastTime < 1500) return;
-    lastSeq = f.seq; lastTime = now;
     frames++; fixed += f.fixed; last = f;
-    let s;
-    try { s = new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(f.bytes)); }
-    catch (e) { s = String.fromCharCode.apply(null, f.bytes); }
-    apply(s);
+    if (mirror.doc !== -1 && f.doc !== mirror.doc) {
+      // a new page on the handheld: keep what we have, start below it
+      base = text.value;
+      if (base && !base.endsWith('\n')) base += '\n\n';
+      committed = 0;
+    } else if (f.L < committed) {
+      // the handheld's Backspace went back past text you had edited around
+      const chars = Array.from(new TextDecoder('utf-8').decode(mirror.bytes.subarray(f.L, committed))).length;
+      base = Array.from(base).slice(0, Math.max(0, Array.from(base).length - chars)).join('');
+      committed = f.L;
+    }
+    if (mirror.apply(f) === 'new') committed = 0;
+    render();
     showStatus();
   }
   function onBad() { bad++; showStatus(); }
@@ -219,7 +237,7 @@
     const mute = ctx.createGain(); mute.gain.value = 0;   // keeps the chain running, plays nothing
     node.connect(mute); mute.connect(ctx.destination);
     running = true;
-    try { if (window.WhisperApp) WhisperApp.keepAwake(true); else if ('wakeLock' in navigator) wake = await navigator.wakeLock.request('screen'); } catch (e) {}
+    try { if ('wakeLock' in navigator) wake = await navigator.wakeLock.request('screen'); } catch (e) {}
     listenBtn.textContent = 'Stop'; listenBtn.classList.add('on');
     pill.textContent = 'Listening'; pill.classList.add('on');
     showStatus();
@@ -231,7 +249,7 @@
     try { if (src) src.disconnect(); if (node) node.disconnect(); } catch (e) {}
     if (stream) stream.getTracks().forEach(t => t.stop());
     if (ctx) ctx.close();
-    try { if (window.WhisperApp) WhisperApp.keepAwake(false); if (wake) wake.release(); } catch (e) {}
+    try { if (wake) wake.release(); } catch (e) {}
     ctx = stream = node = src = wake = null;
     listenBtn.textContent = 'Listen'; listenBtn.classList.remove('on');
     pill.textContent = 'Off'; pill.classList.remove('on');
@@ -247,12 +265,10 @@
   });
 
   $('copy').addEventListener('click', async () => {
-    if (window.WhisperApp && WhisperApp.copy) { WhisperApp.copy(text.value); note.textContent = 'Copied.'; note.className = 'note'; return; }
     try { await navigator.clipboard.writeText(text.value); note.textContent = 'Copied.'; note.className = 'note'; }
     catch (e) { text.focus(); text.select(); note.textContent = 'Selected: use your phone\'s Copy.'; note.className = 'note'; }
   });
   $('share').addEventListener('click', async () => {
-    if (window.WhisperApp && WhisperApp.share) { WhisperApp.share(text.value); return; }
     if (navigator.share) { try { await navigator.share({ text: text.value }); } catch (e) {} }
     else { note.textContent = 'Sharing is not available in this browser; use Copy.'; note.className = 'note'; }
   });
@@ -261,10 +277,10 @@
     if (!text.value) return;
     if (!clearArmed) { clearArmed = true; e.target.textContent = 'Sure?'; setTimeout(() => { clearArmed = false; e.target.textContent = 'Clear'; }, 2500); return; }
     clearArmed = false; e.target.textContent = 'Clear';
-    text.value = ''; save();
+    text.value = ''; base = ''; committed = mirror.L; save();
   });
   // works offline once opened: the files are kept on the phone
-  if ('serviceWorker' in navigator && location.protocol === 'https:' && !window.WhisperApp)
+  if ('serviceWorker' in navigator && location.protocol === 'https:')
     navigator.serviceWorker.register('sw.js').catch(() => {});
 })();
 </script>

@@ -1,0 +1,17 @@
+# build products
+handheld/units-arm/
+handheld/w64/
+handheld/*.o
+handheld/*.or
+handheld/*.res
+handheld/whisper.exe
+handheld/*.png
+!handheld/icon.png
+tests/linux/
+tests/java/classes/
+tests/wmsim
+tests/*.o
+android/.gradle/
+android/build/
+android/app/build/
+*.ppu

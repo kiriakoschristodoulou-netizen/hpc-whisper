@@ -22,7 +22,7 @@ program whisper;
 uses Windows, wmodem;
 
 const
-  VERSION = '1.0';
+  VERSION = '1.1';
   CREATOR = 'Kyriakos Christodoulou';
   CLSNAME: UnicodeString = 'HPCWhisper';
   APPNAME: UnicodeString = 'HPC Whisper';
@@ -32,7 +32,6 @@ const
   RATE = 44100;
   BUF_N = 4410;                    { 100 ms per buffer }
   NBUF = 5;                        { 0.5 s queued: a gap would shift every later tone }
-  QSIZE = 4096;                    { bytes waiting to be sent }
   DOCMAX = 6000;                   { characters kept on screen }
   TEST_TEXT = 'The quick brown fox jumps over the lazy dog. 0123456789' + #10;
 
@@ -101,10 +100,9 @@ var
   DocN: Integer = 0;
 
   { the queue: main thread adds, sound thread takes }
+  { the document as the phone should see it: main thread changes it, sound thread sends it }
   Lock: TRTLCriticalSection;
-  Q: array[0..QSIZE - 1] of Byte;
-  QHead: Integer = 0;              { next byte to take }
-  QCount: Integer = 0;
+  Snd: TSender;
 
   { sound thread state shown on screen }
   SoundOK: Boolean = False;
@@ -254,63 +252,33 @@ end;
 
 { ---------- the queue ---------- }
 
-procedure QAdd(v: Byte);                       { caller holds the lock }
+procedure SendChar(c: WideChar);
 begin
-  if QCount >= QSIZE then Exit;
-  Q[(QHead + QCount) mod QSIZE] := v;
-  Inc(QCount);
-end;
-
-procedure QAddChar(c: WideChar);               { as UTF-8 }
-var u: Integer;
-begin
-  u := Ord(c);
   EnterCriticalSection(Lock);
-  if u < $80 then QAdd(u)
-  else if u < $800 then begin QAdd($C0 or (u shr 6)); QAdd($80 or (u and $3F)); end
-  else begin QAdd($E0 or (u shr 12)); QAdd($80 or ((u shr 6) and $3F)); QAdd($80 or (u and $3F)); end;
+  SnType(Snd, c, GetTickCount);
   LeaveCriticalSection(Lock);
 end;
 
-{ backspace: take the last character back if it has not gone yet, otherwise send a backspace }
-procedure QBackspace;
-var last: Byte;
+procedure SendBackspace;
 begin
   EnterCriticalSection(Lock);
-  if QCount > 0 then last := Q[(QHead + QCount - 1) mod QSIZE] else last := 8;
-  if (QCount > 0) and (last <> 8) then
-  begin
-    { remove one whole UTF-8 character }
-    while (QCount > 0) and ((Q[(QHead + QCount - 1) mod QSIZE] and $C0) = $80) do Dec(QCount);
-    if QCount > 0 then Dec(QCount);
-  end
-  else QAdd(8);
+  SnBackspace(Snd, GetTickCount);
   LeaveCriticalSection(Lock);
 end;
 
-function QWaiting: Integer;
+procedure SendNewDocument;
 begin
   EnterCriticalSection(Lock);
-  Result := QCount;
+  SnNewDoc(Snd);
   LeaveCriticalSection(Lock);
 end;
 
-{ up to MAXLEN bytes for the next frame, never cutting a character in two }
-function QTake(var dst: array of Byte): Integer;
-var n, i: Integer;
+{ bytes typed that have not gone out even once }
+function Waiting: Integer;
 begin
   EnterCriticalSection(Lock);
-  n := QCount;
-  if n > MAXLEN then
-  begin
-    n := MAXLEN;
-    while (n > 0) and ((Q[(QHead + n) mod QSIZE] and $C0) = $80) do Dec(n);
-  end;
-  for i := 0 to n - 1 do dst[i] := Q[(QHead + i) mod QSIZE];
-  QHead := (QHead + n) mod QSIZE;
-  Dec(QCount, n);
+  Result := Snd.L - Snd.liveFrom;
   LeaveCriticalSection(Lock);
-  Result := n;
 end;
 
 { ---------- the sound thread ---------- }
@@ -340,7 +308,7 @@ end;
 
 function SoundThread(param: Pointer): DWORD; API;
 var k, i, n: Integer; playing: array[0..NBUF - 1] of Boolean; busy, was: Boolean;
-    tb: array[0..MAXLEN - 1] of Byte; f: TFrame; seq: Integer;
+    f: TFrame; got: Boolean;
 begin
   Result := 0;
   SoundOK := OpenSound;
@@ -348,7 +316,7 @@ begin
   if not SoundOK then Exit;
   TmInit(Tm, RATE);
   for i := 0 to NBUF - 1 do playing[i] := False;
-  busy := False; seq := 0;
+  busy := False;
   k := 0;
   while not Quit do
   begin
@@ -359,17 +327,18 @@ begin
       playing[k] := False;
     end;
     if Quit then Break;
-    { free: start the next frame with everything waiting }
+    { free: the next frame, if the document has something to send (new
+      text at once, repeats during pauses) }
     if not busy then
     begin
-      n := QTake(tb);
-      if n > 0 then
+      EnterCriticalSection(Lock);
+      got := SnNext(Snd, GetTickCount, f);
+      LeaveCriticalSection(Lock);
+      if got then
       begin
         Tm.band := Band; Tm.speed := Speed; Tm.volume := Volume;
-        EncodeFrame(tb, n, seq, f);
-        seq := (seq + 1) and 255;
         TmStart(Tm, f);
-        SendingN := n; SendingMs := FrameMs(f, Speed);
+        SendingN := 1; SendingMs := FrameMs(f, Speed);
         PostMessageW(hMain, WM_UPDATE, 0, 0);
       end;
     end;
@@ -412,7 +381,7 @@ begin
   for i := 1 to Length(s) do
   begin
     DocAdd(s[i]);
-    QAddChar(s[i]);
+    SendChar(s[i]);
   end;
 end;
 
@@ -538,7 +507,7 @@ begin
   FillR(dc, MkRect(0, STATUS_Y - 2, CW, STATUS_Y - 1), $E0D8D0);
   s := BandName(Band) + '   ' + US(SPEED_NAME[Speed]) + ' (' + IU(SPEED_MS[Speed]) + ' ms)   Volume ' + IU(Volume) + '%';
   Txt(dc, s, MkRect(8, STATUS_Y + 1, CW - 8, STATUS_Y + 17), fNorm, COL_GREY, DT_LEFT or DT_SINGLELINE);
-  w := QWaiting;
+  w := Waiting;
   if not SoundOK then
   begin
     if SoundErr = '' then s := 'Opening sound...' else s := SoundErr;
@@ -546,8 +515,7 @@ begin
   end
   else if SendingN > 0 then
   begin
-    s := 'Sending ' + IU(SendingN) + ' bytes';
-    if w > 0 then s := s + ', ' + IU(w) + ' waiting';
+    if w > 0 then s := 'Sending, ' + IU(w) + ' waiting' else s := 'Sending';
     col := COL_SEND;
   end
   else if w > 0 then begin s := IU(w) + ' waiting'; col := COL_SEND; end
@@ -601,7 +569,7 @@ begin
     1: begin Speed := (Speed + 1) mod NSPEEDS; SaveCfg; end;
     2: begin Volume := Volume + 10; if Volume > 100 then Volume := 10; SaveCfg; end;
     3: TypeText(TEST_TEXT);
-    4: DocN := 0;
+    4: begin DocN := 0; SendNewDocument; end;      { a fresh page, here and on the phone }
     5: Leave;
   end;
 end;
@@ -629,12 +597,12 @@ begin
       if DocN > 0 then
       begin
         Dec(DocN);
-        QBackspace;
+        SendBackspace;
       end;
-    13: begin DocAdd(#10); QAddChar(#10); end;
+    13: begin DocAdd(#10); SendChar(#10); end;
     9: TypeText(' ');
   else
-    if c >= 32 then begin DocAdd(WideChar(c)); QAddChar(WideChar(c)); end;
+    if c >= 32 then begin DocAdd(WideChar(c)); SendChar(WideChar(c)); end;
   end;
 end;
 
@@ -670,6 +638,7 @@ var
 begin
   AppInst := GetModuleHandleW(nil);
   InitializeCriticalSection(Lock);
+  SnInit(Snd, Byte(GetTickCount));                  { a new document id each start }
   FillChar(wc, SizeOf(wc), 0);
   wc.style := CS_HREDRAW or CS_VREDRAW;
   wc.lpfnWndProc := @WndProc;
