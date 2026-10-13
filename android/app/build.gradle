@@ -1,0 +1,57 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'net.kyriakos.whisper'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'net.kyriakos.whisper'
+        minSdk 24
+        targetSdk 34
+        versionCode Integer.parseInt(System.getenv('BUILD_NUMBER') ?: '1')
+        versionName '1.0'
+    }
+
+    // The key is kept in the repository on purpose: this is a hobby app, and a
+    // fixed key lets every new build install over the old one.
+    signingConfigs {
+        release {
+            storeFile rootProject.file('whisper.keystore')
+            storePassword 'j720whisper'
+            keyAlias 'whisper'
+            keyPassword 'j720whisper'
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+    sourceSets {
+        main { assets.srcDirs += "$buildDir/generated/www-assets" }
+    }
+}
+
+// the receiver page itself, copied in from the top of the repository
+def copyWww = tasks.register('copyWww', Copy) {
+    from(rootProject.file('..')) {
+        include 'index.html', 'modem.js', 'manifest.json', 'icons/**'
+    }
+    into "$buildDir/generated/www-assets/www"
+}
+preBuild.dependsOn copyWww
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.11.0'
+}

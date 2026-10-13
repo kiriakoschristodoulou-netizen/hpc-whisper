@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>J720 Whisper</title>
+<meta name="description" content="Receives what you type on an HP Jornada 720, sent as tones too high to hear.">
+<meta name="theme-color" content="#1b2536">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-32.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<style>
+  /* Layout: one column, the received text fills the screen; controls in a bar at the bottom within thumb reach. */
+  :root {
+    --bg: #f4f2ee; --panel: #ffffff; --ink: #1d2430; --muted: #6b6f78; --line: #dcd8d0;
+    --navy: #1b2536; --signal: #3d8a1f; --signal-soft: #e3f0da; --warn: #b4531a; --on-signal: #ffffff;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12161d; --panel: #1a2029; --ink: #e8e6e1; --muted: #9298a2; --line: #2c3440;
+      --navy: #0d1118; --signal: #7fc75a; --signal-soft: #1f3317; --warn: #e08a4f; --on-signal: #0d1118; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12161d; --panel: #1a2029; --ink: #e8e6e1; --muted: #9298a2; --line: #2c3440;
+    --navy: #0d1118; --signal: #7fc75a; --signal-soft: #1f3317; --warn: #e08a4f; --on-signal: #0d1118; color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg); color: var(--ink); font: 15px/1.45 var(--sans); }
+  .app { height: 100%; display: flex; flex-direction: column; max-width: 760px; margin: 0 auto;
+         padding: calc(env(safe-area-inset-top, 0px) + 12px) 16px calc(env(safe-area-inset-bottom, 0px) + 12px); gap: 10px; }
+  header { display: flex; align-items: center; gap: 10px; }
+  header h1 { font: 600 17px/1 var(--sans); margin: 0; letter-spacing: 0.01em; }
+  header .by { color: var(--muted); font-size: 12px; margin-left: auto; text-align: right; }
+  .pill { font: 600 11px/1 var(--sans); letter-spacing: 0.06em; text-transform: uppercase; padding: 5px 8px;
+          border-radius: 999px; background: var(--line); color: var(--muted); }
+  .pill.on { background: var(--signal-soft); color: var(--signal); }
+  .scope { display: grid; grid-template-columns: repeat(36, 1fr); gap: 2px; height: 34px; align-items: end;
+           padding: 6px 8px 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+  .scope i { display: block; background: var(--line); border-radius: 1px; height: 2px; transition: height 80ms linear; }
+  .scope i.band { background: var(--muted); }
+  .scope i.hot { background: var(--signal); }
+  .scale { position: relative; height: 14px; margin: 3px 9px 0; color: var(--muted); font: 11px/1 var(--mono);
+           font-variant-numeric: tabular-nums; }
+  .scale span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+  .scale span:first-child { transform: none; }
+  .scale span:last-child { transform: translateX(-100%); }
+  textarea#text { flex: 1; min-height: 0; width: 100%; resize: none; padding: 12px 14px; border-radius: 8px;
+                  border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+                  font: 16px/1.5 var(--mono); }
+  textarea#text:focus-visible { outline: 2px solid var(--signal); outline-offset: 1px; }
+  .status { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); font-size: 12.5px;
+            font-variant-numeric: tabular-nums; min-height: 18px; }
+  .status b { color: var(--ink); font-weight: 600; }
+  .status .bad { color: var(--warn); }
+  .bar { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr; gap: 8px; }
+  button { font: 600 15px/1 var(--sans); padding: 14px 8px; border-radius: 10px; border: 1px solid var(--line);
+           background: var(--panel); color: var(--ink); cursor: pointer; }
+  button:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+  button.primary { background: var(--navy); color: #ffffff; border-color: var(--line); }
+  button.primary.on { background: var(--signal); border-color: var(--signal); color: var(--on-signal); }
+  .note { color: var(--muted); font-size: 12.5px; margin: 0; }
+  .note.err { color: var(--warn); }
+  @media (prefers-reduced-motion: reduce) { .scope i { transition: none; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>J720 Whisper</h1>
+    <span class="pill" id="pill">Off</span>
+    <span class="by">by Kyriakos Christodoulou</span>
+  </header>
+
+  <div>
+    <div class="scope" id="scope" aria-label="Signal from 18 to 21.5 kHz"></div>
+    <div class="scale"><span style="left:0">18.0</span><span style="left:29.2%">19.0</span><span style="left:56.9%">20.0</span><span style="left:100%">21.5 kHz</span></div>
+  </div>
+
+  <textarea id="text" spellcheck="false" aria-label="Received text"
+    placeholder="Text typed on the Jornada appears here.&#10;&#10;Tap Listen, allow the microphone, and keep the phone within a metre of the Jornada."></textarea>
+
+  <div class="status" id="status" aria-live="polite"></div>
+  <p class="note" id="note"></p>
+
+  <div class="bar">
+    <button id="listen" class="primary">Listen</button>
+    <button id="copy">Copy</button>
+    <button id="share">Share</button>
+    <button id="clear">Clear</button>
+  </div>
+</div>
+
+<script src="modem.js"></script>
+<script>
+(function () {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const text = $('text'), pill = $('pill'), status = $('status'), note = $('note'), listenBtn = $('listen');
+  const scope = $('scope');
+  const bars = [];
+  for (let i = 0; i < 36; i++) { const b = document.createElement('i'); scope.appendChild(b); bars.push(b); }
+
+  // the text survives a reload on this phone
+  try { text.value = localStorage.getItem('whisper-text') || ''; } catch (e) {}
+  function save() { try { localStorage.setItem('whisper-text', text.value); } catch (e) {} }
+  text.addEventListener('input', save);
+
+  let ctx = null, stream = null, node = null, src = null, rx = null, wake = null, running = false;
+  let frames = 0, fixed = 0, bad = 0, last = null, lastSeq = -1, lastTime = 0;
+
+  function showStatus() {
+    const parts = [];
+    if (running) parts.push('<span>' + (ctx ? ctx.sampleRate : '?') + ' samples/s</span>');
+    parts.push('<span>Received <b>' + frames + '</b></span>');
+    if (fixed) parts.push('<span>Corrected tones <b>' + fixed + '</b></span>');
+    if (bad) parts.push('<span class="bad">Unreadable <b>' + bad + '</b></span>');
+    if (last) parts.push('<span>Last: ' + (last.bandHz / 1000).toFixed(1) + '–' + ((last.bandHz + 1500) / 1000).toFixed(1) + ' kHz, ' + last.ms + ' ms</span>');
+    status.innerHTML = parts.join('');
+  }
+  showStatus();
+
+  function apply(str) {
+    let v = text.value;
+    for (const ch of str) {
+      if (ch === '\b') v = Array.from(v).slice(0, -1).join('');
+      else if (ch !== '\r') v += ch;
+    }
+    text.value = v;
+    text.scrollTop = text.scrollHeight;
+    save();
+  }
+
+  function onFrame(f) {
+    const now = Date.now();
+    // the same frame heard twice (for example through an echo) is shown once
+    if (f.seq === lastSeq && now - lastTime < 1500) return;
+    lastSeq = f.seq; lastTime = now;
+    frames++; fixed += f.fixed; last = f;
+    let s;
+    try { s = new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(f.bytes)); }
+    catch (e) { s = String.fromCharCode.apply(null, f.bytes); }
+    apply(s);
+    showStatus();
+  }
+  function onBad() { bad++; showStatus(); }
+
+  // live view of the 36 tones: how loud each one is right now
+  function drawScope() {
+    if (!running || !rx) return;
+    const n = rx.n, a = n - 30, b = n;
+    if (a > 1) {
+      let max = 1e-12; const v = [];
+      for (let t = 0; t < 36; t++) { const p = rx.pow(t, a, b); v.push(p); if (p > max) max = p; }
+      const floor = max * 0.02;
+      const band = last ? (last.bandHz - 18000) / 100 : -1;
+      for (let t = 0; t < 36; t++) {
+        const h = Math.max(2, Math.min(28, 28 * Math.sqrt(v[t] / max)));
+        bars[t].style.height = (v[t] > floor ? h : 2) + 'px';
+        bars[t].className = (v[t] > max * 0.3 && v[t] > 1e-6) ? 'hot' : (t >= band && t < band + 16 ? 'band' : '');
+      }
+    }
+    requestAnimationFrame(drawScope);
+  }
+
+  const WORKLET = `
+    class Tap extends AudioWorkletProcessor {
+      constructor() { super(); this.buf = new Float32Array(2048); this.n = 0; }
+      process(inputs) {
+        const ch = inputs[0] && inputs[0][0];
+        if (ch) for (let i = 0; i < ch.length; i++) {
+          this.buf[this.n++] = ch[i];
+          if (this.n === this.buf.length) { this.port.postMessage(this.buf); this.buf = new Float32Array(2048); this.n = 0; }
+        }
+        return true;
+      }
+    }
+    registerProcessor('tap', Tap);`;
+
+  async function start() {
+    note.textContent = ''; note.className = 'note';
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      note.textContent = 'This browser cannot use the microphone here. Open the page in Chrome over https.';
+      note.className = 'note err';
+      return;
+    }
+    try {
+      // no echo cancelling, noise suppression or level control: they remove high tones
+      stream = await navigator.mediaDevices.getUserMedia({ audio: {
+        echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } });
+    } catch (e) {
+      note.textContent = 'The microphone was not allowed. Allow it for this page in the browser settings, then tap Listen again.';
+      note.className = 'note err';
+      return;
+    }
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (ctx.state === 'suspended') await ctx.resume();
+    if (ctx.sampleRate < 44100) {
+      note.textContent = 'The microphone runs at ' + ctx.sampleRate + ' samples/s, too low for tones above 20 kHz.';
+      note.className = 'note err';
+    }
+    rx = new Whisper.Receiver(ctx.sampleRate, { onFrame, onBad });
+    src = ctx.createMediaStreamSource(stream);
+    try {
+      const url = URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' }));
+      await ctx.audioWorklet.addModule(url);
+      node = new AudioWorkletNode(ctx, 'tap');
+      node.port.onmessage = e => rx.push(e.data);
+    } catch (e) {
+      // older browsers
+      node = ctx.createScriptProcessor(4096, 1, 1);
+      node.onaudioprocess = e => rx.push(e.inputBuffer.getChannelData(0).slice());
+    }
+    src.connect(node);
+    const mute = ctx.createGain(); mute.gain.value = 0;   // keeps the chain running, plays nothing
+    node.connect(mute); mute.connect(ctx.destination);
+    running = true;
+    try { if (window.WhisperApp) WhisperApp.keepAwake(true); else if ('wakeLock' in navigator) wake = await navigator.wakeLock.request('screen'); } catch (e) {}
+    listenBtn.textContent = 'Stop'; listenBtn.classList.add('on');
+    pill.textContent = 'Listening'; pill.classList.add('on');
+    showStatus();
+    requestAnimationFrame(drawScope);
+  }
+
+  function stop() {
+    running = false;
+    try { if (src) src.disconnect(); if (node) node.disconnect(); } catch (e) {}
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    if (ctx) ctx.close();
+    try { if (window.WhisperApp) WhisperApp.keepAwake(false); if (wake) wake.release(); } catch (e) {}
+    ctx = stream = node = src = wake = null;
+    listenBtn.textContent = 'Listen'; listenBtn.classList.remove('on');
+    pill.textContent = 'Off'; pill.classList.remove('on');
+    bars.forEach(b => { b.style.height = '2px'; b.className = ''; });
+    showStatus();
+  }
+
+  listenBtn.addEventListener('click', () => running ? stop() : start());
+  document.addEventListener('visibilitychange', async () => {
+    if (running && document.visibilityState === 'visible') {
+      try { if ('wakeLock' in navigator) wake = await navigator.wakeLock.request('screen'); } catch (e) {}
+    }
+  });
+
+  $('copy').addEventListener('click', async () => {
+    if (window.WhisperApp && WhisperApp.copy) { WhisperApp.copy(text.value); note.textContent = 'Copied.'; note.className = 'note'; return; }
+    try { await navigator.clipboard.writeText(text.value); note.textContent = 'Copied.'; note.className = 'note'; }
+    catch (e) { text.focus(); text.select(); note.textContent = 'Selected: use your phone\'s Copy.'; note.className = 'note'; }
+  });
+  $('share').addEventListener('click', async () => {
+    if (window.WhisperApp && WhisperApp.share) { WhisperApp.share(text.value); return; }
+    if (navigator.share) { try { await navigator.share({ text: text.value }); } catch (e) {} }
+    else { note.textContent = 'Sharing is not available in this browser; use Copy.'; note.className = 'note'; }
+  });
+  let clearArmed = false;
+  $('clear').addEventListener('click', e => {
+    if (!text.value) return;
+    if (!clearArmed) { clearArmed = true; e.target.textContent = 'Sure?'; setTimeout(() => { clearArmed = false; e.target.textContent = 'Clear'; }, 2500); return; }
+    clearArmed = false; e.target.textContent = 'Clear';
+    text.value = ''; save();
+  });
+  // works offline once opened: the files are kept on the phone
+  if ('serviceWorker' in navigator && location.protocol === 'https:' && !window.WhisperApp)
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+})();
+</script>
+</body>
+</html>

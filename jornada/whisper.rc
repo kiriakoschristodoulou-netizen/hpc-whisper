@@ -1,0 +1,21 @@
+MAINICON ICON "whisper.ico"
+1 VERSIONINFO
+FILEVERSION 1,0,0,0
+PRODUCTVERSION 1,0,0,0
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "CompanyName", "Jornada 720 project\0"
+      VALUE "FileDescription", "J720 Whisper\0"
+      VALUE "FileVersion", "1.0\0"
+      VALUE "ProductName", "J720 Whisper\0"
+      VALUE "OriginalFilename", "whisper.exe\0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END
