@@ -28,6 +28,7 @@ public class WhisperIme extends InputMethodService {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private TextView status;
     private MeterView meter;
+    private View bar;
     private EditorInfo editor;
     private String heard = "";
 
@@ -43,6 +44,7 @@ public class WhisperIme extends InputMethodService {
     @Override
     public View onCreateInputView() {
         LinearLayout bar = new LinearLayout(this);
+        this.bar = bar;
         bar.setOrientation(LinearLayout.HORIZONTAL);
         bar.setGravity(Gravity.CENTER_VERTICAL);
         bar.setBackgroundColor(0xFF1B2536);
@@ -100,6 +102,8 @@ public class WhisperIme extends InputMethodService {
             @Override public void onProblem(String m) { setStatus(m); }
         });
         if (ok) setStatus(heard.isEmpty() ? "Listening: type on the handheld" : heard);
+        // you are typing on the handheld, not touching the phone: keep its screen on while listening
+        if (ok && bar != null) bar.setKeepScreenOn(true);
         handler.removeCallbacks(tick);
         handler.postDelayed(tick, 500);
     }
@@ -109,6 +113,7 @@ public class WhisperIme extends InputMethodService {
         writer.finish(getCurrentInputConnection());
         handler.removeCallbacks(tick);
         listener.stop();
+        if (bar != null) bar.setKeepScreenOn(false);
         if (meter != null) meter.clear();
         super.onFinishInputView(finishing);
     }

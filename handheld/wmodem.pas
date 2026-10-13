@@ -33,6 +33,7 @@ const
   REPAIR2_IDLE_MS = 1500;            { a longer pause: a third time }
   TAIL_IDLE_MS = 3000;               { a long pause: the last words once more }
   REPAIR_MAX = 22;
+  LIVE_MAX = 12;                     { while typing, frames stay short: less lag }
   SWEEP_IDLE_MS = 5000;              { a long rest: the recent text goes over once more, }
   SWEEP_BACK = 300;                  { this far back, so any gap left on the phone fills }                   { repeats go in shorter frames: more of them get through }
 
@@ -287,14 +288,17 @@ begin
     faster than the sound can carry, the repeats shrink and wait for a pause }
   if (s.liveFrom < s.L) or (s.sentL <> s.L) then
   begin
-    if s.L - s.liveFrom >= MAXLEN then
+    if s.L - s.liveFrom >= LIVE_MAX then
     begin
-      o := s.liveFrom; n := MAXLEN;
+      { much is waiting (fast typing): only new text, as much as fits }
+      o := s.liveFrom; n := s.L - o;
+      if n > MAXLEN then n := MAXLEN;
     end
     else
     begin
+      { a short frame (they arrive sooner): the new text, and older text up to LIVE_MAX }
       o := s.repairFrom;
-      if s.L - o > MAXLEN then o := s.L - MAXLEN;
+      if s.L - o > LIVE_MAX then o := s.L - LIVE_MAX;
       n := s.L - o;
     end;
     MakeFrame(s, o, n, f);

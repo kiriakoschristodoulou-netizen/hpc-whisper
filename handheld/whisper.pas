@@ -22,7 +22,7 @@ program whisper;
 uses Windows, wmodem;
 
 const
-  VERSION = '1.1';
+  VERSION = '1.2';
   CREATOR = 'Kyriakos Christodoulou';
   CLSNAME: UnicodeString = 'HPCWhisper';
   APPNAME: UnicodeString = 'HPC Whisper';
@@ -31,7 +31,7 @@ const
 
   RATE = 44100;
   BUF_N = 4410;                    { 100 ms per buffer }
-  NBUF = 5;                        { 0.5 s queued: a gap would shift every later tone }
+  NBUF = 3;                        { 0.3 s queued: less lag; the phone copes with a stall }
   DOCMAX = 6000;                   { characters kept on screen }
   TEST_TEXT = 'The quick brown fox jumps over the lazy dog. 0123456789' + #10;
 
@@ -91,7 +91,7 @@ var
 
   { settings (main thread writes, sound thread reads when a frame starts) }
   Band: Integer = NBANDS - 1;
-  Speed: Integer = 1;
+  Speed: Integer = 2;              { Fast: the least lag; Ctrl+P for Normal or Slow }
   Volume: Integer = 50;
   CfgPath: UnicodeString = '';
 

@@ -21,7 +21,7 @@ Made on, and for, the HP Jornada 720. Created by Kyriakos Christodoulou.
   after the first visit it works with no internet.
   *Apple does not let keyboards use the microphone at all, so an iPhone
   keyboard is impossible; on an iPhone the page is the way.*
-- **Handheld:** `HPC-Whisper-11.zip` from the same release. Copy the folder
+- **Handheld:** `HPC-Whisper-12.zip` from the same release. Copy the folder
   inside it to the handheld and run `whisper.exe`. Version 1.1 or later is
   needed (the sound format changed in 1.1).
 

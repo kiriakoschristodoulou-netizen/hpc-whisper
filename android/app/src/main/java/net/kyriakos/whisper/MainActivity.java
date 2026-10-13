@@ -345,10 +345,14 @@ public class MainActivity extends Activity {
         try {
             File f = new File(getCacheDir(), "hpc-whisper-recording.wav");
             writeWav(f, pcm, listener.rate);
-            recState.setText("Recorded " + (pcm.length / Math.max(1, listener.rate)) + " s (" + listener.sourceName + " microphone).");
+            String saved = saveToDownloads(f);
+            recState.setText("Recorded " + (pcm.length / Math.max(1, listener.rate)) + " s (" + listener.sourceName
+                    + " microphone)." + (saved != null ? " Saved in Downloads as " + saved + "." : "")
+                    + " Send it as a file or document: apps that send voice messages (WhatsApp audio, for one) "
+                    + "squeeze the sound and cut away the high tones that matter.");
             Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".files", f);
             Intent i = new Intent(Intent.ACTION_SEND);
-            i.setType("audio/wav");
+            i.setType("application/octet-stream");          // sent as a file, not squeezed as a voice message
             i.putExtra(Intent.EXTRA_STREAM, uri);
             i.putExtra(Intent.EXTRA_SUBJECT, "HPC Whisper recording");
             i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
@@ -356,6 +360,27 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             recState.setText("The recording could not be saved: " + e.getMessage());
         }
+    }
+
+    /** A copy in Downloads (Android 10 and later), easy to attach anywhere; the name, or null. */
+    private String saveToDownloads(File f) {
+        if (android.os.Build.VERSION.SDK_INT < 29) return null;
+        try {
+            String name = "HPC-Whisper-recording-" + new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
+                    .format(new java.util.Date()) + ".wav";
+            android.content.ContentValues v = new android.content.ContentValues();
+            v.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, name);
+            v.put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "audio/wav");
+            v.put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS);
+            Uri uri = getContentResolver().insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
+            if (uri == null) return null;
+            try (java.io.OutputStream o = getContentResolver().openOutputStream(uri);
+                 java.io.FileInputStream in = new java.io.FileInputStream(f)) {
+                byte[] b = new byte[65536]; int n;
+                while ((n = in.read(b)) > 0) o.write(b, 0, n);
+            }
+            return name;
+        } catch (Exception e) { return null; }
     }
 
     private static void writeWav(File f, short[] pcm, int rate) throws Exception {

@@ -58,7 +58,7 @@ jobs:
         run: |
           mkdir out
           cp android/app/build/outputs/apk/release/app-release.apk out/HPC-Whisper.apk
-          cp handheld/HPC-Whisper-11.zip out/
+          cp handheld/HPC-Whisper-12.zip out/
 
       - uses: actions/upload-artifact@v4
         with:
@@ -72,6 +72,6 @@ jobs:
           make_latest: 'true'
           body: |
             **HPC-Whisper.apk** – the HPC Whisper keyboard for Android: type on the handheld straight into any app.
-            **HPC-Whisper-11.zip** – the program for Windows CE handheld PCs with an ARM processor, such as the HP Jornada 720 (copy the folder inside to the handheld).
+            **HPC-Whisper-12.zip** – the program for Windows CE handheld PCs with an ARM processor, such as the HP Jornada 720 (copy the folder inside to the handheld).
             On an iPhone (Apple does not let keyboards use the microphone) or any other phone, use the receiver page: https://kiriakoschristodoulou-netizen.github.io/hpc-whisper/
           files: out/*
