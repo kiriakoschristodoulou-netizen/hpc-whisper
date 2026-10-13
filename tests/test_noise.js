@@ -9,3 +9,4 @@ for (let k = 0; k < 600; k++) {
 }
 const ms = Date.now() - t0;
 console.log('60 s of noise and sound: false frames ' + frames + ', unreadable ' + rx.stats.bad + '; processed in ' + (ms / 1000).toFixed(1) + ' s (' + (60000 / ms).toFixed(1) + 'x real time)');
+if (frames) process.exit(1);

@@ -13,3 +13,4 @@ for (let n = 0; n <= W.MAXLEN; n++) {
   else console.log('size', n, 'failed');
 }
 console.log(ok, 'of', W.MAXLEN + 1, 'sizes read back');
+if (ok !== W.MAXLEN + 1) process.exit(1);

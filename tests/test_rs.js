@@ -14,3 +14,4 @@ let fail = 0;
 for (const [ne, nf] of [[0, 0], [1, 0], [2, 0], [0, 1], [0, 2], [0, 3], [0, 4], [1, 1], [1, 2]])
   for (let t = 0; t < 3000; t++) if (!trial(ne, nf)) { fail++; if (fail < 5) console.log('failed', ne, 'errors', nf, 'erasures'); }
 console.log(fail ? 'FAILURES ' + fail : 'all corrections within 2e+f<=4 succeeded');
+if (fail) process.exit(1);

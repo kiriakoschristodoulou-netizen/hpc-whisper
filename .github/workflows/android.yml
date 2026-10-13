@@ -24,6 +24,7 @@ jobs:
       - name: Sender, page receiver and keyboard receiver, checked against each other
         working-directory: tests
         run: |
+          mkdir -p linux
           fpc -O2 -Fu../handheld -Fi../handheld -FUlinux wmsim.pas
           mkdir -p java/classes
           javac -d java/classes ../android/app/src/main/java/net/kyriakos/whisper/Receiver.java ../android/app/src/main/java/net/kyriakos/whisper/Mirror.java java/Decode.java

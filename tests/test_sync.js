@@ -19,7 +19,8 @@ function run(name, band, speed, spoilOpts, seed) {
   if (!ok) console.log('   got: ' + got + '\n  want: ' + want);
   return ok;
 }
-let pass = 0, tot = 0;
+let pass = 0, tot = 0, mustFail = 0;
+// the harsh dropout cases (a third of the time silent) show the limits; the others must always end right
 const cases = [
   ['clean, normal', 4, 1, {}],
   ['clean, fast', 4, 2, {}],
@@ -30,5 +31,10 @@ const cases = [
   ['noise bursts', 4, 1, { burst: 0.15 }],
   ['dropouts + bursts + hum, fast', 4, 2, { drop: 0.15, burst: 0.1, hum: 0.3 }],
 ];
-for (const [n, b, s, o] of cases) for (const seed of [1, 2]) { tot++; if (run(n, b, s, o, seed)) pass++; }
+for (const [n, b, s, o] of cases) for (const seed of [1, 2]) {
+  tot++;
+  const ok = run(n, b, s, o, seed);
+  if (ok) pass++; else if (!o.drop) mustFail++;
+}
 console.log(pass + ' of ' + tot + ' ended exactly right');
+if (mustFail) process.exit(1);

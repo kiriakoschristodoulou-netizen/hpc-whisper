@@ -14,3 +14,4 @@ for (const ms of [48, 32, 20]) for (const gap of [5, 15, 25, 40, 60]) for (const
   if (got && got.bytes.join() === bytes.join()) pass++; else console.log('lost: ' + ms + ' ms symbols, gap ' + gap + ' ms at ' + where);
 }
 console.log(pass + ' of ' + tot + ' frames with a gap read correctly');
+if (pass !== tot) process.exit(1);

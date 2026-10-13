@@ -24,3 +24,4 @@ for (const [name, b, s, o] of [['clean', 4, 1, {}], ['fast + noise', 2, 2, { noi
   if (!ok) console.log('  js:   ' + js + '\n  java: ' + java);
 }
 console.log(pass + ' of ' + tot + ' identical');
+if (pass !== tot) process.exit(1);
