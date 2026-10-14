@@ -32,7 +32,7 @@ const
   WM_UPDATE = WM_APP + 1;
   PLAY_BUF = 11025;                     { samples per buffer (0.25 s) }
   NPB = 4;
-  MIC_SECONDS = 25;
+  MIC_SECONDS = 30;
   MIC_CHUNK_MS = 500;
   MAXCHUNK = MIC_SECONDS * 1000 div MIC_CHUNK_MS;
 

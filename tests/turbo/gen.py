@@ -76,18 +76,22 @@ def ofdm(f0, step, ncar, sym_ms, cp_ms, nsym, seed, rate=R, peak=PEAK, pilot_eve
     for c in range(0, ncar, pilot_every):
         data[:, c] = 0
     phase = rng.uniform(0, 2 * np.pi, ncar)          # random start phases keep the peaks down
-    t = np.arange(-ncp, nfft) / rate
-    out = []
-    win = fade(nfft + ncp, rate, ms=1)
+    # each symbol runs on 1 ms past its end and fades in and out only inside the
+    # cyclic prefix and that overlap, so the part the receiver reads is untouched
+    nf = max(1, int(rate * 0.001))
+    t = np.arange(-ncp, nfft + nf) / rate
+    w = np.ones(ncp + nfft + nf)
+    r = 0.5 - 0.5 * np.cos(np.pi * np.arange(nf) / nf)
+    w[:nf] = r
+    w[-nf:] = r[::-1]
+    L = nfft + ncp
+    x = np.zeros((nsym + 1) * L + nf)
     freqs = f0 + step * np.arange(ncar)
     for s in range(nsym + 1):                        # symbol 0 is the reference
         if s > 0:
             phase = phase + data[s - 1] * np.pi / 2
-        seg = np.zeros(nfft + ncp)
-        for c in range(ncar):
-            seg += np.cos(2 * np.pi * freqs[c] * t + phase[c])
-        out.append(seg * win)
-    x = np.concatenate(out)
+        seg = np.cos(2 * np.pi * np.outer(t, freqs) + phase).sum(axis=1)
+        x[s * L:s * L + L + nf] += seg * w
     x *= peak / np.max(np.abs(x))
     return x, data.tolist(), freqs.tolist(), nfft, ncp
 
@@ -125,9 +129,10 @@ def main(outdir):
     gap(0.3)
     add('sync2', 'Marker', chirp(18000, 21500, 0.2))
     gap(0.2)
-    for i, (name, grid, k, ms) in enumerate([('m1', grid100, 4, 20), ('m2', grid100, 6, 10),
-                                             ('m3', grid200, 3, 10), ('m4', grid100, 8, 20)]):
-        nsym = int(1600 / ms)
+    # (6 of 36 at 10 ms was dropped: too close together even on a clean recording)
+    for i, (name, grid, k, ms) in [(0, ('m1', grid100, 4, 20)), (2, ('m3', grid200, 3, 10)),
+                                   (3, ('m4', grid100, 8, 20))]:
+        nsym = int(1200 / ms)
         x, sets = multitone(grid, k, ms, nsym, rng_seed + i)
         add(name, 'Multi-tone %d of %d, %d ms' % (k, len(grid), ms), x,
             dict(kind='multitone', grid=grid.tolist(), k=k, sym_ms=ms, sets=sets))
@@ -138,9 +143,20 @@ def main(outdir):
             ('o3', 18100, 100, 32, 20, 5.0, PEAK, 'OFDM 32 carriers, 20 ms'),
             ('o4', 18100, 100, 32, 10, 2.5, PEAK / 2, 'OFDM 32 carriers, quiet'),
             ('o5', 18100, 100, 32, 10, 2.5, 0.9, 'OFDM 32 carriers, LOUD: listen!')]):
-        nsym = int(2000 / (ms + cp))
+        nsym = int(1500 / (ms + cp))
         x, data, freqs, nfft, ncp = ofdm(f0, step, ncar, ms, cp, nsym, rng_seed + 10 + i, peak=peak)
         add(name, label, x, dict(kind='ofdm', freqs=freqs, nfft=nfft, ncp=ncp, data=data, peak=peak))
+        gap(0.1)
+    # ---- the fast (audible) mode: the whole range below the silent band ----
+    add('wsweep', 'Fast mode: sweep 0.5-21 kHz (audible)', chirp(500, 21000, 2.5), dict(f0=500, f1=21000))
+    gap(0.2)
+    for i, (name, step, ncar, ms, cp, label) in enumerate([
+            ('f1', 100, 180, 10, 2.5, 'Fast mode: 180 carriers 1-19 kHz (hiss)'),
+            ('f2', 200, 90, 10, 2.5, 'Fast mode: 90 carriers 200 Hz apart (hiss)'),
+            ('f3', 100, 180, 20, 5.0, 'Fast mode: 180 carriers, 20 ms (hiss)')]):
+        nsym = int(1500 / (ms + cp))
+        x, data, freqs, nfft, ncp = ofdm(1000, step, ncar, ms, cp, nsym, rng_seed + 20 + i, pilot_every=10)
+        add(name, label, x, dict(kind='ofdm', freqs=freqs, nfft=nfft, ncp=ncp, data=data, peak=PEAK, pilot_every=10))
         gap(0.1)
     add('sync3', 'End marker', chirp(18000, 21500, 0.2))
     gap(0.5)
@@ -148,6 +164,13 @@ def main(outdir):
     wav16(os.path.join(outdir, 'turbotest.wav'), x, R)
     with open(os.path.join(outdir, 'sections.json'), 'w') as f:
         json.dump(dict(rate=R, seed=rng_seed, total=len(x) / R, sections=sections), f)
+    with open(os.path.join(outdir, 'sections.inc'), 'w') as f:
+        f.write('{ the sections of turbotest.wav: start (ms) and what to show; made by gen.py }\nconst\n')
+        f.write('  NSEC = %d;\n' % len(sections))
+        f.write('  SEC_MS: array[0..NSEC - 1] of LongInt = (%s);\n' % ', '.join(str(int(round(s['start'] * 1000))) for s in sections))
+        f.write('  SEC_NAME: array[0..NSEC - 1] of UnicodeString = (\n')
+        f.write(',\n'.join("    '%s'" % s['label'] for s in sections) + ');\n')
+        f.write('  TEST_MS = %d;\n' % int(round(len(x) / R * 1000)))
 
     # ---- the phone's test sound, for the handheld's microphone (48 kHz) ----
     P = 48000
@@ -162,15 +185,21 @@ def main(outdir):
     for f in [1000, 2000, 4000, 6000, 8000, 10000, 12000, 14000, 16000, 17000, 18000, 19000, 20000, 21000, 22000]:
         ph.append(0.7 * np.sin(2 * np.pi * f * np.arange(int(0.4 * P)) / P) * fade(int(0.4 * P), P))
         ph.append(np.zeros(int(0.1 * P)))
-    xo, odata, ofreqs, nfft, ncp = ofdm(1500, 100, 48, 10, 2.5, 160, rng_seed + 99, rate=P, peak=0.7)
-    ph.append(xo)
-    ph.append(np.zeros(P // 4))
+    bursts = []
+    for f0, step, ncar, pe, seed, label in [(1500, 100, 48, 8, 99, '48 carriers 1.5-6.2 kHz'),
+                                            (1000, 100, 180, 10, 98, '180 carriers 1-19 kHz')]:
+        xo, odata, ofreqs, nfft, ncp = ofdm(f0, step, ncar, 10, 2.5, 160, rng_seed + seed, rate=P, peak=0.7,
+                                            pilot_every=pe)
+        bursts.append(dict(label=label, start=sum(len(p) for p in ph) / P - 0.5, freqs=ofreqs, nfft=nfft,
+                           ncp=ncp, data=odata, pilot_every=pe))
+        ph.append(xo)
+        ph.append(np.zeros(P // 4))
     ph.append(chirp(1000, 4000, 0.3, rate=P, amp=0.7))
     ph.append(np.zeros(P // 2))
     y = np.concatenate(ph)
     wav16(os.path.join(outdir, 'phone-test.wav'), y, P)
     with open(os.path.join(outdir, 'phone-test.json'), 'w') as f:
-        json.dump(dict(rate=P, total=len(y) / P, ofdm=dict(freqs=ofreqs, nfft=nfft, ncp=ncp, data=odata)), f)
+        json.dump(dict(rate=P, total=len(y) / P, bursts=bursts), f)
     print('turbotest.wav %.1f s, phone-test.wav %.1f s' % (len(x) / R, len(y) / P))
     for s in sections:
         print('  %5.2f s  %-5s %s' % (s['start'], s['name'], s['label']))

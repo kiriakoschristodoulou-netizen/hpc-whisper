@@ -56,6 +56,41 @@ def tone_power(x, a, b, f, rate=R):
     return abs(z) ** 2
 
 
+def wide_sweep(part, sw):
+    """the whole range: the speaker's response, its distortion (2f, 3f) and ghosts"""
+    y, pad = part('wsweep')
+    f0, f1, dur = sw['f0'], sw['f1'], sw['dur']
+    win = int(0.02 * R)
+    print('\nFAST MODE: RESPONSE OVER THE WHOLE RANGE (sweep 0.5-21 kHz), dB relative to the strongest')
+    rows = []
+    for tc in np.arange(0.05, dur - 0.05, 0.01):
+        a = pad + int(tc * R) - win // 2
+        t = np.arange(a - pad, a - pad + win) / R          # time within the sweep
+        ph = 2 * np.pi * (f0 * t + (f1 - f0) * t * t / (2 * dur))
+        seg = y[a:a + win]
+        f = f0 + (f1 - f0) * tc / dur
+        main = abs(np.sum(seg * np.exp(-1j * ph))) ** 2
+        h2 = abs(np.sum(seg * np.exp(-2j * ph))) ** 2 if 2 * f < R / 2 - 500 else np.nan
+        h3 = abs(np.sum(seg * np.exp(-3j * ph))) ** 2 if 3 * f < R / 2 - 500 else np.nan
+        g = abs(np.sum(seg * np.exp(-1j * (ph - 2 * np.pi * 900 * t)))) ** 2
+        rows.append((f, main, h2, h3, g))
+    rows = np.array(rows)
+    top = np.percentile(rows[:, 1], 95)
+    line = []
+    for fk in [500, 1000, 2000, 3000, 4000, 6000, 8000, 10000, 12000, 14000, 16000, 17000, 18000, 19000, 20000, 21000]:
+        k = np.abs(rows[:, 0] - fk) < 150
+        if k.any():
+            line.append('%4.1f:%+4.0f' % (fk / 1000, 10 * np.log10(np.median(rows[k, 1]) / top + 1e-12)))
+    for i in range(0, len(line), 6):
+        print('  ' + '  '.join(line[i:i + 6]))
+    def rel(col, lo, hi):
+        k = (rows[:, 0] >= lo) & (rows[:, 0] < hi) & ~np.isnan(rows[:, col])
+        return 10 * np.log10(np.median(rows[k, col] / rows[k, 1]) + 1e-12) if k.any() else float('nan')
+    print('  distortion (louder is worse): 2nd harmonic %+.0f dB, 3rd %+.0f dB (tones 1-5 kHz); '
+          'ghost 900 Hz lower: %+.0f dB at 1-8 kHz, %+.0f dB at 12-19 kHz'
+          % (rel(2, 1000, 5000), rel(3, 1000, 5000), rel(4, 1000, 8000), rel(4, 12000, 19000)))
+
+
 def main(rec, secfile):
     S = json.load(open(secfile))
     sec = {s['name']: s for s in S['sections']}
@@ -67,11 +102,29 @@ def main(rec, secfile):
     ref_wav = os.path.join(os.path.dirname(os.path.abspath(secfile)), 'turbotest.wav')
     T, _ = load(ref_wav)
     ref = chirp(18000, 21500, 0.2, R)
-    want = int((sec['sync3']['start'] - sec['sync1']['start']) * R)
-    a, q1 = find(x, ref, 0, max(len(ref) + 1, len(x) - want + int(0.3 * R)))
-    print('start marker at %.2f s in the recording (match %.2f)' % (a / R, q1))
-    if q1 < 0.3:
-        print('WARNING: the start marker is weak; the results below may be meaningless.')
+    # the three markers sound the same: find them all, and take the place for the
+    # start marker that agrees with the most of them (the recording may start late)
+    c = np.abs(fftconvolve(x, ref[::-1], mode='valid'))
+    off = [int((sec[m]['start'] - sec['sync1']['start']) * R) for m in ('sync1', 'sync2', 'sync3')]
+
+    def sharp(p):                                   # how far a match stands above its surroundings
+        if not 0 <= p < len(c):
+            return 0.0
+        w = c[max(0, p - int(0.3 * R)):p + int(0.3 * R)]
+        return float(c[max(0, p - 20):p + 20].max() / (np.median(w) + 1e-12))
+
+    best = (-1.0, 0)
+    for p in np.argsort(c)[-300:]:
+        for i in range(3):
+            a0 = int(p) - off[i]
+            sc = sum(min(sharp(a0 + o), 30.0) for o in off)
+            if sc > best[0]:
+                best = (sc, a0)
+    a = best[1]
+    q1 = sum(sharp(a + o) > 8 for o in off)
+    print('markers heard: %d of 3; the test starts at %.2f s in the recording' % (q1, a / R))
+    if q1 < 2:
+        print('WARNING: the markers are weak; the results below may be meaningless.')
     # each part is found on its own (start and end), so a pause in the playback
     # or a difference between the two clocks spoils nothing
     shift = a - int(sec['sync1']['start'] * R)        # recording index minus test index
@@ -145,7 +198,7 @@ def main(rec, secfile):
 
     # ---- multi-tone ----
     print('\nMULTI-TONE (several tones at once)')
-    for name in ['m1', 'm2', 'm3', 'm4']:
+    for name in [t['name'] for t in S['sections'] if t.get('kind') == 'multitone']:
         s = sec[name]
         y, pad = part(name)
         grid, k, ms = np.array(s['grid']), s['k'], s['sym_ms']
@@ -168,7 +221,10 @@ def main(rec, secfile):
 
     # ---- OFDM ----
     print('\nOFDM (many carriers, phase coded)')
-    for name in ['o1', 'o2', 'o3', 'o4', 'o5']:
+    for name in [t['name'] for t in S['sections'] if t.get('kind') == 'ofdm']:
+        if name == 'f1':
+            wide_sweep(part, sec['wsweep'])
+            print('\nFAST MODE (audible, many carriers over the whole range)')
         s = sec[name]
         y, pad = part(name)
         freqs, nfft, ncp = np.array(s['freqs']), s['nfft'], s['ncp']
@@ -186,7 +242,7 @@ def main(rec, secfile):
             Z = np.array(Z)
             d = Z[1:] * np.conj(Z[:-1])
             # the pilots (every 8th carrier) show the common phase drift per symbol
-            pil = d[:, ::8].sum(axis=1)
+            pil = d[:, ::s.get('pilot_every', 8)].sum(axis=1)
             d = d * np.exp(-1j * np.angle(pil))[:, None]
             dec = np.mod(np.round(np.angle(d) / (np.pi / 2)), 4).astype(int)
             errs = (dec != data)
@@ -212,6 +268,15 @@ def main(rec, secfile):
             bitsc = 4 if sn > 22 else 3 if sn > 17 else 2 if sn > 11 else 1 if sn > 6 else 0
             cap += bitsc
         print('     with bits fitted to each carrier: ~%5.0f bit/s before error protection' % (cap * R / (nfft + ncp)))
+        if freqs[-1] - freqs[0] > 5000:                 # the wide ones: how each stretch of the range did
+            out = []
+            for lo in range(int(freqs[0] // 2000 * 2000), int(freqs[-1]) + 1, 2000):
+                k = (freqs >= lo) & (freqs < lo + 2000)
+                if k.any():
+                    out.append('%2d-%2d kHz: %3.0f%% err, %3.0f dB' % (lo // 1000, lo // 1000 + 2, 100 * per[k].mean(),
+                                                                      np.median(snr_c[k])))
+            for i in range(0, len(out), 3):
+                print('       ' + '   '.join(out[i:i + 3]))
 
 
 if __name__ == '__main__':

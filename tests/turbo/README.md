@@ -4,6 +4,7 @@ Measures how much more the inaudible band can carry on real hardware.
 
 - `gen.py outdir` makes `turbotest.wav`, `sections.json`, `phone-test.wav`, `phone-test.json`
   (fixed seeds, so the same files every time).
+- Both the silent band (18-21.5 kHz) and a fast audible mode (1-19 kHz, many carriers) are measured.
 - `turbotest.pas` is the handheld program: play test, microphone test, speed test.
   `./build.sh turbotest.pas` for the handheld, `./test.sh turbotest.pas` under Wine.
   `sections.inc` is the part table from `sections.json`.
