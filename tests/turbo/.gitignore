@@ -1,0 +1,10 @@
+w64/
+__pycache__/
+*.exe
+*.o
+*.or
+*.res
+*.obj
+*.wav
+sections.json
+phone-test.json
