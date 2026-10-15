@@ -1,4 +1,4 @@
-Whisper Tools 3.1 (formerly HPC Whisper)
+Whisper Tools 3.2 (formerly HPC Whisper)
 by Kyriakos Christodoulou
 
 Type on a Windows CE handheld PC and the text goes straight into any app
@@ -7,7 +7,7 @@ ways, and see the phone's screen on the handheld. It all travels as
 sound: no cable, no network. Made on, and for, the HP Jornada 720.
 
 THE PHONE
-  Android: install Whisper-Tools.apk (version 3.1 or later) from
+  Android: install Whisper-Tools.apk (version 3.2 or later) from
   https://github.com/kiriakoschristodoulou-netizen/hpc-whisper/releases
   Its home screen has a button for each tool. To type: set up the
   Keyboard, then in any app switch to the Whisper Tools keyboard. For
@@ -73,6 +73,17 @@ SOUND
   Typing is silent (above 20 kHz). Files and the remote's screen use the
   fast channels: a soft hiss while they move, quiet otherwise. Keep the
   phone within about a metre and its media volume at about half.
+
+WHAT IS NEW IN 3.2
+  The first device test found the handheld's processor could not keep up
+  with listening (it froze, and heard nothing). Listening now takes about
+  a third of the processor instead of more than twice all of it; the fast
+  receiver listens only when a file, the remote or a link check is coming;
+  if the processor ever falls behind, sound is skipped instead of the
+  program freezing. The silent channel is louder, a steady tone (some
+  phones make one at 20 kHz) no longer blinds the receivers, and the start
+  of a frame is found more surely. To receive a file from the phone, the
+  Files screen no longer needs to be open: the phone announces it.
 
 WHAT IS NEW IN 3.1
   The new name, Whisper Tools, and a home screen with a button for each

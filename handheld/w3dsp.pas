@@ -73,28 +73,29 @@ begin
   while len <= 512 do
   begin
     half := len shr 1; stp := 4096 div len;
-    i := 0;
-    while i < 512 do
+    { each twiddle once, then every butterfly that uses it }
+    for k := 0 to half - 1 do
     begin
-      for k := 0 to half - 1 do
+      wr := COS4K[(k * stp) and 4095];
+      if sign < 0 then wi := -COS4K[((k * stp) - 1024) and 4095] else wi := COS4K[((k * stp) - 1024) and 4095];
+      a := k;
+      while a < 512 do
       begin
-        wr := COS4K[(k * stp) and 4095];
-        if sign < 0 then wi := -COS4K[((k * stp) - 1024) and 4095] else wi := COS4K[((k * stp) - 1024) and 4095];
-        a := i + k; b := a + half;
-        xr := (re[b] * wr - im[b] * wi) div 16384;
-        xi := (re[b] * wi + im[b] * wr) div 16384;
+        b := a + half;
+        xr := SarLongint(re[b] * wr - im[b] * wi, 14);
+        xi := SarLongint(re[b] * wi + im[b] * wr, 14);
         if halve then
         begin
-          re[b] := (re[a] - xr) div 2; im[b] := (im[a] - xi) div 2;
-          re[a] := (re[a] + xr) div 2; im[a] := (im[a] + xi) div 2;
+          re[b] := SarLongint(re[a] - xr, 1); im[b] := SarLongint(im[a] - xi, 1);
+          re[a] := SarLongint(re[a] + xr, 1); im[a] := SarLongint(im[a] + xi, 1);
         end
         else
         begin
           re[b] := re[a] - xr; im[b] := im[a] - xi;
           re[a] := re[a] + xr; im[a] := im[a] + xi;
         end;
+        Inc(a, len);
       end;
-      Inc(i, len);
     end;
     len := len shl 1;
   end;
@@ -178,7 +179,7 @@ begin
 end;
 
 function RsProcess(var r: TResampler; const inp: array of SmallInt; inOff, n: Integer; var outp: array of SmallInt; outOff: Integer): Integer;
-var w, i, take, k, p, s0, keep, c0, c1, wt: Integer; acc: LongInt; f: LongWord;
+var w, i, take, k, p, s0, keep: Integer; acc: LongInt; f: LongWord; hp, cp: PSmallInt;
 begin
   w := 0; i := 0;
   while i < n do
@@ -189,23 +190,16 @@ begin
     Inc(r.have, take); Inc(i, take);
     while r.posI + RSM_H + 1 < r.have do
     begin
-      p := r.posF shr 24;                       { which of the 256 sub-steps }
-      wt := (r.posF shr 8) and $FFFF;           { how far towards the next, of 65536 }
+      { the nearest of the 256 sub-steps (at most 1/512 of a sample off: a phase error of
+        0.006 radians at 20 kHz, far below the noise), so each tap is one multiply }
+      p := (r.posF shr 23 + 1) shr 1;
+      if p > RSM_PH then p := RSM_PH;          { the table has one more row, for the next sample }
       s0 := r.posI - (RSM_H - 1);
+      hp := @r.hist[s0];
+      if r.up then cp := @RSM_UP[p * RSM_TAPS] else cp := @RSM_DOWN[p * RSM_TAPS];
       acc := 0;
-      if r.up then
-        for k := 0 to RSM_TAPS - 1 do
-        begin
-          c0 := RSM_UP[p * RSM_TAPS + k]; c1 := RSM_UP[(p + 1) * RSM_TAPS + k];
-          acc := acc + r.hist[s0 + k] * (c0 + ((c1 - c0) * wt) div 65536);
-        end
-      else
-        for k := 0 to RSM_TAPS - 1 do
-        begin
-          c0 := RSM_DOWN[p * RSM_TAPS + k]; c1 := RSM_DOWN[(p + 1) * RSM_TAPS + k];
-          acc := acc + r.hist[s0 + k] * (c0 + ((c1 - c0) * wt) div 65536);
-        end;
-      acc := acc div 16384;
+      for k := 0 to RSM_TAPS - 1 do acc := acc + LongInt(hp[k]) * cp[k];
+      acc := SarLongint(acc, 14);
       if acc > 32767 then acc := 32767 else if acc < -32767 then acc := -32767;
       outp[outOff + w] := acc; Inc(w);
       f := r.posF + r.stepF;

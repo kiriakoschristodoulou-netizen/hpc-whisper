@@ -52,6 +52,8 @@ var
   InPeak: Integer;                     { loudest sample of the last half second }
   RateMeasured: Boolean;
   FramesOut, FramesIn, FramesBad: Integer;
+  Overruns: Integer;                   { buffers not listened to: the processor fell behind }
+  RateOdd: Int64;                      { an unbelievable rate measurement (x 100), 0 = none }
   MissingNames: UnicodeString = '';
 
 procedure AudioResolve;
@@ -334,7 +336,7 @@ end;
 
 function InThread(param: Pointer): DWORD; API;
 var fmt: TWaveFormat; i, k, n, pk, v, fails0: Integer; conv: array[0..IN_N * 2] of SmallInt;
-    t0, now: LongWord; counted: Int64; r100, lastSet: Int64; peakAt: LongWord; m: TBitMap;
+    t0, now: LongWord; counted: Int64; r100, lastSet: Int64; peakAt: LongWord; m: TBitMap; behind: Boolean;
 begin
   Result := 0;
   InOk := False;
@@ -364,21 +366,32 @@ begin
     if (InHdr[k].flags and 1) = 0 then begin Sleep(10); Continue; end;
     n := InHdr[k].recorded div 2;
     now := GetTickCount;
+    { behind: every buffer is already full, so sound is being lost while this thread catches up.
+      Then this buffer is not listened to (it would only make the lag worse), and the rate is not
+      measured (lost sound would make it look slow). }
+    behind := True;
+    for i := 1 to IN_NBUF - 1 do if (InHdr[(k + i) mod IN_NBUF].flags and 1) = 0 then behind := False;
+    if behind then begin Inc(Overruns); t0 := 0; counted := 0; end;
     { the real rate: samples delivered against the clock, from 2 s after the start (when the buffers flow evenly) }
     counted := counted + n;
     if (t0 = 0) and (counted >= 2 * 44100) then begin t0 := now; counted := 0; end
     else if (t0 <> 0) and (now - t0 >= 10000) then
     begin
       r100 := counted * 100000 div (now - t0);
-      if Abs(r100 - lastSet) * 1000 > lastSet then          { more than 0.1 % off: use it at once }
+      { only a believable rate (the Jornada 720 measured 43,230 to 43,310 against 44,100) }
+      if (r100 >= 4200000) and (r100 <= 4550000) then
       begin
-        InRate100 := r100; lastSet := r100; RsSetRates(Rs, InRate100, Int64(MRATE) * 100);
+        if Abs(r100 - lastSet) * 1000 > lastSet then          { more than 0.1 % off: use it at once }
+        begin
+          InRate100 := r100; lastSet := r100; RsSetRates(Rs, InRate100, Int64(MRATE) * 100);
+        end
+        else if Abs(r100 - lastSet) * 10000 > lastSet then     { more than 0.01 %: move to it }
+        begin
+          InRate100 := (InRate100 * 3 + r100) div 4; lastSet := InRate100; RsSetRates(Rs, InRate100, Int64(MRATE) * 100);
+        end;
+        RateMeasured := True;
       end
-      else if Abs(r100 - lastSet) * 10000 > lastSet then     { more than 0.01 %: move to it }
-      begin
-        InRate100 := (InRate100 * 3 + r100) div 4; lastSet := InRate100; RsSetRates(Rs, InRate100, Int64(MRATE) * 100);
-      end;
-      RateMeasured := True;
+      else RateOdd := r100;
       if now - t0 > 60000 then begin t0 := now; counted := 0; end;    { keep measuring, over the last minute }
     end;
     { loudness for the screen }
@@ -396,10 +409,13 @@ begin
     end;
     PendingN := 0;
     LeaveCriticalSection(Lock);
-    i := RsProcess(Rs, InBuf[k], 0, n, conv, 0);
-    RxPush(RxSD, conv, 0, i);
-    Collect(RxSD);
-    if ListenFast then begin RxPush(RxFD, conv, 0, i); Collect(RxFD); end;
+    if not behind then
+    begin
+      i := RsProcess(Rs, InBuf[k], 0, n, conv, 0);
+      RxPush(RxSD, conv, 0, i);
+      Collect(RxSD);
+      if ListenFast then begin RxPush(RxFD, conv, 0, i); Collect(RxFD); end;
+    end;
     if RxSD.fails + RxFD.fails <> fails0 then begin fails0 := RxSD.fails + RxFD.fails; FramesBad := fails0; Notify; end;
     InHdr[k].flags := InHdr[k].flags and not DWORD(1);       { done: no longer (it stays prepared) }
     pInAdd(hIn, @InHdr[k], SizeOf(TWaveHdr));

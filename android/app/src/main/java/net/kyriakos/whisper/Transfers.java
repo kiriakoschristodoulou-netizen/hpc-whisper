@@ -122,6 +122,9 @@ public final class Transfers implements Link.Client {
             long t = Math.max(now, link.playEndMs());
             FileSend.Msg m = it.send.next(t);
             if (m != null) {
+                // the offer goes on the silent channel too: the handheld listens there all the time, and
+                // turns its fast receiver on when it hears one
+                if (m.type == FileSend.T_OFFER) link.send(Channel.SD, m.type, m.payload);
                 if (!link.send(Channel.FD, m.type, m.payload)) { it.state = "The phone's speaker is not available"; }
                 else it.state = "Sending";
             }

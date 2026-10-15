@@ -72,7 +72,7 @@ public final class Link {
     public BitMap sendMap(int ch) { BitMap m = sendMaps[ch]; return m != null ? m : BitMap.standard(Channel.get(ch)); }
 
     /** Peak loudness of what the phone sends on a channel (of full scale). */
-    public static float level(int ch) { return ch == Channel.FD ? 0.35f : 0.7f; }
+    public static float level(int ch) { return ch == Channel.FD ? 0.35f : 0.9f; }
 
     public boolean send(int ch, int type, byte[] payload) {
         if (!speakerOk) return false;

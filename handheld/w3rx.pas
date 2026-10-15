@@ -29,7 +29,7 @@ type
   TCarr = array[0..MAXCAR - 1] of LongInt;
   TRx = record
     ch: Integer;
-    lag: Integer;
+    lag, lagShift: Integer;
     buf: array[0..RB - 1] of SmallInt;
     fb: array[0..RB - 1] of SmallInt;
     metric: array[0..RB - 1] of SmallInt;     { Q12 }
@@ -69,7 +69,7 @@ function RxTake(var r: TRx; var m: TRxMsg): Boolean;
 
 implementation
 
-const IDLE = 0; SEEK = 1; DECODE = 2;
+const IDLE = 0; SEEK = 1; DECODE = 2; DECIM = 4;
 
 procedure BqSet(var b: TBiquad; const c: array of LongInt);
 begin
@@ -80,7 +80,7 @@ end;
 function BqRun(var b: TBiquad; x: LongInt): LongInt; inline;
 var y: LongInt;
 begin
-  y := (b.b0 * x + b.b1 * b.x1 + b.b2 * b.x2 - b.a1 * b.y1 - b.a2 * b.y2) div 16384;
+  y := SarLongint(b.b0 * x + b.b1 * b.x1 + b.b2 * b.x2 - b.a1 * b.y1 - b.a2 * b.y2, 14);
   b.x2 := b.x1; b.x1 := x; b.y2 := b.y1; b.y1 := y;
   Result := y;
 end;
@@ -91,6 +91,7 @@ begin
   FillChar(r, SizeOf(r), 0);
   r.ch := ch;
   r.lag := NFFT div Chans[ch].syncStep;
+  r.lagShift := 0; while (1 shl r.lagShift) < r.lag do Inc(r.lagShift);
   StdMap(ch, r.std);
   for i := 0 to 31 do r.haveMap[i] := False;
   r.maps[0] := r.std; r.haveMap[0] := True;
@@ -99,7 +100,7 @@ begin
     BqSet(r.pre[0], BQ_SILENT1); BqSet(r.pre[1], BQ_SILENT2); r.npre := 2;
   end
   else begin BqSet(r.pre[0], BQ_FAST); r.npre := 1; end;
-  r.floor := 1;
+  r.floor := 0;
   r.scan := 600;
   r.state := IDLE;
   SetLength(r.bitsBuf, MAXCODED + 64);
@@ -248,10 +249,25 @@ begin
   if sa > 0 then coh := (Int64(MagI(LongInt(mr), LongInt(mi))) * 4096) div sa else coh := 0;
 end;
 
+{ the share of the power on the carriers S leaves off, of 4096 }
+function OffShare(var r: TRx; const yre, yim: TCarr): Integer;
+var c: Integer; p, off, all: Int64;
+begin
+  off := 0; all := 1;
+  for c := 0 to Chans[r.ch].n - 1 do
+  begin
+    p := Int64(yre[c]) * yre[c] + Int64(yim[c]) * yim[c];
+    all := all + p;
+    if (Chans[r.ch].bins[c] mod Chans[r.ch].syncStep) <> 0 then off := off + p;
+  end;
+  Result := (off * 4096) div all;
+end;
+
 procedure Fail(var r: TRx; const why: string);
 begin
   Inc(r.fails);
   r.lastFail := why;
+  {$ifdef RXDEBUG}WriteLn('fail ', why, ' sym0 ', r.sym0);{$endif}
   r.state := IDLE;
   r.scan := r.sym0 + NSYM;
 end;
@@ -400,23 +416,26 @@ end;
 
 procedure StepRx(var r: TRx);
 var last, d, dS, w, start, early8, st, bestStart: Int64; k, mx, mv, coh, cs, span, bestQ: Integer; e: LongInt; yre, yim: TCarr;
-    h: array[0..HDR_CODED - 1] of Byte; i, hb: Integer;
+    h: array[0..HDR_CODED - 1] of Byte; i, hb, offS: Integer;
 begin
   if r.state = IDLE then
   begin
-    last := r.t - 2 * r.lag;
+    last := r.t - 2 * r.lag - DECIM;              { the metric is written DECIM samples at a time }
     while r.scan <= last do
     begin
       k := r.scan and RMASK;
       e := r.energy[k];
-      if (r.metric[k] > 1843) and (e > r.floor + r.floor div 2) and (e > 2) then
+      if r.floor = 0 then r.floor := e + 1;          { the first look }
+      { a frame: the two halves alike (S), and clearly louder than the recent average. A steady tone
+        is alike too, but never louder than its own average: it does not start a frame. }
+      if (r.metric[k] > 1843) and ((e shr 1) > r.floor) and (e > 2) then
       begin
+        {$ifdef RXDEBUG}WriteLn('trigger at ', r.scan, ' e ', e, ' floor ', r.floor, ' metric ', r.metric[k]);{$endif}
         r.state := SEEK; r.trig := r.scan; Exit;
       end;
-      if e < r.floor then r.floor := e
-      else r.floor := r.floor + (e - r.floor) div 32768 + 1 * Ord(e > r.floor + 32768);
+      r.floor := r.floor + SarLongint(e - r.floor, 10);     { about 80 ms }
       if r.floor < 1 then r.floor := 1;
-      Inc(r.scan);
+      Inc(r.scan, DECIM);
     end;
     Exit;
   end;
@@ -429,7 +448,7 @@ begin
       mv := r.metric[(r.trig + k) and RMASK];
       if mv > mx then mx := mv;
     end;
-    if mx < 2048 then begin r.state := IDLE; r.scan := r.trig + 1; Exit; end;
+    if mx < 2048 then begin {$ifdef RXDEBUG}WriteLn('seek: low metric ', mx, ' at ', r.trig);{$endif} r.state := IDLE; r.scan := r.trig + 1; Exit; end;
     { the metric climbs in a straight line for one lag as the window enters S and is level while it
       stays inside: the frame starts half a lag after it is half way up }
     dS := r.trig;
@@ -452,14 +471,20 @@ begin
       if (st + NCP - RBACK < 0) or (st + 2 * NSYM + NFFT > r.t) then Continue;
       SymFft(r, st + NCP - RBACK, yre, yim);
       Slope(r, yre, yim, False, early8, cs);
+      offS := OffShare(r, yre, yim);
       SymFft(r, st + NSYM + NCP - RBACK, yre, yim);
       Slope(r, yre, yim, True, early8, coh);
+      { S leaves every second carrier off and R fills them all: in the right place the "off" carriers hold
+        nothing in S and their share in R. With few carriers the slopes alone match almost as well 256
+        samples away. }
+      cs := cs + 2 * (OffShare(r, yre, yim) - offS);
+      {$ifdef RXDEBUG}WriteLn('  candidate ', k, ' start ', st, ' S ', cs, ' R ', coh);{$endif}
       if cs + coh > bestQ then begin bestQ := cs + coh; bestStart := st; end;
     end;
     start := bestStart;
     SymFft(r, start + NSYM + NCP - RBACK, yre, yim);
     Slope(r, yre, yim, True, early8, coh);
-    if coh < 2048 then begin r.state := IDLE; r.scan := r.trig + 64; Exit; end;
+    if coh < 2048 then begin {$ifdef RXDEBUG}WriteLn('seek: coh ', coh, ' trig ', r.trig, ' start ', start);{$endif} r.state := IDLE; r.scan := r.trig + 64; Exit; end;
     r.sym0 := start; r.prevRe := yre; r.prevIm := yim;
     r.s := 2; r.adjust := 0; r.tau8 := 0; r.moved := 0;
     hb := MapBits(r.std);
@@ -511,7 +536,7 @@ begin
 end;
 
 procedure RxPush(var r: TRx; const x: array of SmallInt; off, n: Integer);
-var i, j, k: Integer; v, f, a, o: LongInt; d: Int64; e, mx: Int64; mt: Int64;
+var i, j, k: Integer; v, f, a, o, mt, m32, p32: LongInt; d, e, mx, pp: Int64; el: LongInt;
 begin
   for i := 0 to n - 1 do
   begin
@@ -523,24 +548,37 @@ begin
     if f > 32767 then f := 32767 else if f < -32767 then f := -32767;
     r.fb[k] := f;
     a := r.fb[(r.t - r.lag) and RMASK]; o := r.fb[(r.t - 2 * r.lag) and RMASK];
-    r.P := r.P + a * f - o * a;
+    r.P := r.P + a * f - o * a;           { each product fits 32 bits, their difference may not }
     r.E2 := r.E2 + f * f - a * a;
     r.E1 := r.E1 + a * a - o * o;
     Inc(r.resum);
     if r.resum >= 8192 then begin r.resum := 0; Recompute(r); end;
-    if r.t >= 2 * r.lag then
+    { the metric and the energy, every DECIM samples (the processor of a handheld has no time for more) }
+    if ((r.t and (DECIM - 1)) = 0) and (r.t >= 2 * r.lag) then
     begin
       d := r.t - 2 * r.lag + 1;
       e := r.E2; if e < 0 then e := 0;
       mx := r.E1; if e > mx then mx := e;
-      if mx < 1 then mx := 1;
-      mt := (r.P * 4096) div mx;
-      if mt > 4096 then mt := 4096 else if mt < -4096 then mt := -4096;
-      r.metric[d and RMASK] := mt;
-      r.energy[d and RMASK] := e div r.lag;
+      pp := r.P;
+      if (pp <= 0) or (mx < 1) then mt := 0
+      else
+      begin
+        { P / max(E1, E2) in 1/4096, with both scaled down to 32-bit numbers first }
+        while mx >= (Int64(1) shl 19) do begin mx := mx shr 2; pp := pp shr 2; end;
+        m32 := mx; p32 := pp;
+        if m32 < 1 then m32 := 1;
+        mt := (p32 * 4096) div m32;
+        if mt > 4096 then mt := 4096;
+      end;
+      el := e shr r.lagShift;
+      for j := 0 to DECIM - 1 do
+      begin
+        r.metric[(d - j) and RMASK] := mt;
+        r.energy[(d - j) and RMASK] := el;
+      end;
     end;
     Inc(r.t);
-    StepRx(r);
+    if (r.t and (DECIM - 1)) = 0 then StepRx(r);
   end;
 end;
 

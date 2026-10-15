@@ -62,11 +62,11 @@ public final class Tx {
                 out[base + k] += re[((k % N) + N) % N] * w;
             }
         }
-        // level: RMS a third of the peak, then clip at the peak
+        // level: RMS a third of the peak, then clip at the peak (silent channels: 1/2.2, a little clipping, more power)
         double e = 0;
         int from = 2 * SYM;
         for (int i = from; i < out.length; i++) e += out[i] * out[i];
-        float g = (float) (level / 3 / Math.sqrt(e / Math.max(1, out.length - from) + 1e-20));
+        float g = (float) (level / (ch.silent ? 2.2 : 3) / Math.sqrt(e / Math.max(1, out.length - from) + 1e-20));
         for (int i = 0; i < out.length; i++) { float v = out[i] * g; out[i] = v > level ? level : v < -level ? -level : v; }
         return out;
     }

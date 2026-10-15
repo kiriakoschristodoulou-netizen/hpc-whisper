@@ -95,7 +95,8 @@ begin
   end;
   if isSilent then Chans[id].defBits := 2 else Chans[id].defBits := 1;
   Chans[id].syncStep := 2 * step;
-  if isSilent then Chans[id].level := 16384 else Chans[id].level := 4096;
+  { silent: strong, the speakers are weak above 20 kHz (Jornada 720 test, 15 October); fast: a quarter }
+  if isSilent then Chans[id].level := 29000 else Chans[id].level := 8192;
 end;
 
 procedure InitAll;

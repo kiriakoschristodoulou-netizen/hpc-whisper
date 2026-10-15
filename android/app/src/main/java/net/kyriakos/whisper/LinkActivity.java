@@ -83,6 +83,7 @@ public class LinkActivity extends ToolActivity {
         sp.append("Fast, handheld → phone: ").append(fastUp.isEmpty() ? "not measured" : fastUp).append("\n");
         sp.append("Fast, phone → handheld: ").append(l.fastDownTrained() ? kbps(l.sendMap(Channel.FD)) : fastDown.isEmpty() ? "not measured" : fastDown);
         if (on && l.listener.measuredRate > 0) sp.append(String.format(Locale.US, "\nMicrophone runs at %.0f samples/s", l.listener.measuredRate));
+        if (on) sp.append("\nFrames from the handheld: ").append(l.listener.framesW3).append(" read, ").append(l.listener.failsW3).append(" not readable");
         speeds.setText(sp.toString());
         if (on) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }

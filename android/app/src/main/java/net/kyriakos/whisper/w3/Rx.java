@@ -33,7 +33,7 @@ public final class Rx {
     private double P, E1, E2;
     private final Biquad[] pre;
     private final int lag;
-    private float floor = 1e-7f;
+    private float floor = -1;
     private int resum = 0;
 
     // state
@@ -107,8 +107,11 @@ public final class Rx {
             while (scan <= last) {
                 int k = (int) (scan & MASK);
                 float e = energy[k];
-                if (metric[k] > 0.45f && e > 1.5f * floor && e > 1e-10f) { state = SEEK; trig = scan; return; }
-                if (e < floor) floor = e; else floor += (e - floor) * 2e-5f;
+                if (floor < 0) floor = e + 1e-12f;          // the first look
+                // a frame: the two halves alike (S), and clearly louder than the recent average. A steady
+                // tone (some phones make one at 20 kHz) is alike too, but never louder than its own average.
+                if (metric[k] > 0.45f && e > 2f * floor && e > 1e-10f) { state = SEEK; trig = scan; return; }
+                floor += (e - floor) * (1f / 4096);         // about 80 ms
                 scan++;
             }
         } else if (state == SEEK) {
@@ -137,7 +140,11 @@ public final class Rx {
                 long st = start + (long) k * span;
                 if (k != 0 && span >= Channel.N) continue;
                 if (st + Channel.CP - BACK < 0 || !have(st + 2 * Channel.SYM, Channel.N)) continue;
-                double q = slope(fft(st + Channel.CP - BACK), false)[1] + slope(fft(st + Channel.SYM + Channel.CP - BACK), true)[1];
+                float[][] ys = fft(st + Channel.CP - BACK), yr = fft(st + Channel.SYM + Channel.CP - BACK);
+                // S leaves every second carrier off and R fills them all: so in the right place the "off"
+                // carriers hold nothing in S and their share in R. With few carriers the slopes alone can
+                // match almost as well 256 samples away.
+                double q = slope(ys, false)[1] + slope(yr, true)[1] + 2 * (offShare(yr) - offShare(ys));
                 if (q > bestQ) { bestQ = q; bestStart = st; }
             }
             start = bestStart;
@@ -204,6 +211,17 @@ public final class Rx {
         frames++;
         float snr = (float) (10 * Math.log10(errN / Math.max(1e-6, errSum)));
         sink.onMessage(this, type, msg, snr, fixed[0]);
+    }
+
+    /** The share of the power on the carriers S leaves off. */
+    private double offShare(float[][] y) {
+        double off = 0, all = 1e-30;
+        for (int c = 0; c < ch.count(); c++) {
+            double p = y[0][c] * y[0][c] + y[1][c] * y[1][c];
+            all += p;
+            if (ch.bins[c] % ch.syncStep() != 0) off += p;
+        }
+        return off / all;
     }
 
     private float[][] fft(long w) {

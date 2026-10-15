@@ -115,14 +115,15 @@ begin
       acc[base + k] := acc[base + k] + v;
     end;
   end;
-  { loudness: RMS a third of the peak (data symbols), then clip at the peak }
+  { loudness: RMS a third of the peak (data symbols), then clip at the peak; the silent channels
+    RMS 1/2.2 of the peak (a little clipping, 3.5 dB more power per carrier) }
   if level <= 0 then level := C.level;
   from := 2 * NSYM;
   e := 0;
   for i := from to total - 1 do e := e + Int64(acc[i]) * acc[i];
   if total - from > 0 then g := ISqrt(e div (total - from)) else g := 1;
   if g < 1 then g := 1;
-  gq := (Int64(level) * 65536) div (3 * g);
+  if C.silent then gq := (Int64(level) * 65536 * 10) div (22 * g) else gq := (Int64(level) * 65536) div (3 * g);
   SetLength(Result, total);
   for i := 0 to total - 1 do
   begin

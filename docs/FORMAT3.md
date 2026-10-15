@@ -249,7 +249,9 @@ new ones. After each 16 it waits up to 1.5 s for FILE_NEED.
 quiet for 250 ms after an offer or a packet. It keeps a finished transfer for
 2 minutes, to answer the sender's questions.
 
-**Channels.** The phone sends files on FD. The handheld sends on FU (a soft
+**Channels.** The phone sends files on FD, and each offer on SD as well: the handheld's processor
+has no time to listen on FD all the time, so it turns that receiver on when it hears an offer (or
+while its Files or Remote screen is open, or during a link check). The handheld sends on FU (a soft
 hiss, the default) or on its silent channel (slow). Answers go on the
 receiver's silent channel.
 

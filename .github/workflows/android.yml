@@ -78,7 +78,7 @@ jobs:
         run: |
           mkdir out
           cp android/app/build/outputs/apk/release/app-release.apk out/Whisper-Tools.apk
-          cp handheld/Whisper-Tools-31.zip out/
+          cp handheld/Whisper-Tools-32.zip out/
 
       - uses: actions/upload-artifact@v4
         with:
@@ -92,6 +92,6 @@ jobs:
           make_latest: 'true'
           body: |
             **Whisper-Tools.apk** – Whisper Tools for Android (formerly HPC Whisper): the keyboard (type on the handheld straight into any app, with all keys), files both ways, and the picture remote.
-            **Whisper-Tools-31.zip** – Whisper Tools for Windows CE handheld PCs with an ARM processor, such as the HP Jornada 720 (copy the folder inside to the handheld and run WhisperTools.exe).
+            **Whisper-Tools-32.zip** – Whisper Tools for Windows CE handheld PCs with an ARM processor, such as the HP Jornada 720 (copy the folder inside to the handheld and run WhisperTools.exe).
             On an iPhone (Apple does not let keyboards use the microphone) or any other phone, use the receiver page: https://kiriakoschristodoulou-netizen.github.io/hpc-whisper/
           files: out/*

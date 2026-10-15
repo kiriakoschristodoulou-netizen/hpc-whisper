@@ -1,5 +1,5 @@
 program WhisperTools;
-{ Whisper Tools 3.1 (formerly HPC Whisper), for Windows CE handheld PCs (made on an HP Jornada 720).
+{ Whisper Tools 3.2 (formerly HPC Whisper), for Windows CE handheld PCs (made on an HP Jornada 720).
 
   Type here and the text goes into any app on your phone, with Tab, the
   arrows, Ctrl+C and the other keys; the phone confirms what has arrived.
@@ -22,7 +22,7 @@ program WhisperTools;
 uses Windows, w3core, w3tx, w3rx, waudio, wtext, wfile, wscreen, wwav, wimg, winf, wmodem;
 
 const
-  VERSION = '3.1';
+  VERSION = '3.2';
   CREATOR = 'Kyriakos Christodoulou';
   CLSNAME: UnicodeString = 'WhisperTools';
   APPNAME: UnicodeString = 'Whisper Tools';
@@ -135,6 +135,7 @@ var
   CheckState: UnicodeString = '';
   FuSpeed, FdSpeed: UnicodeString;
   HelloAt: LongWord = 0;
+  FastUntil: LongWord = 0;          { the fast receiver listens until then }
 
   { files }
   Folder: UnicodeString = '';
@@ -777,6 +778,7 @@ end;
 procedure OnOffer(const p: array of Byte; n: Integer);
 var id: Integer; nm: UnicodeString;
 begin
+  FastUntil := GetTickCount + 30000;               { the packets follow on the fast channel }
   id := FrIdOf(p, n);
   if (Incoming.r.id = id) and (Incoming.active or (GetTickCount - Incoming.doneAt < 120000)) and (Length(Incoming.r.got) > 0) then
   begin
@@ -800,7 +802,6 @@ begin
   Incoming.t := NewTransfer(False, nm, Incoming.r.size);
   SetTrans(Incoming.t, 'Receiving', 0, False, False);
   if UnknownId = id then UnknownId := -1;
-  ListenFast := True;
 end;
 
 procedure OnData(const p: array of Byte; n: Integer);
@@ -823,7 +824,7 @@ end;
 procedure CheckLink;
 var p: array[0..0] of Byte;
 begin
-  ListenFast := True;
+  FastUntil := GetTickCount + 20000;
   SayHello(False);
   { the fast channel up: TRAIN, the phone answers with a map; the fast channel down: the phone sends TRAIN when asked }
   SendMsg(CH_FU, T_TRAIN, p, 0);
@@ -885,7 +886,7 @@ begin
           if GetTickCount - HelloAt > 3000 then begin HelloAt := GetTickCount; SayHello(True); end;
         end;
       end;
-    T_CHECK: if (n >= 1) and (g.msg.data[0] = CH_FU) then begin ListenFast := True; SendMsg(CH_FU, T_TRAIN, g.msg.data, 0); end;
+    T_CHECK: if (n >= 1) and (g.msg.data[0] = CH_FU) then begin FastUntil := GetTickCount + 20000; SendMsg(CH_FU, T_TRAIN, g.msg.data, 0); end;
     T_TRAIN: ;
     T_FILE_OFFER: OnOffer(g.msg.data, n);
     T_FILE_DATA: OnData(g.msg.data, n);
@@ -906,7 +907,7 @@ begin
     T_INPUT:
       if n >= 1 then
       begin
-        if g.msg.data[0] = 6 then begin RemoteOn := True; ListenFast := True; RemoteView; end
+        if g.msg.data[0] = 6 then begin RemoteOn := True; RemoteView; end
         else if g.msg.data[0] = 7 then RemoteOn := False;
       end;
   end;
@@ -1207,6 +1208,9 @@ begin
   while AudioTakeTrain(t) do begin OnTrain(t); changed := True; end;
   FeedPlayer;
   now := GetTickCount;
+  { the fast receiver costs the processor a fifth of its time: it listens only when something fast can come
+    (a file announced on the silent channel, the remote, a link check, or the Files and Remote screens) }
+  ListenFast := (Screen = SCR_FILES) or (Screen = SCR_REMOTE) or RemoteOn or Incoming.active or (LongInt(FastUntil - now) > 0);
   { files coming in: the answers }
   if (Length(Incoming.r.got) > 0) and FrNeedDue(Incoming.r, now) and (Incoming.active or (now - Incoming.doneAt < 120000)) then
   begin
@@ -1558,6 +1562,8 @@ begin
   if FuSpeed <> '' then Line('Fast, to the phone', FuSpeed, COL_TEXT) else Line('Fast, to the phone', 'not measured (standard: about 7 kbit/s)', COL_GREY);
   if FdSpeed <> '' then Line('Fast, from the phone', FdSpeed, COL_TEXT) else Line('Fast, from the phone', 'not measured', COL_GREY);
   Line('Frames', IU(FramesOut) + ' sent, ' + IU(FramesIn) + ' heard, ' + IU(FramesBad) + ' not readable', COL_TEXT);
+  if Overruns > 0 then Line('Processor', 'fell behind ' + IU(Overruns) + ' times (sound skipped)', COL_FAIL);
+  if RateOdd <> 0 then Line('Microphone rate', 'a measurement of ' + IU(RateOdd div 100) + ' was ignored', COL_GREY);
   if Missing <> '' then Line('Missing', Missing, COL_FAIL);
   y := y + 4;
   if CheckState <> '' then Txt(dc, CheckState, MkRect(12, y, CW - 12, y + 16), fNorm, COL_GREY, DT_LEFT or DT_SINGLELINE);
@@ -2183,7 +2189,7 @@ begin
   SetForegroundWindow(hMain);
   ListFolder;
   NotifyWnd := hMain; NotifyMsg := WM_AUDIO;
-  ListenFast := True;
+  ListenFast := False;
   ClassicFill := @ClassicFillFn;
   AudioStart;
   if Assigned(pSetTimer) then pSetTimer(hMain, TIMER_ID, TIMER_MS, nil);
