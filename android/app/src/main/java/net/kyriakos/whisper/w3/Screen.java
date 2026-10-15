@@ -31,7 +31,7 @@ public final class Screen {
         if (w != this.w || h != this.h || cur == null) {
             this.w = w; this.h = h; tw = (w + T - 1) / T; th = (h + T - 1) / T;
             sent = new byte[tw * T * th * T]; java.util.Arrays.fill(sent, (byte) -1);
-            cur = new byte[sent.length]; sentAt = new long[tw * th]; dirty = new boolean[tw * th];
+            cur = new byte[sent.length]; java.util.Arrays.fill(cur, (byte) 15); sentAt = new long[tw * th]; dirty = new boolean[tw * th];
             sizeChanged = true;
         }
         int W = tw * T;

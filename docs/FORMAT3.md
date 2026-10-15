@@ -135,12 +135,12 @@ zeros.
 | --- | --- | --- | --- |
 | 0x01 | TEXT | doc id (1), seq (1), L (2), o (2), bytes | SU |
 | 0x02 | TEXT_ACK | doc id (1), known (2), L (2) | SD |
-| 0x10 | FILE_OFFER | file id (2), size (4), packets (2), kind (1), name (UTF-8) | FD or FU |
-| 0x11 | FILE_DATA | file id (2), packet (2), data (up to 1,024) | FD or FU |
-| 0x12 | FILE_NEED | file id (2), flags (1), then missing packets (2 each, up to 32) | the other direction |
+| 0x10 | FILE_OFFER | file id (2), size (4), packets (2), kind (1), name (UTF-8) | FD; FU or SU |
+| 0x11 | FILE_DATA | file id (2), packet (2), data (up to 1,024) | FD; FU or SU |
+| 0x12 | FILE_NEED | file id (2), flags (1), have (2), then missing packets (2 each, up to 32) | the other side's silent channel |
 | 0x13 | FILE_CANCEL | file id (2) | either |
 | 0x20 | SCREEN | update (2), flags (1), then a zlib stream of tiles | FD |
-| 0x21 | INPUT | kind (1), then by kind (below) | SU |
+| 0x21 | INPUT | kind (1), then by kind (below) | SU (kinds 6 and 7 also SD) |
 | 0x30 | TRAIN | 24 symbols of fixed pattern, no RS (below) | the channel trained |
 | 0x31 | MAP | channel (1), map number (1), carriers (1), 2 bits per carrier | the other direction |
 | 0x32 | HELLO | version (1), can-hear (1), can-play (1) (bit *n* = channel *n*), flags (1): bit 0 = an answer | either |
@@ -173,11 +173,18 @@ key sends key 0x08, which deletes on the phone.
 **TEXT_ACK** tells the handheld that the phone holds bytes 0 to *known* − 1
 of document L. The handheld stops repeating them.
 
-**INPUT kinds**: 1 tap (x, y as 2 bytes each, in the remote picture's
-pixels), 2 long press (x, y), 3 swipe (x1, y1, x2, y2), 4 view (mode, zoom x,
-zoom y, 2 bytes each), 5 refresh, 6 remote start, 7 remote stop.
+**INPUT kinds** (positions in the remote picture's pixels, 2 bytes each):
+1 tap (x, y); 2 long press (x, y); 3 swipe (x1, y1, x2, y2); 4 view (mode
+(1): 0 the whole screen, a portrait screen turned sideways with its top on
+the left, 1 zoom (the phone's width fills the picture), 2 zoom twice as
+large; then the handheld's picture width and height); 5 refresh (send every
+tile again); 6 remote on (from the handheld: please start; from the phone:
+it has started); 7 remote off; 8 scroll (dx, dy, signed, in picture pixels);
+9 key (1 byte: a key code from the table above, such as Send or Back).
 
-**FILE_NEED flags**: bit 0 "all received", bit 1 "send the offer again".
+**FILE_NEED**: the receiver holds every packet below *have* except those
+listed (the first 32 missing ones). Flags: bit 0 "all received", bit 1 "send
+the offer again" (a packet arrived for a file whose offer was not heard).
 
 **TRAIN**: after the header, 24 symbols in which every carrier, pilots
 included, turns by the 2-bit value `P[(3c + 11s) mod 256]` (quarter turns) in symbol *s*.
@@ -185,7 +192,8 @@ The receiver measures each carrier's phase error and replies with a MAP:
 phase signal-to-noise of at least 23 dB → 3 bits, 16 dB → 2, 10 dB → 1,
 less → 0.
 
-**SCREEN tiles** (in the zlib stream): repeated records of x (1), y (1) in
+**SCREEN** flags: bit 0 the last message of this update, bit 1 the
+picture's size or view changed (the handheld clears it first). **Tiles** (in the zlib stream): repeated records of x (1), y (1) in
 16-pixel tile units, then 128 bytes of 4-bit grey pixels, two per byte, rows
 top to bottom. A record with x = 255 ends the stream; y then gives the
 picture's width in tiles and the next byte its height.
@@ -206,8 +214,48 @@ picture's width in tiles and the next byte its height.
 
 SU and SD share a band, and a device hears its own sound loudly. So:
 
-- A device does not listen while it plays, nor for 50 ms after.
+- A device does not listen while it plays on a silent channel, nor for 50 ms
+  after. The handheld does not listen while it plays at all. The phone keeps
+  listening while it plays on FD (another band), so taps and answers from
+  the handheld reach it during a file or the remote's screen.
 - The phone answers (TEXT_ACK, FILE_NEED, MAP) only after 150 ms without
   hearing the handheld.
 - A file sender sends 16 packets, then waits up to 1.5 s for FILE_NEED before
   going on.
+
+## 6. Files
+
+**Kinds** (FILE_OFFER, low 7 bits): 0 other, 1 picture, 2 sound, 3 text, 4
+document. Bit 7: the data is a zlib stream; the receiver unpacks it and saves
+the result under the name given. *size* is the size of the data as sent.
+
+**Sending.** The sender sends the offer, then packets of 1,024 bytes (the
+last shorter), 16 at a time: first those the receiver asked for again, then
+new ones. After each 16 it waits up to 1.5 s for FILE_NEED.
+
+- FILE_NEED with bit 0: done.
+- Otherwise every packet below *have* that is not listed is confirmed; listed
+  ones go again; packets sent at or after *have* (lost at the end of a
+  batch) go again too, unless the list is full (32), when the next answer
+  covers them.
+- No answer after a batch, when answers have come before: the offer goes
+  again, as a question ("what do you still need?"); after 6 such questions
+  without an answer the transfer stops.
+- No answer ever (a receiver that cannot send): every batch starts with the
+  offer, and when all packets have gone, all go once more; then the file
+  counts as sent, unconfirmed.
+
+**Receiving.** The receiver answers with FILE_NEED once the sender has been
+quiet for 250 ms after an offer or a packet. It keeps a finished transfer for
+2 minutes, to answer the sender's questions.
+
+**Channels.** The phone sends files on FD. The handheld sends on FU (a soft
+hiss, the default) or on its silent channel (slow). Answers go on the
+receiver's silent channel.
+
+**Conversions** (the phone, before sending): pictures to JPEG fitted to 640 ×
+240 (or 320 wide, or 640 wide at full height); PDF pages to 640-wide PNG
+pictures in 16 greys, one file a page; sound (and a video's sound) to WAV,
+IMA ADPCM 4-bit mono at 8,000 or 22,050 samples/s; video to five JPEG still
+pictures; text and other files compressed with zlib when that saves at least
+10 %.

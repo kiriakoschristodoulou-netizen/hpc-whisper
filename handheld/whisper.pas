@@ -104,7 +104,7 @@ var
   { settings }
   Classic: Boolean = False;         { the version 2 tones, for older phone apps }
   WideSilent: Boolean = False;      { the wide silent channel (18.2-21.2 kHz): faster, but some people hear it }
-  FastFiles: Boolean = False;       { files from here on the fast channel (a soft hiss) }
+  FastFiles: Boolean = True;        { files from here on the fast channel (a soft hiss); silent is slow }
   FastLevel: Integer = 1;           { 0 = 1/8, 1 = 1/4, 2 = 1/2 of full loudness }
   OnCard: Boolean = False;          { received files on the storage card }
   Band: Integer = NBANDS - 1;       { classic }
@@ -840,6 +840,8 @@ begin
   Result := 'about ' + IU(k div 1000) + '.' + IU((k mod 1000) div 100) + ' kbit/s (' + IU(bits) + ' bits a symbol)';
 end;
 
+procedure RemoteView; forward;
+
 { ---------- what the phone said ---------- }
 
 procedure OnTrain(const t: TTrainResult);
@@ -903,7 +905,7 @@ begin
     T_INPUT:
       if n >= 1 then
       begin
-        if g.msg.data[0] = 6 then begin RemoteOn := True; ListenFast := True; end
+        if g.msg.data[0] = 6 then begin RemoteOn := True; ListenFast := True; RemoteView; end
         else if g.msg.data[0] = 7 then RemoteOn := False;
       end;
   end;
@@ -1590,7 +1592,7 @@ begin
        else Result := 'Format 3: silent, all keys, the phone confirms';
     1: if WideSilent then Result := 'Wide, 18.2-21.2 kHz: twice as fast, some people hear it'
        else Result := 'Narrow, 20.0-21.2 kHz: inaudible';
-    2: if FastFiles then Result := 'Fast: a soft hiss, about 7-12 kbit/s' else Result := 'Silent: about 1-2 kbit/s';
+    2: if FastFiles then Result := 'Fast: a soft hiss while it goes, about 7-12 kbit/s' else Result := 'Silent: slow (a 10 KB file takes 1-2 minutes)';
     3: case FastLevel of 0: Result := '1/8'; 2: Result := '1/2'; else Result := '1/4'; end;
     4: if OnCard then Result := '\Storage Card\HPC Whisper' else Result := '\My Documents\HPC Whisper';
     5: Result := KHz(BAND_HZ[Band]) + '-' + KHz(BAND_HZ[Band] + 15 * STEP_HZ) + ' kHz';

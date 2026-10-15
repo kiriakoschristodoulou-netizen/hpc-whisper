@@ -34,6 +34,21 @@ jobs:
           node test_noise.js
           node test_java.js
           node test_sync.js
+      - name: Format 3 (the handheld's Pascal and the phone's Java against each other)
+        working-directory: tests/w3
+        run: |
+          mkdir -p linux cls
+          javac -d cls ../../android/app/src/main/java/net/kyriakos/whisper/w3/*.java ../../android/app/src/main/java/net/kyriakos/whisper/{Receiver,Mirror,Keys,TextLink,Adpcm}.java *.java
+          fpc -O2 -Fu../../handheld -Fi../../handheld -FUlinux -olinux/w3tool w3tool.pas
+          fpc -O2 -Fu../../handheld -FUlinux -olinux/filetest filetest.pas
+          fpc -O2 -Fu../../handheld -FUlinux -olinux/texttool texttool.pas
+          fpc -O2 -Fu../../handheld -FUlinux -olinux/mediatest mediatest.pas
+          ./cross.sh
+          java -cp cls FileTest
+          ./linux/filetest
+          java -cp cls ScreenTest
+          java -cp cls TextTest linux/texttool
+          mkdir -p m && java -cp cls ScreenDump m && java -cp cls AdpcmTest 8000 m/a.wav && ./linux/mediatest m m/a.wav
 
   build:
     runs-on: ubuntu-latest
@@ -63,7 +78,7 @@ jobs:
         run: |
           mkdir out
           cp android/app/build/outputs/apk/release/app-release.apk out/HPC-Whisper.apk
-          cp handheld/HPC-Whisper-12.zip out/
+          cp handheld/HPC-Whisper-30.zip out/
 
       - uses: actions/upload-artifact@v4
         with:
@@ -76,7 +91,7 @@ jobs:
           name: HPC Whisper (build ${{ github.run_number }})
           make_latest: 'true'
           body: |
-            **HPC-Whisper.apk** – the HPC Whisper keyboard for Android: type on the handheld straight into any app.
-            **HPC-Whisper-12.zip** – the program for Windows CE handheld PCs with an ARM processor, such as the HP Jornada 720 (copy the folder inside to the handheld).
+            **HPC-Whisper.apk** – HPC Whisper for Android: the keyboard (type on the handheld straight into any app, with all keys), files both ways, and the picture remote.
+            **HPC-Whisper-30.zip** – HPC Whisper 3 for Windows CE handheld PCs with an ARM processor, such as the HP Jornada 720 (copy the folder inside to the handheld and run whisper.exe).
             On an iPhone (Apple does not let keyboards use the microphone) or any other phone, use the receiver page: https://kiriakoschristodoulou-netizen.github.io/hpc-whisper/
           files: out/*

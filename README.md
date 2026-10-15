@@ -3,27 +3,31 @@
 # HPC Whisper
 
 Type on a Windows CE handheld PC and the text goes straight into any app on your
-phone (an email in Gmail, a message, a note), carried by tones too high to hear
-(18 to 21.5 kHz). No cable, no network, no extra hardware.
+phone (an email in Gmail, a message, a note), with Tab, the arrows and Ctrl+C,
+V, X, Z. Send files both ways, and see the phone's screen on the handheld (the
+picture remote). It all travels as sound: silent tones above 20 kHz for typing,
+a soft hiss for files and the remote. No cable, no network, no extra hardware.
 
 Made on, and for, the HP Jornada 720. Created by Kyriakos Christodoulou.
 
 ## Get it
 
-- **Android: the HPC Whisper keyboard.** Install `HPC-Whisper.apk` from the
-  [latest release](../../releases/latest), open it and follow the three setup
-  steps. Then, in any app, switch to the HPC Whisper keyboard and type on the
-  handheld. New text appears underlined for a moment while it may still change,
-  then it is written for good. The app has no internet access.
+- **Android: HPC Whisper.** Install `HPC-Whisper.apk` from the
+  [latest release](../../releases/latest) and follow the setup steps. To type,
+  switch to the HPC Whisper keyboard in any app. For files and the remote, tap
+  **Connect**. To send a file to the handheld, use **Share → HPC Whisper** in
+  any app. The app has no internet access.
+- **The helper (optional).** Turned on once in the phone's accessibility
+  settings, it lets the handheld press Send (Alt+S), Back, Home and Recent
+  apps, and tap through the remote. It acts only on what you ask from the
+  handheld.
 - **iPhone, or any phone: the receiver page** in the browser,
   <https://kiriakoschristodoulou-netizen.github.io/hpc-whisper/>, with Copy and
-  Share. Tap **Listen** and allow the microphone. Add it to the home screen:
-  after the first visit it works with no internet.
-  *Apple does not let keyboards use the microphone at all, so an iPhone
-  keyboard is impossible; on an iPhone the page is the way.*
-- **Handheld:** `HPC-Whisper-12.zip` from the same release. Copy the folder
-  inside it to the handheld and run `whisper.exe`. Version 1.1 or later is
-  needed (the sound format changed in 1.1).
+  Share. It reads the Classic format (on the handheld: Settings, Typing format,
+  Classic). *Apple does not let keyboards use the microphone at all, so an
+  iPhone keyboard is impossible.*
+- **Handheld:** `HPC-Whisper-30.zip` from the same release. Copy the folder
+  inside it to the handheld and run `whisper.exe`.
 
 ## Which handhelds
 
@@ -37,30 +41,35 @@ The program is built for **ARM processors** running **Windows CE 3.0 or later**
 | Will not run | MIPS and SH3 machines: HP Jornada 680/690, NEC MobilePro 770/780/800, Casio Cassiopeia and others. The sound format is open, so a version for them can be written |
 | Unknown | Handheld PC Pro (Windows CE 2.11) on ARM |
 
-Every machine's speaker is different: if the phone reads nothing, try a lower
+Every machine's speaker is different: run the link check (Alt+K) and see the Link screen. In Classic, if the phone reads nothing, try a lower
 band, Slow, or more volume; if you can hear the tones, try a higher band or less
 volume. Please report what works on yours.
 
 ## Use
 
-Run the program on the handheld and type. The phone follows a second or two
-behind; Backspace and Enter work too (Enter in a one-line field does what Enter
-does there: search, send, next). On the handheld:
+The handheld program has five screens (tap the tabs, or Alt+1 to Alt+5):
 
-| Key | Setting |
+| Screen | What |
 | --- | --- |
-| Ctrl+B | Band: 18.0–19.5 up to 20.0–21.5 kHz (default 20.0–21.5) |
-| Ctrl+P | Speed: Slow, Normal, Fast (about 5, 8, 12 characters a second) |
-| Ctrl+V | Volume: 10 to 100 % (default 50 %; full volume can distort into audible sound) |
-| Ctrl+T | Types a test sentence |
-| Ctrl+L | A new page: clears the handheld's screen; the phone starts a new paragraph |
-| Ctrl+Q | Exit |
+| Type | Type, and it goes to the phone. The status line shows what the phone has confirmed. |
+| Files | The handheld's files: Enter opens a picture, text or WAV sound; S sends a file to the phone. Files from the phone arrive in `\My Documents\HPC Whisper`. |
+| Remote | The phone's screen in 16 greys: zoom view first, Alt+Z for the whole screen. Tap the picture to tap the phone. |
+| Link | Sound, microphone rate, the phone, and each channel's speed; Alt+K checks the link. |
+| Settings | Format 3 or Classic, the silent channel, files fast or silent, loudness. |
 
-The phone finds the band and speed by itself. Keep it within about a metre.
+The program's own shortcuts are on Alt (Alt+S Send, Alt+B Back, Alt+H Home
+screen, Alt+W Recent apps, Alt+N new page, Alt+Q quit), so every Ctrl key reaches
+the phone.
 
-**Lost pieces fill themselves in.** The handheld sends new text at once and
-repeats it during your pauses. A piece lost to noise shows as · for a moment and
-fills in when the repeat arrives. If letters still go missing, the app's
+**Speeds** (format 3): typing on the silent channel, 0.8 kbit/s (narrow,
+inaudible) or 2 kbit/s (wide); files and the remote's screen on the fast
+channels, about 7 to 12 kbit/s each way. A photo fitted to the handheld's screen
+takes 20 to 40 seconds; a new phone screen in the remote 5 to 15 seconds, a
+small change about a second.
+
+**Lost pieces fill themselves in.** The phone confirms what has arrived and the
+handheld repeats only what is missing. Files go in numbered 1 KB packets; the
+receiver asks for any that failed. If something still goes wrong, the app's
 **Record 30 seconds** button saves what the phone hears, to send for diagnosis.
 
 ## Host the receiver yourself
@@ -73,24 +82,30 @@ Nothing runs on the server. The same files are in the handheld download, under
 
 ## How it works
 
-16 tones 100 Hz apart, 4 bits per tone. Each frame carries a piece of the
-document ("from offset o it reads ..."), protected by interleaved Reed-Solomon
-blocks (weak tones are set aside and rebuilt) and a CRC-16. The phone listens
-with its unprocessed microphone where the phone has one, with both microphones
-where it can, and learns each handheld's sound quirks from the start of every
-frame (the Jornada 720's sound chip adds a "ghost" of every tone 900 Hz lower,
-sometimes louder than the tone itself). The full description, enough to write a sender or receiver for
-any device, is in [docs/FORMAT.md](docs/FORMAT.md).
+Format 3 ([docs/FORMAT3.md](docs/FORMAT3.md)) is OFDM: many carriers at once,
+each carrying 1 to 3 bits in how its phase turns from one 12.5 ms symbol to the
+next, so nothing needs calibrating by hand. Four channels: silent up (20.0–21.2
+kHz, 200 Hz apart, so the Jornada's "ghost" 900 Hz below every tone falls
+between carriers), silent down, fast up (1–19 kHz) and fast down (0.5–12 kHz). A
+link check measures every carrier and sends back a map of bits per carrier.
+Frames carry Reed–Solomon codes interleaved across carriers and a CRC. The
+handheld's side is whole-number Pascal (its processor has no floating point);
+the phone's is Java; the two are tested against each other through a simulated
+room, including the Jornada's microphone running at 43,230 samples/s while it
+says 44,100.
+
+The Classic format ([docs/FORMAT.md](docs/FORMAT.md)) is kept for older phone
+apps and the receiver page: 16 tones 100 Hz apart, 4 bits per tone.
 
 ## Files
 
 | Folder | What |
 | --- | --- |
 | `/` | the receiver page (served by GitHub Pages) |
-| `android/` | the Android keyboard and its setup screen (Java) |
+| `android/` | the Android app: keyboard, files, remote, helper (Java) |
 | `handheld/` | the handheld program (Free Pascal for Windows CE, ARM) and its download |
-| `docs/` | the sound format and the artwork |
-| `tests/` | the sender, page receiver and keyboard receiver checked against each other, with noise, dropouts and stalls |
+| `docs/` | the sound formats and the artwork |
+| `tests/` | both formats checked across Pascal, Java and JavaScript, with noise, echoes, dropouts and lost packets (`tests/w3` for format 3) |
 
 The Android app is built by GitHub on every change (see `.github/workflows`).
 Its signing key is kept in the repository on purpose, so each new build
