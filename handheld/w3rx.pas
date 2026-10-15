@@ -424,9 +424,9 @@ begin
   begin
     if r.t - 2 * r.lag < r.trig + 256 + r.lag then Exit;
     mx := -32768;
-    for d := r.trig to r.trig + 255 + r.lag do
+    for k := 0 to 255 + r.lag do
     begin
-      mv := r.metric[d and RMASK];
+      mv := r.metric[(r.trig + k) and RMASK];
       if mv > mx then mx := mv;
     end;
     if mx < 2048 then begin r.state := IDLE; r.scan := r.trig + 1; Exit; end;

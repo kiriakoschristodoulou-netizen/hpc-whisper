@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">HPC Whisper</string>
+    <string name="helper_name">HPC Whisper helper</string>
+    <string name="helper_description">Lets your handheld PC press Send, go Back, Home or to Recent apps, and tap on this screen through the HPC Whisper remote. It acts only when you ask from the handheld, and reads nothing else.</string>
 </resources>

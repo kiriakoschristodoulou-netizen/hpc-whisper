@@ -143,7 +143,8 @@ zeros.
 | 0x21 | INPUT | kind (1), then by kind (below) | SU |
 | 0x30 | TRAIN | 24 symbols of fixed pattern, no RS (below) | the channel trained |
 | 0x31 | MAP | channel (1), map number (1), carriers (1), 2 bits per carrier | the other direction |
-| 0x32 | HELLO | version (1), can-hear (1), can-play (1) | either |
+| 0x32 | HELLO | version (1), can-hear (1), can-play (1) (bit *n* = channel *n*), flags (1): bit 0 = an answer | either |
+| 0x33 | CHECK | channel (1): please send TRAIN on it | the other direction |
 
 All numbers are big-endian. TEXT follows the version 2 meaning: "the
 document is L bytes long; from o it reads …" (see `FORMAT.md`).
@@ -191,9 +192,14 @@ picture's width in tiles and the next byte its height.
 
 ## 4. Link check
 
-1. Each side says HELLO on its silent channel when it starts.
+1. Each side says HELLO on its silent channel when it starts; a side that
+   hears HELLO forgets the maps it was given (the other side has just
+   started and knows none) and answers with its own HELLO, marked as an
+   answer (an answer is not answered and resets nothing).
 2. To use a fast channel, the sender sends TRAIN; the receiver answers with
-   MAP on its own silent channel; from then on the sender uses that map.
+   MAP on its own silent channel; from then on the sender uses that map. A
+   side can ask for this with CHECK. Maps are kept only while the programs
+   run.
 3. When too many frames fail, the receiver sends a new MAP, or map 0.
 
 ## 5. Taking turns
