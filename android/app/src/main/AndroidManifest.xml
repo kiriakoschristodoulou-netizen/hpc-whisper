@@ -22,9 +22,15 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity android:name=".KeyboardActivity" android:exported="false" android:parentActivityName=".MainActivity" />
+        <activity android:name=".LinkActivity" android:exported="false" android:parentActivityName=".MainActivity" />
+        <activity android:name=".FilesActivity" android:exported="false" android:parentActivityName=".MainActivity" />
+        <activity android:name=".RemoteActivity" android:exported="false" android:parentActivityName=".MainActivity" />
+        <activity android:name=".RecentActivity" android:exported="false" android:parentActivityName=".MainActivity" />
+        <activity android:name=".AboutActivity" android:exported="false" android:parentActivityName=".MainActivity" />
         <activity
             android:name=".ShareActivity"
-            android:label="HPC Whisper: to the handheld"
+            android:label="Whisper Tools: to the handheld"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />

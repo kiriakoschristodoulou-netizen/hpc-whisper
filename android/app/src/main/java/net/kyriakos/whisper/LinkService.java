@@ -100,7 +100,7 @@ public class LinkService extends Service implements Link.Client {
         PendingIntent stop = PendingIntent.getService(this, 1, new Intent(this, LinkService.class).setAction(STOP), PendingIntent.FLAG_IMMUTABLE);
         Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, CHANNEL) : new Notification.Builder(this);
         b.setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
-         .setContentTitle("HPC Whisper is connected")
+         .setContentTitle("Whisper Tools is connected")
          .setContentText(remote ? "Showing this screen on the handheld" : "Listening for the handheld: files and the remote")
          .setContentIntent(open)
          .setOngoing(true)
@@ -144,7 +144,7 @@ public class LinkService extends Service implements Link.Client {
         Handler cap = new Handler(capThread.getLooper());
         reader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2);
         reader.setOnImageAvailableListener(r -> capture(r), cap);
-        display = projection.createVirtualDisplay("HPC Whisper remote", w, h, dm.densityDpi / 2,
+        display = projection.createVirtualDisplay("Whisper Tools remote", w, h, dm.densityDpi / 2,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, reader.getSurface(), null, cap);
         screen.resendAll();
         remoteState = "Showing this screen on the handheld";

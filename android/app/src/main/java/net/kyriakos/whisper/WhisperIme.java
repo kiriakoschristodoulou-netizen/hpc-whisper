@@ -18,7 +18,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 /**
- * The HPC Whisper keyboard: no keys of its own. While it is open it listens,
+ * The Whisper Tools keyboard: no keys of its own. While it is open it listens,
  * and what you type on the handheld goes into the field you are in: letters,
  * and keys such as Tab, the arrows, Esc and Ctrl+C.
  */
@@ -57,7 +57,7 @@ public class WhisperIme extends InputMethodService implements Link.Client {
         status.setTextColor(0xFFF4F2EE);
         status.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         status.setTypeface(Typeface.DEFAULT_BOLD);
-        status.setText("HPC Whisper");
+        status.setText("Whisper Tools");
         detail = new TextView(this);
         detail.setTextColor(0xFFB8C0CC);
         detail.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
@@ -94,7 +94,7 @@ public class WhisperIme extends InputMethodService implements Link.Client {
         editor = info;
         if (!restarting) writer.startField(info);
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            setStatus("Allow the microphone: open the HPC Whisper app", "");
+            setStatus("Allow the microphone: open the Whisper Tools app", "");
             return;
         }
         listening = Link.get().attach(this, this);

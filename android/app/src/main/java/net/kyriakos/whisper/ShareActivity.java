@@ -16,7 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Share → HPC Whisper, from any app: choose how the file travels (the
+ * Share → Whisper Tools, from any app: choose how the file travels (the
  * conversions, with the time each takes), then it goes to the handheld.
  */
 public class ShareActivity extends Activity {
@@ -66,7 +66,7 @@ public class ShareActivity extends Activity {
         sendBtn = ui.button(go, "Send", true, v -> send());
         sendBtn.setEnabled(false);
         sendBtn.setAlpha(0.5f);
-        ui.body(go, "The handheld must be running HPC Whisper with this phone close by. Files to the handheld travel on the fast "
+        ui.body(go, "The handheld must be running Whisper Tools with this phone close by. Files to the handheld travel on the fast "
                 + "channel: a soft hiss from the phone's speaker while they go. Keep the phone's media volume at about half.").setPadding(0, ui.dp(10), 0, 0);
     }
 
@@ -116,7 +116,7 @@ public class ShareActivity extends Activity {
     private void send() {
         if (ready == null || ready.isEmpty()) return;
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            state.setText("HPC Whisper needs the microphone to hear the handheld's answers. Open the app and allow it first.");
+            state.setText("Whisper Tools needs the microphone to hear the handheld's answers. Open the app and allow it first.");
             startActivity(new Intent(this, MainActivity.class));
             return;
         }

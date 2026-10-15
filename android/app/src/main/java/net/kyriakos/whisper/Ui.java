@@ -11,7 +11,7 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
-/** The app's few building blocks: cards, text, buttons, in light or dark. */
+/** Whisper Tools' few building blocks: pages, tiles, cards, text, buttons, in light or dark. */
 final class Ui {
     final Activity a;
     final Theme t;
@@ -21,18 +21,81 @@ final class Ui {
 
     int dp(float v) { return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, a.getResources().getDisplayMetrics()); }
 
-    /** A scrolling page; returns its column. */
-    LinearLayout page() {
+    /** A scrolling page under a bar with a title (and a back arrow when back is not null); returns its column. */
+    LinearLayout page(String title, Runnable back) {
+        LinearLayout outer = new LinearLayout(a);
+        outer.setOrientation(LinearLayout.VERTICAL);
+        outer.setBackgroundColor(t.paper);
+        if (title != null) {
+            LinearLayout bar = new LinearLayout(a);
+            bar.setOrientation(LinearLayout.HORIZONTAL);
+            bar.setGravity(Gravity.CENTER_VERTICAL);
+            bar.setBackgroundColor(t.navy);
+            bar.setPadding(dp(4), 0, dp(16), 0);
+            if (back != null) {
+                TextView arrow = new TextView(a);
+                arrow.setText("←");
+                arrow.setTextSize(TypedValue.COMPLEX_UNIT_SP, 24);
+                arrow.setTextColor(0xFFFFFFFF);
+                arrow.setGravity(Gravity.CENTER);
+                arrow.setContentDescription("Back to Whisper Tools");
+                arrow.setOnClickListener(v -> back.run());
+                bar.addView(arrow, new LinearLayout.LayoutParams(dp(52), dp(56)));
+            } else bar.setPadding(dp(16), 0, dp(16), 0);
+            TextView h = new TextView(a);
+            h.setText(title);
+            h.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+            h.setTypeface(Typeface.DEFAULT_BOLD);
+            h.setTextColor(0xFFFFFFFF);
+            bar.addView(h, new LinearLayout.LayoutParams(0, dp(56), 1));
+            h.setGravity(Gravity.CENTER_VERTICAL);
+            outer.addView(bar);
+        }
         ScrollView scroll = new ScrollView(a);
         scroll.setBackgroundColor(t.paper);
         root = new LinearLayout(a);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(16), dp(16), dp(16), dp(28));
+        root.setPadding(dp(16), dp(8), dp(16), dp(28));
         scroll.addView(root);
-        a.setContentView(scroll);
+        outer.addView(scroll, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1));
+        a.setContentView(outer);
         a.getWindow().setStatusBarColor(t.navy);
         a.getWindow().setNavigationBarColor(t.navy);
         return root;
+    }
+
+    LinearLayout page() { return page(null, null); }
+
+    /** A tile for the home screen: a sign, a name, and a line that says how it is. Returns the line. */
+    TextView tile(LinearLayout row, String sign, String name, String what, View.OnClickListener l) {
+        LinearLayout c = new LinearLayout(a);
+        c.setOrientation(LinearLayout.VERTICAL);
+        c.setPadding(dp(14), dp(14), dp(14), dp(14));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(t.card); bg.setCornerRadius(dp(14)); bg.setStroke(dp(1), t.line);
+        c.setBackground(bg);
+        c.setClickable(true);
+        c.setFocusable(true);
+        c.setOnClickListener(l);
+        c.setContentDescription(name + ". " + what);
+        TextView s = text(c, sign, 30, t.ink, false);
+        s.setPadding(0, 0, 0, dp(6));
+        text(c, name, 17, t.ink, true);
+        text(c, what, 13, t.muted, false);
+        TextView state = text(c, "", 13, t.green, true);
+        state.setPadding(0, dp(6), 0, 0);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1);
+        lp.setMargins(dp(5), dp(5), dp(5), dp(5));
+        row.addView(c, lp);
+        return state;
+    }
+
+    LinearLayout row() {
+        LinearLayout r = new LinearLayout(a);
+        r.setOrientation(LinearLayout.HORIZONTAL);
+        r.setPadding(-dp(5), 0, -dp(5), 0);
+        root.addView(r, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        return r;
     }
 
     TextView text(LinearLayout into, String s, float sp, int color, boolean bold) {

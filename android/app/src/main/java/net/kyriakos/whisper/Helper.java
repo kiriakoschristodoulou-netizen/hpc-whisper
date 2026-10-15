@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * The optional HPC Whisper helper (an accessibility service, off until you
+ * The optional Whisper Tools helper (an accessibility service, off until you
  * turn it on in the phone's settings). It does only what you ask from the
  * handheld: press Send, go Back, Home or to Recent apps, and, for the remote,
  * tap, long-press, swipe and type. It reads nothing and keeps nothing.
@@ -92,7 +92,7 @@ public class Helper extends AccessibilityService {
         return h.dispatchGesture(g, null, null);
     }
 
-    /** Adds text to the field that has the focus (for the remote, when the HPC Whisper keyboard is not open). */
+    /** Adds text to the field that has the focus (for the remote, when the Whisper Tools keyboard is not open). */
     public static boolean type(String s) {
         Helper h = instance;
         if (h == null) return false;

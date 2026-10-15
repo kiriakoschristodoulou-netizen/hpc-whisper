@@ -27,7 +27,7 @@ import java.util.zip.Inflater;
  * Files between the phone and the handheld (docs/FORMAT3.md, section 6).
  * To the handheld: on the fast channel down, one file after another. From
  * the handheld: on whichever channel it uses; answers go on the silent
- * channel down, and the file lands in Downloads/HPC Whisper.
+ * channel down, and the file lands in Downloads/Whisper Tools.
  */
 public final class Transfers implements Link.Client {
     public static final int KIND_OTHER = 0, KIND_PICTURE = 1, KIND_SOUND = 2, KIND_TEXT = 3, KIND_DOCUMENT = 4, ZLIB = 0x80;
@@ -211,7 +211,7 @@ public final class Transfers implements Link.Client {
         try {
             r.saved = save(r.name, d);
             r.ok = true;
-            r.state = "Saved in Downloads/HPC Whisper";
+            r.state = "Saved in Downloads/Whisper Tools";
         } catch (Exception e) {
             r.ok = false; r.state = "Could not be saved: " + e.getMessage();
         }
@@ -240,13 +240,13 @@ public final class Transfers implements Link.Client {
             ContentValues v = new ContentValues();
             v.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
             v.put(MediaStore.MediaColumns.MIME_TYPE, Convert.mimeOf(name));
-            v.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/HPC Whisper");
+            v.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Whisper Tools");
             Uri uri = app.getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
             if (uri == null) throw new Exception("no place to save");
             try (OutputStream o = app.getContentResolver().openOutputStream(uri)) { o.write(d); }
             return uri;
         }
-        File dir = new File(app.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "HPC Whisper");
+        File dir = new File(app.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "Whisper Tools");
         dir.mkdirs();
         File f = new File(dir, name);
         try (FileOutputStream o = new FileOutputStream(f)) { o.write(d); }
