@@ -1,6 +1,8 @@
-![HPC Whisper](docs/banner.png)
+![Whisper Tools](docs/banner.png)
 
-# HPC Whisper
+# Whisper Tools
+
+*Formerly HPC Whisper.*
 
 Type on a Windows CE handheld PC and the text goes straight into any app on your
 phone (an email in Gmail, a message, a note), with Tab, the arrows and Ctrl+C,
@@ -12,10 +14,10 @@ Made on, and for, the HP Jornada 720. Created by Kyriakos Christodoulou.
 
 ## Get it
 
-- **Android: HPC Whisper.** Install `HPC-Whisper.apk` from the
+- **Android: Whisper Tools.** Install `Whisper-Tools.apk` from the
   [latest release](../../releases/latest) and follow the setup steps. To type,
-  switch to the HPC Whisper keyboard in any app. For files and the remote, tap
-  **Connect**. To send a file to the handheld, use **Share → HPC Whisper** in
+  switch to the Whisper Tools keyboard in any app. For files and the remote, tap
+  **Connect**. To send a file to the handheld, use **Share → Whisper Tools** in
   any app. The app has no internet access.
 - **The helper (optional).** Turned on once in the phone's accessibility
   settings, it lets the handheld press Send (Alt+S), Back, Home and Recent
@@ -26,8 +28,8 @@ Made on, and for, the HP Jornada 720. Created by Kyriakos Christodoulou.
   Share. It reads the Classic format (on the handheld: Settings, Typing format,
   Classic). *Apple does not let keyboards use the microphone at all, so an
   iPhone keyboard is impossible.*
-- **Handheld:** `HPC-Whisper-30.zip` from the same release. Copy the folder
-  inside it to the handheld and run `whisper.exe`.
+- **Handheld:** `Whisper-Tools-31.zip` from the same release. Copy the folder
+  inside it to the handheld and run `WhisperTools.exe`. Its home screen has a button for each tool.
 
 ## Which handhelds
 
@@ -47,12 +49,12 @@ volume. Please report what works on yours.
 
 ## Use
 
-The handheld program has five screens (tap the tabs, or Alt+1 to Alt+5):
+The handheld program opens on a home screen with a button for each tool (tap one, or press 1 to 6; Alt+1 to Alt+5 from anywhere, Alt+0 back home):
 
 | Screen | What |
 | --- | --- |
 | Type | Type, and it goes to the phone. The status line shows what the phone has confirmed. |
-| Files | The handheld's files: Enter opens a picture, text or WAV sound; S sends a file to the phone. Files from the phone arrive in `\My Documents\HPC Whisper`. |
+| Files | The handheld's files: Enter opens a picture, text or WAV sound; S sends a file to the phone. Files from the phone arrive in `\My Documents\Whisper Tools`. |
 | Remote | The phone's screen in 16 greys: zoom view first, Alt+Z for the whole screen. Tap the picture to tap the phone. |
 | Link | Sound, microphone rate, the phone, and each channel's speed; Alt+K checks the link. |
 | Settings | Format 3 or Classic, the silent channel, files fast or silent, loudness. |

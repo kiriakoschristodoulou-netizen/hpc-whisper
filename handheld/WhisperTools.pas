@@ -1,5 +1,5 @@
-program whisper;
-{ HPC Whisper 3, for Windows CE handheld PCs (made on an HP Jornada 720).
+program WhisperTools;
+{ Whisper Tools 3.1 (formerly HPC Whisper), for Windows CE handheld PCs (made on an HP Jornada 720).
 
   Type here and the text goes into any app on your phone, with Tab, the
   arrows, Ctrl+C and the other keys; the phone confirms what has arrived.
@@ -18,22 +18,22 @@ program whisper;
 {$macro on}
 {$ifdef wince}{$define API:=cdecl}{$else}{$define API:=stdcall}{$endif}
 {$packrecords c}
-{$R whisper.res}
+{$R WhisperTools.res}
 uses Windows, w3core, w3tx, w3rx, waudio, wtext, wfile, wscreen, wwav, wimg, winf, wmodem;
 
 const
-  VERSION = '3.0';
+  VERSION = '3.1';
   CREATOR = 'Kyriakos Christodoulou';
-  CLSNAME: UnicodeString = 'HPCWhisper';
-  APPNAME: UnicodeString = 'HPC Whisper';
-  CFGNAME: UnicodeString = 'whisper.cfg';
+  CLSNAME: UnicodeString = 'WhisperTools';
+  APPNAME: UnicodeString = 'Whisper Tools';
+  CFGNAME: UnicodeString = 'WhisperTools.cfg';
   WM_AUDIO = WM_APP + 1;
   TIMER_ID = 1; TIMER_MS = 40;
 
   SHOWMAX = 8000;                   { characters kept on the Type screen }
   TITLE_H = 22; STATUS_H = 18;
 
-  SCR_TYPE = 0; SCR_FILES = 1; SCR_REMOTE = 2; SCR_LINK = 3; SCR_SETTINGS = 4; NSCR = 5;
+  SCR_TYPE = 0; SCR_FILES = 1; SCR_REMOTE = 2; SCR_LINK = 3; SCR_SETTINGS = 4; NSCR = 5; SCR_HOME = 9;
   SCR_NAME: array[0..NSCR - 1] of UnicodeString = ('Type', 'Files', 'Remote', 'Link', 'Settings');
 
   COL_NAVY = $36251B; COL_TEXT = $3C2D23; COL_GREY = $8C8278; COL_HI = $F6EEE8; COL_LINE = $E0D8D0;
@@ -95,7 +95,8 @@ var
   fNorm, fBold, fBig, fMono, fSmall: HFONT;
   MonoW: Integer = 8; MonoH: Integer = 14;
   Measured: Boolean = False;
-  Screen: Integer = SCR_TYPE;
+  Screen: Integer = SCR_HOME;
+  HomeSel: Integer = 0;
   Quitting: Boolean = False;
   ShiftDown, CtrlDown: Boolean;
   ProgDir: UnicodeString = '';
@@ -419,9 +420,9 @@ end;
 function InFolder: UnicodeString;
 begin
   {$ifdef wince}
-  if OnCard then Result := '\Storage Card\HPC Whisper\' else Result := '\My Documents\HPC Whisper\';
+  if OnCard then Result := '\Storage Card\Whisper Tools\' else Result := '\My Documents\Whisper Tools\';
   {$else}
-  Result := ProgDir + 'HPC Whisper\';
+  Result := ProgDir + 'Whisper Tools\';
   {$endif}
 end;
 
@@ -1248,7 +1249,7 @@ begin
     if Outgoing[0].s.done or Outgoing[0].s.failed then
     begin
       if Outgoing[0].s.failed then SetTrans(Outgoing[0].t, 'Stopped: the phone does not answer', FsProgress1000(Outgoing[0].s), True, False)
-      else if Outgoing[0].s.confirmedAll then SetTrans(Outgoing[0].t, 'On the phone (Downloads/HPC Whisper)', 1000, True, True)
+      else if Outgoing[0].s.confirmedAll then SetTrans(Outgoing[0].t, 'On the phone (Downloads/Whisper Tools)', 1000, True, True)
       else SetTrans(Outgoing[0].t, 'Sent (the phone could not confirm)', 1000, True, True);
       for i := 0 to NOut - 2 do Outgoing[i] := Outgoing[i + 1];
       Dec(NOut);
@@ -1311,11 +1312,6 @@ begin
   Result := rc.right;
 end;
 
-function TabRect(i: Integer): TRect;
-const W = 76;
-begin
-  Result := MkRect(CW - NSCR * W + i * W, 0, CW - NSCR * W + (i + 1) * W - 2, TITLE_H);
-end;
 
 function KeyLabel(code: Integer): UnicodeString;
 begin
@@ -1403,15 +1399,15 @@ begin
     y := y + MonoH;
   end;
   if ShowN = 0 then
-    Txt(dc, 'Start typing. On the phone, open any app, tap a text field and switch to the HPC Whisper keyboard. ' +
+    Txt(dc, 'Start typing. On the phone, open any app, tap a text field and switch to the Whisper Tools keyboard. ' +
         'Tab, the arrows and Ctrl+C, V, X, Z go to the phone too. Alt+S presses Send there.',
         MkRect(20, top + 4, CW - 20, top + 60), fNorm, COL_GREY, DT_LEFT or DT_WORDBREAK);
 end;
 
 const
   TYPE_BTN = 5;
-  TYPE_BTN_LABEL: array[0..TYPE_BTN - 1] of UnicodeString = ('Send', 'Back', 'Home', 'New page', 'Exit');
-  TYPE_BTN_KEY: array[0..TYPE_BTN - 1] of UnicodeString = ('Alt+S', 'Alt+B', 'Alt+H', 'Alt+N', 'Alt+Q');
+  TYPE_BTN_LABEL: array[0..TYPE_BTN - 1] of UnicodeString = ('Send', 'Back', 'Phone home', 'New page', 'Tools');
+  TYPE_BTN_KEY: array[0..TYPE_BTN - 1] of UnicodeString = ('Alt+S', 'Alt+B', '', 'Alt+N', 'Alt+0');
 
 function TypeBtnRect(i: Integer): TRect;
 var w, y: Integer;
@@ -1485,7 +1481,7 @@ begin
   y := top + 18;
   if NTrans = 0 then
     Txt(dc, 'To send a file to the phone, select it and press S. ' +
-        'From the phone: Share, then HPC Whisper, in any app. Files arrive in ' + InFolder,
+        'From the phone: Share, then Whisper Tools, in any app. Files arrive in ' + InFolder,
         MkRect(x2 + 10, y, CW - 8, y + 90), fNorm, COL_GREY, DT_LEFT or DT_WORDBREAK);
   for i := NTrans - 1 downto 0 do
   begin
@@ -1519,9 +1515,9 @@ begin
       Txt(dc, 'The phone is sending its screen: it fills in from the top over a few seconds.',
           MkRect(20, top + 20, CW - 20, top + 60), fBig, COL_NAVY, DT_LEFT or DT_WORDBREAK)
     else
-      Txt(dc, 'To see the phone''s screen here: in the HPC Whisper app on the phone, tap Connect, then Start the remote. ' +
+      Txt(dc, 'To see the phone''s screen here: in the Whisper Tools app on the phone, open Remote, then tap Start the remote. ' +
           'Or press Enter here to ask the phone (it shows a notification to tap).' + #10#10 +
-          'Then: tap the picture to tap on the phone (it needs the HPC Whisper helper on the phone). ' +
+          'Then: tap the picture to tap on the phone (it needs the Whisper Tools helper on the phone). ' +
           'Arrows and Page Up/Down move the view, Alt+Z switches between zoom and the whole screen, Alt+U refreshes. ' +
           'What you type goes to the phone as on the Type screen.',
           MkRect(20, top + 14, CW - 20, CH - STATUS_H - 4), fNorm, COL_TEXT, DT_LEFT or DT_WORDBREAK);
@@ -1556,7 +1552,7 @@ begin
     s := s + ', loudest ' + IU(InPeak * 100 div 32768) + '%';
     Line('Microphone', s, COL_TEXT);
   end;
-  if PhoneHeard = 0 then Line('The phone', 'not heard yet (HPC Whisper 3 on the phone: Connect, or the keyboard open)', COL_GREY)
+  if PhoneHeard = 0 then Line('The phone', 'not heard yet (Whisper Tools on the phone: Connect, or the keyboard open)', COL_GREY)
   else Line('The phone', 'heard ' + IU((GetTickCount - PhoneHeard) div 1000) + ' s ago', COL_GOOD);
   Line('Typing', 'silent, ' + KHz(100 * Chans[SilentCh].bins[0]) + '-' + KHz(100 * Chans[SilentCh].bins[Chans[SilentCh].n - 1]) + ' kHz', COL_TEXT);
   if FuSpeed <> '' then Line('Fast, to the phone', FuSpeed, COL_TEXT) else Line('Fast, to the phone', 'not measured (standard: about 7 kbit/s)', COL_GREY);
@@ -1594,7 +1590,7 @@ begin
        else Result := 'Narrow, 20.0-21.2 kHz: inaudible';
     2: if FastFiles then Result := 'Fast: a soft hiss while it goes, about 7-12 kbit/s' else Result := 'Silent: slow (a 10 KB file takes 1-2 minutes)';
     3: case FastLevel of 0: Result := '1/8'; 2: Result := '1/2'; else Result := '1/4'; end;
-    4: if OnCard then Result := '\Storage Card\HPC Whisper' else Result := '\My Documents\HPC Whisper';
+    4: if OnCard then Result := '\Storage Card\Whisper Tools' else Result := '\My Documents\Whisper Tools';
     5: Result := KHz(BAND_HZ[Band]) + '-' + KHz(BAND_HZ[Band] + 15 * STEP_HZ) + ' kHz';
     6: Result := US(SPEED_NAME[Speed]);
     7: Result := IU(Volume) + '%';
@@ -1630,7 +1626,7 @@ begin
     y := y + 18;
   end;
   Txt(dc, 'Up and Down choose, Left, Right or Enter change. ' +
-      'HPC Whisper ' + VERSION + ' by ' + CREATOR + '. Shortcuts: Alt+1 to Alt+5 screens, Alt+S Send, Alt+B Back, ' +
+      'Whisper Tools ' + VERSION + ' by ' + CREATOR + '. Shortcuts: Alt+0 home, Alt+1 to Alt+5 tools, Alt+S Send, Alt+B Back, ' +
       'Alt+H Home screen, Alt+W Recent apps, Alt+N new page, Alt+K check the link, Alt+Q quit.',
       MkRect(12, CH - STATUS_H - 48, CW - 12, CH - STATUS_H - 2), fSmall, COL_GREY, DT_LEFT or DT_WORDBREAK);
 end;
@@ -1672,24 +1668,97 @@ begin
   else Result := 'Ready (the phone has not answered yet)';
 end;
 
+const
+  NHOME = 6;
+  HOME_NAME: array[0..NHOME - 1] of UnicodeString = ('Type', 'Files', 'Remote', 'Link', 'Settings', 'Exit');
+  HOME_WHAT: array[0..NHOME - 1] of UnicodeString = (
+    'Type into any app on the phone',
+    'Send, receive, view and play',
+    'The phone''s screen, here',
+    'Signal, speeds, link check',
+    'Format, channels, folders',
+    'Close Whisper Tools');
+
+function HomeBtnRect: TRect;
+begin
+  Result := MkRect(3, 3, 66, TITLE_H - 3);
+end;
+
+function HomeTile(i: Integer): TRect;
+var w, h, x, y, top: Integer;
+begin
+  top := TITLE_H + 6;
+  w := (CW - 16 - 2 * 6) div 3;
+  h := (CH - STATUS_H - top - 6 - 6) div 2;
+  x := 8 + (i mod 3) * (w + 6);
+  y := top + (i div 3) * (h + 6);
+  Result := MkRect(x, y, x + w, y + h);
+end;
+
+function HomeState(i: Integer; out col: COLORREF): UnicodeString;
+var u: Integer;
+begin
+  col := COL_GOOD; Result := '';
+  case i of
+    0: begin
+         u := TsUnconfirmed(Ts);
+         if Classic then Result := 'Classic format'
+         else if TsWaiting(Ts) > 0 then Result := 'Sending'
+         else if u > 0 then Result := IU(u) + ' not yet confirmed'
+         else if (u = 0) and (Ts.L > 0) then Result := 'All on the phone'
+         else if PhoneHeard <> 0 then Result := 'The phone hears you';
+       end;
+    1: if NOut > 0 then Result := 'Sending ' + IU(FsProgress1000(Outgoing[0].s) div 10) + '%'
+       else if Incoming.active then Result := 'Receiving ' + IU(Trans[Incoming.t].permille div 10) + '%'
+       else if Playing then Result := 'Playing';
+    2: if RemoteOn then Result := 'The phone is showing';
+    3: if not OutOk then begin if OutErr <> '' then begin Result := 'No sound'; col := COL_FAIL; end; end
+       else if PhoneHeard <> 0 then Result := 'Phone heard ' + IU((GetTickCount - PhoneHeard) div 1000) + ' s ago'
+       else begin Result := 'Phone not heard yet'; col := COL_GREY; end;
+  end;
+end;
+
+procedure DrawHome(dc: HDC);
+var i: Integer; rc: TRect; col: COLORREF; st: UnicodeString;
+begin
+  for i := 0 to NHOME - 1 do
+  begin
+    rc := HomeTile(i);
+    if i = HomeSel then FillR(dc, rc, COL_NAVY) else FillR(dc, rc, COL_LINE);
+    if i = HomeSel then FillR(dc, MkRect(rc.left + 2, rc.top + 2, rc.right - 2, rc.bottom - 2), COL_SEL)
+    else FillR(dc, MkRect(rc.left + 1, rc.top + 1, rc.right - 1, rc.bottom - 1), COL_HI);
+    Txt(dc, IU(i + 1), MkRect(rc.left + 10, rc.top + 8, rc.right - 8, rc.top + 26), fSmall, COL_GREY, DT_RIGHT or DT_SINGLELINE);
+    Txt(dc, HOME_NAME[i], MkRect(rc.left + 10, rc.top + 7, rc.right - 8, rc.top + 26), fBig, COL_NAVY, DT_LEFT or DT_SINGLELINE);
+    Txt(dc, HOME_WHAT[i], MkRect(rc.left + 10, rc.top + 27, rc.right - 8, rc.top + 42), fNorm, COL_TEXT, DT_LEFT or DT_SINGLELINE or DT_END_ELLIPSIS);
+    st := HomeState(i, col);
+    Txt(dc, st, MkRect(rc.left + 10, rc.bottom - 20, rc.right - 8, rc.bottom - 4), fBold, col, DT_LEFT or DT_SINGLELINE or DT_END_ELLIPSIS);
+  end;
+end;
+
 procedure Draw(dc: HDC);
-var i: Integer; rc: TRect; s: UnicodeString; col: COLORREF;
+var rc: TRect; s: UnicodeString; col: COLORREF;
 begin
   if not Measured then begin MeasureMono(dc); Measured := True; end;
   FillR(dc, MkRect(0, 0, CW, CH), COL_PAPER);
   SetBkMode(dc, TRANSPARENT);
   FillR(dc, MkRect(0, 0, CW, TITLE_H), COL_NAVY);
-  if Viewing <> 0 then s := ViewTitle else s := APPNAME + ' ' + VERSION {$ifndef wince} + ' (desktop test)'{$endif};
-  Txt(dc, s, MkRect(8, 3, TabRect(0).left - 4, TITLE_H), fBig, $FFFFFF, DT_LEFT or DT_SINGLELINE or DT_END_ELLIPSIS);
-  for i := 0 to NSCR - 1 do
+  if Screen = SCR_HOME then
   begin
-    rc := TabRect(i);
-    if i = Screen then FillR(dc, MkRect(rc.left, 3, rc.right, TITLE_H), COL_PAPER);
-    if i = Screen then col := COL_NAVY else col := $E6D2C8;
-    Txt(dc, IU(i + 1), MkRect(rc.left + 5, 6, rc.right, TITLE_H), fSmall, COL_GREY, DT_LEFT or DT_SINGLELINE);
-    Txt(dc, SCR_NAME[i], MkRect(rc.left + 15, 5, rc.right, TITLE_H), fBold, col, DT_LEFT or DT_SINGLELINE);
+    Txt(dc, APPNAME {$ifndef wince} + '  (desktop test)'{$endif}, MkRect(8, 3, CW - 8, TITLE_H), fBig, $FFFFFF, DT_LEFT or DT_SINGLELINE);
+    Txt(dc, 'version ' + VERSION + ' by ' + CREATOR, MkRect(200, 5, CW - 8, TITLE_H), fNorm, $E6D2C8, DT_RIGHT or DT_SINGLELINE);
+  end
+  else
+  begin
+    { a Home button, then the tool's name (or what the viewer shows) }
+    rc := HomeBtnRect;
+    FillR(dc, MkRect(rc.left, rc.top, rc.right, rc.bottom), $5A4836);
+    Txt(dc, '< Home', MkRect(rc.left + 6, rc.top + 2, rc.right, rc.bottom), fBold, $FFFFFF, DT_LEFT or DT_SINGLELINE);
+    if Viewing <> 0 then s := ViewTitle else s := SCR_NAME[Screen];
+    Txt(dc, s, MkRect(rc.right + 10, 3, CW - 8, TITLE_H), fBig, $FFFFFF, DT_LEFT or DT_SINGLELINE or DT_END_ELLIPSIS);
+    Txt(dc, 'Alt+' + IU(Screen + 1), MkRect(300, 6, CW - 8, TITLE_H), fSmall, $C8B4A8, DT_RIGHT or DT_SINGLELINE);
   end;
   case Screen of
+    SCR_HOME: DrawHome(dc);
     SCR_TYPE: DrawType(dc);
     SCR_FILES: DrawFiles(dc);
     SCR_REMOTE: DrawRemote(dc);
@@ -1701,9 +1770,11 @@ begin
   FillR(dc, MkRect(0, CH - STATUS_H, CW, CH - STATUS_H + 1), COL_LINE);
   s := StatusText(col);
   Txt(dc, s, MkRect(8, CH - STATUS_H + 2, CW - 8, CH), fBold, col, DT_LEFT or DT_SINGLELINE);
-  if Screen = SCR_REMOTE then s := 'Alt+Z zoom  Alt+U refresh  Alt+B Back  Alt+S Send'
+  if Screen = SCR_HOME then s := 'Arrows and Enter, or 1-6'
+  else if Screen = SCR_REMOTE then s := 'Alt+Z zoom  Alt+U refresh  Alt+0 Home'
   else if Viewing <> 0 then s := 'Arrows scroll   Esc closes'
-  else s := 'Alt+S Send   Alt+B Back   Alt+1-5 screens';
+  else if (Screen = SCR_TYPE) then s := 'Alt+S Send   Alt+B Back   Alt+0 Home'
+  else s := 'Esc or Alt+0: Home';
   Txt(dc, s, MkRect(8, CH - STATUS_H + 3, CW - 8, CH), fSmall, COL_GREY, DT_RIGHT or DT_SINGLELINE);
 end;
 
@@ -1738,7 +1809,8 @@ end;
 
 procedure SetScreen(i: Integer);
 begin
-  if (i < 0) or (i >= NSCR) then Exit;
+  if (i <> SCR_HOME) and ((i < 0) or (i >= NSCR)) then Exit;
+  if i < NSCR then HomeSel := i;
   if (Viewing <> 0) and (i <> SCR_FILES) then CloseViewer;
   Screen := i;
   if i = SCR_REMOTE then RemoteView;
@@ -1773,6 +1845,7 @@ begin
   Result := True;
   case vk of
     Ord('1')..Ord('5'): SetScreen(vk - Ord('1'));
+    Ord('0'), Ord('M'): SetScreen(SCR_HOME);
     Ord('T'): SetScreen(SCR_TYPE);
     Ord('F'): SetScreen(SCR_FILES);
     Ord('R'): SetScreen(SCR_REMOTE);
@@ -1829,11 +1902,26 @@ begin
   end;
 end;
 
+procedure OpenHome(i: Integer);
+begin
+  if i = NHOME - 1 then Leave else SetScreen(i);
+end;
+
 procedure OnKeyDown(vk: Integer);
 var page: Integer;
 begin
   if vk = VK_SHIFT_ then begin ShiftDown := True; Exit; end;
   if vk = VK_CONTROL_ then begin CtrlDown := True; Exit; end;
+  if Screen = SCR_HOME then
+  begin
+    case vk of
+      VK_LEFT_: if HomeSel > 0 then Dec(HomeSel);
+      VK_RIGHT_: if HomeSel < NHOME - 1 then Inc(HomeSel);
+      VK_UP_: if HomeSel >= 3 then Dec(HomeSel, 3);
+      VK_DOWN_: if HomeSel < 3 then Inc(HomeSel, 3);
+    end;
+    Exit;
+  end;
   if (Screen = SCR_FILES) and (Viewing <> 0) then begin ViewerKey(vk); Exit; end;
   case Screen of
     SCR_TYPE:
@@ -1894,6 +1982,18 @@ end;
 procedure OnChar(c: Integer);
 var p: array[0..0] of Byte; i: Integer;
 begin
+  if Screen = SCR_HOME then
+  begin
+    if (c = 13) or (c = 32) then OpenHome(HomeSel)
+    else if (c >= Ord('1')) and (c <= Ord('6')) then OpenHome(c - Ord('1'))
+    else if c > 32 then begin SetScreen(SCR_TYPE); TypingChar(c); end;   { just start typing }
+    Exit;
+  end;
+  { Esc goes home from the screens where it means nothing to the phone }
+  if (c = 27) and ((Screen = SCR_LINK) or (Screen = SCR_SETTINGS) or ((Screen = SCR_FILES) and (Viewing = 0) and not Playing)) then
+  begin
+    SetScreen(SCR_HOME); Exit;
+  end;
   case Screen of
     SCR_TYPE: TypingChar(c);
     SCR_REMOTE:
@@ -1936,11 +2036,17 @@ var LastTapAt: LongWord = 0; LastTapSel: Integer = -1;
 procedure OnTap(x, y: Integer);
 var i, rows, top: Integer; rc: TRect;
 begin
-  for i := 0 to NSCR - 1 do
+  if Screen = SCR_HOME then
   begin
-    rc := TabRect(i);
-    if (x >= rc.left) and (x < rc.right) and (y < TITLE_H) then begin SetScreen(i); Exit; end;
+    for i := 0 to NHOME - 1 do
+    begin
+      rc := HomeTile(i);
+      if (x >= rc.left) and (x < rc.right) and (y >= rc.top) and (y < rc.bottom) then begin HomeSel := i; OpenHome(i); Exit; end;
+    end;
+    Exit;
   end;
+  rc := HomeBtnRect;
+  if (y < TITLE_H) and (x < rc.right + 4) then begin SetScreen(SCR_HOME); Exit; end;
   case Screen of
     SCR_TYPE:
       for i := 0 to TYPE_BTN - 1 do
@@ -1948,7 +2054,7 @@ begin
         rc := TypeBtnRect(i);
         if (x >= rc.left) and (x < rc.right) and (y >= rc.top) and (y < rc.bottom) then
           case i of
-            0: TypeKey(K_SEND); 1: TypeKey(K_BACK); 2: TypeKey(K_HOMESCREEN); 3: NewPage; 4: Leave;
+            0: TypeKey(K_SEND); 1: TypeKey(K_BACK); 2: TypeKey(K_HOMESCREEN); 3: NewPage; 4: SetScreen(SCR_HOME);
           end;
       end;
     SCR_FILES:

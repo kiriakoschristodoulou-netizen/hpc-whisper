@@ -1,8 +1,8 @@
-# The HPC Whisper sound format, version 3
+# The Whisper Tools sound format, version 3
 
 Version 3 carries typing, files and a remote over four sound channels. It
 replaces neither the version 2 format (`FORMAT.md`) nor its receivers: a
-phone running HPC Whisper 3 still reads version 2, so an older handheld
+phone running Whisper Tools still reads version 2, so an older handheld
 program keeps working.
 
 Reference code: `android/app/src/main/java/net/kyriakos/whisper/w3/` (Java,
@@ -70,7 +70,7 @@ of a value being its highest.
 
 Symbols are scaled so that their RMS level is a third of the chosen peak and
 then clipped at that peak. Defaults: silent channels 0.5 of full scale on the
-handheld (HPC Whisper's 50 %), fast channels 0.125 (quarter loudness, test 2).
+handheld (the earlier program's 50 %), fast channels 0.125 (quarter loudness, test 2).
 
 ## 2. A frame
 

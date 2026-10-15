@@ -6,6 +6,7 @@ handheld/*.o
 handheld/*.or
 handheld/*.res
 handheld/whisper.exe
+handheld/WhisperTools.exe
 handheld/*.png
 !handheld/icon.png
 tests/linux/
