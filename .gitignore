@@ -1,6 +1,7 @@
 # build products
 handheld/units-arm/
 handheld/w64/
+handheld/units-w64/
 handheld/*.o
 handheld/*.or
 handheld/*.res

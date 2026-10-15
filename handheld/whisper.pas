@@ -828,7 +828,7 @@ begin
   SendMsg(CH_FU, T_TRAIN, p, 0);
   p[0] := CH_FD;
   Answer(T_CHECK, p, 1);
-  CheckState := 'Checking: a soft hiss from each side, for a few seconds…';
+  CheckState := 'Checking: a soft hiss from each side, for a few seconds...';
   FuSpeed := ''; FdSpeed := '';
 end;
 
@@ -1297,6 +1297,18 @@ begin
   if rc.bottom > 8 then MonoH := rc.bottom;
 end;
 
+function TextW(dc: HDC; const s: UnicodeString; f: HFONT): Integer;
+var rc: TRect; old: HGDIOBJ;
+begin
+  Result := 0;
+  if Length(s) = 0 then Exit;
+  rc := MkRect(0, 0, 2000, 100);
+  old := SelectObject(dc, f);
+  DrawTextW(dc, PWideChar(s), Length(s), rc, DT_CALCRECT or DT_SINGLELINE or DT_NOPREFIX);
+  SelectObject(dc, old);
+  Result := rc.right;
+end;
+
 function TabRect(i: Integer): TRect;
 const W = 76;
 begin
@@ -1319,7 +1331,7 @@ end;
 { the end of the typed text, keys as labels, wrapped to the width }
 procedure DrawDoc(dc: HDC; top, bottom: Integer);
 const MAXL = 300;
-var cols, rows, i, j, nl, start, x, y, k: Integer; s: UnicodeString;
+var cols, rows, i, j, j2, nl, start, x, y, k: Integer; s, seg: UnicodeString; col: COLORREF;
     ls, ln: array[0..MAXL - 1] of Integer; line: UnicodeString;
 begin
   cols := (CW - 16) div MonoW;
@@ -1363,23 +1375,26 @@ begin
   for i := j to nl do
   begin
     line := Copy(s, ls[i], ln[i]);
-    Txt(dc, line, MkRect(8, y, CW - 8, y + MonoH), fMono, COL_TEXT, DT_LEFT or DT_SINGLELINE);
-    { keys in another colour: drawn again over the text }
-    k := 1;
+    { plain text and key labels in turn, each measured: the next starts where the last ended }
+    x := 8; k := 1;
     while k <= Length(line) do
     begin
+      j2 := k;
       if line[k] = '[' then
       begin
-        x := k;
-        while (x <= Length(line)) and (line[x] <> ']') do Inc(x);
-        Txt(dc, Copy(line, k, x - k + 1), MkRect(8 + (k - 1) * MonoW, y, CW - 8, y + MonoH), fMono, COL_KEY, DT_LEFT or DT_SINGLELINE);
-        k := x;
+        while (j2 <= Length(line)) and (line[j2] <> ']') do Inc(j2);
+        seg := Copy(line, k, j2 - k + 1); col := COL_KEY; k := j2 + 1;
+      end
+      else
+      begin
+        while (j2 <= Length(line)) and (line[j2] <> '[') do Inc(j2);
+        seg := Copy(line, k, j2 - k); col := COL_TEXT; k := j2;
       end;
-      Inc(k);
+      Txt(dc, seg, MkRect(x, y, CW - 4, y + MonoH), fMono, col, DT_LEFT or DT_SINGLELINE);
+      x := x + TextW(dc, seg, fMono);
     end;
     if i = nl then
     begin
-      x := 8 + ln[i] * MonoW;
       if x > CW - 10 then x := CW - 10;
       FillR(dc, MkRect(x + 1, y + 1, x + 3, y + MonoH - 1), COL_GOOD);
     end;
@@ -1539,7 +1554,7 @@ begin
     s := s + ', loudest ' + IU(InPeak * 100 div 32768) + '%';
     Line('Microphone', s, COL_TEXT);
   end;
-  if PhoneHeard = 0 then Line('The phone', 'not heard yet (it needs HPC Whisper 3, connected or with the keyboard open)', COL_GREY)
+  if PhoneHeard = 0 then Line('The phone', 'not heard yet (HPC Whisper 3 on the phone: Connect, or the keyboard open)', COL_GREY)
   else Line('The phone', 'heard ' + IU((GetTickCount - PhoneHeard) div 1000) + ' s ago', COL_GOOD);
   Line('Typing', 'silent, ' + KHz(100 * Chans[SilentCh].bins[0]) + '-' + KHz(100 * Chans[SilentCh].bins[Chans[SilentCh].n - 1]) + ' kHz', COL_TEXT);
   if FuSpeed <> '' then Line('Fast, to the phone', FuSpeed, COL_TEXT) else Line('Fast, to the phone', 'not measured (standard: about 7 kbit/s)', COL_GREY);
@@ -1624,7 +1639,7 @@ begin
   col := COL_GREY;
   if not OutOk then
   begin
-    if OutErr <> '' then Result := OutErr else Result := 'Opening sound…';
+    if OutErr <> '' then Result := OutErr else Result := 'Opening sound...';
     col := COL_FAIL; Exit;
   end;
   if Playing then begin Result := 'Playing ' + PlayName; Exit; end;
@@ -1669,8 +1684,8 @@ begin
     rc := TabRect(i);
     if i = Screen then FillR(dc, MkRect(rc.left, 3, rc.right, TITLE_H), COL_PAPER);
     if i = Screen then col := COL_NAVY else col := $E6D2C8;
-    Txt(dc, SCR_NAME[i], MkRect(rc.left + 5, 5, rc.right, TITLE_H), fBold, col, DT_LEFT or DT_SINGLELINE);
-    Txt(dc, IU(i + 1), MkRect(rc.left, 6, rc.right - 4, TITLE_H), fSmall, COL_GREY, DT_RIGHT or DT_SINGLELINE);
+    Txt(dc, IU(i + 1), MkRect(rc.left + 5, 6, rc.right, TITLE_H), fSmall, COL_GREY, DT_LEFT or DT_SINGLELINE);
+    Txt(dc, SCR_NAME[i], MkRect(rc.left + 15, 5, rc.right, TITLE_H), fBold, col, DT_LEFT or DT_SINGLELINE);
   end;
   case Screen of
     SCR_TYPE: DrawType(dc);
@@ -1734,6 +1749,23 @@ begin
   if (Screen = SCR_REMOTE) and RemoteOn then RemoteSimple(9, code) else TypeKey(code);
 end;
 
+{$ifndef wince}
+{ desktop test only: SCREEN messages from files scr_0.bin, scr_1.bin... next to the program (tests/w3/ScreenDump.java) }
+procedure DesktopScreenTest;
+var k: Integer; d: TByteArr;
+begin
+  ScrInit(Scr);
+  k := 0;
+  while ReadWhole(ProgDir + 'scr_' + IU(k) + '.bin', 4096, d) do
+  begin
+    ScrApply(Scr, d, Length(d));
+    Inc(k);
+  end;
+  RemoteOn := k > 0;
+  Inc(ScreenMsgs, k);
+end;
+{$endif}
+
 function OnAlt(vk: Integer): Boolean;
 begin
   Result := True;
@@ -1754,6 +1786,9 @@ begin
     Ord('X'): if Screen = SCR_REMOTE then begin if RemoteMode = 2 then RemoteMode := 1 else RemoteMode := 2; RemoteView; end;
     Ord('U'): if Screen = SCR_REMOTE then RemoteSimple(5, 0);
     Ord('Q'): Leave;
+    {$ifndef wince}
+    Ord('D'): DesktopScreenTest;
+    {$endif}
   else Result := False;
   end;
 end;

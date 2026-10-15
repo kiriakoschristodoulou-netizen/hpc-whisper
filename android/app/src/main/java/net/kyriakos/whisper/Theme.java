@@ -5,7 +5,6 @@ import android.content.res.Configuration;
 
 /** The app's colours, light or dark as the phone is set. */
 public final class Theme {
-    private Theme() { }
 
     public static boolean dark(Context c) {
         return (c.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
