@@ -15,7 +15,7 @@ unit waudio;
 {$ifdef wince}{$define API:=cdecl}{$else}{$define API:=stdcall}{$endif}
 interface
 
-uses Windows, w3core, w3dsp, w3rx;
+uses Windows, w3core, w3dsp, w3rx, w3tx;
 
 const
   OUT_RATE = 44100;
@@ -27,7 +27,7 @@ const
   RXQ = 32;
 
 type
-  TSamplesArr = array of SmallInt;
+  TSamplesArr = TSamples;
   TFillFn = function(var buf: array of SmallInt; n: Integer): Boolean;   { classic tones; True while sounding }
   TGotMsg = record
     ch: Integer;

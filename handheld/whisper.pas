@@ -1,15 +1,15 @@
 program whisper;
-{ HPC Whisper: type on a Windows CE handheld PC (made on an HP Jornada 720),
-  and the text appears on your phone,
-  carried by tones too high to hear (20 to 21.5 kHz by default).
+{ HPC Whisper 3, for Windows CE handheld PCs (made on an HP Jornada 720).
 
-  The phone listens with the receiver page (see README). The page finds the
-  band and speed by itself, so only the handheld has settings.
+  Type here and the text goes into any app on your phone, with Tab, the
+  arrows, Ctrl+C and the other keys; the phone confirms what has arrived.
+  Files go both ways, and the phone's screen can be shown here (the picture
+  remote). It all travels as sound: silent tones above 20 kHz for typing,
+  and a soft hiss for files and the remote (docs/FORMAT3.md).
 
-  Sound is made in a second thread as a continuous stream (silence between
-  messages), so there is no click when a message starts. What you type goes
-  into a queue; whenever the sound is free, everything waiting (up to 48
-  bytes) goes out as one frame, so fast typing simply makes longer frames.
+  Screens: Alt+1 Type, Alt+2 Files, Alt+3 Remote, Alt+4 Link, Alt+5
+  Settings. The program's own shortcuts are on Alt, so that every Ctrl
+  combination reaches the phone.
 
   Every function not yet seen working on the device is looked up by name at
   run time. Builds for Windows CE (ARM) and for desktop Windows (testing). }
@@ -19,105 +19,158 @@ program whisper;
 {$ifdef wince}{$define API:=cdecl}{$else}{$define API:=stdcall}{$endif}
 {$packrecords c}
 {$R whisper.res}
-uses Windows, wmodem;
+uses Windows, w3core, w3tx, w3rx, waudio, wtext, wfile, wscreen, wwav, wimg, winf, wmodem;
 
 const
-  VERSION = '1.2';
+  VERSION = '3.0';
   CREATOR = 'Kyriakos Christodoulou';
   CLSNAME: UnicodeString = 'HPCWhisper';
   APPNAME: UnicodeString = 'HPC Whisper';
   CFGNAME: UnicodeString = 'whisper.cfg';
-  WM_UPDATE = WM_APP + 1;
+  WM_AUDIO = WM_APP + 1;
+  TIMER_ID = 1; TIMER_MS = 40;
 
-  RATE = 44100;
-  BUF_N = 4410;                    { 100 ms per buffer }
-  NBUF = 3;                        { 0.3 s queued: less lag; the phone copes with a stall }
-  DOCMAX = 6000;                   { characters kept on screen }
-  TEST_TEXT = 'The quick brown fox jumps over the lazy dog. 0123456789' + #10;
+  SHOWMAX = 8000;                   { characters kept on the Type screen }
+  TITLE_H = 22; STATUS_H = 18;
 
-  { screen }
-  TITLE_H = 22;
-  TEXT_Y = 25; TEXT_X = 8;
-  STATUS_Y = 166;
-  BTN_Y = 186; BTN_H = 25; NBTN = 6;
-  BTN_LABEL: array[0..NBTN - 1] of UnicodeString = ('Band', 'Speed', 'Volume', 'Test', 'Clear', 'Exit');
-  BTN_KEY: array[0..NBTN - 1] of UnicodeString = ('^B', '^P', '^V', '^T', '^L', '^Q');
+  SCR_TYPE = 0; SCR_FILES = 1; SCR_REMOTE = 2; SCR_LINK = 3; SCR_SETTINGS = 4; NSCR = 5;
+  SCR_NAME: array[0..NSCR - 1] of UnicodeString = ('Type', 'Files', 'Remote', 'Link', 'Settings');
 
-  COL_NAVY = $36251B; COL_TEXT = $3C2D23; COL_GREY = $8C8278; COL_HI = $F6EEE8;
-  COL_SEND = $3C8200; COL_FAIL = $2828BE; COL_PAPER = $FFFFFF;
+  COL_NAVY = $36251B; COL_TEXT = $3C2D23; COL_GREY = $8C8278; COL_HI = $F6EEE8; COL_LINE = $E0D8D0;
+  COL_GOOD = $3C8200; COL_FAIL = $2828BE; COL_PAPER = $FFFFFF; COL_KEY = $B07040; COL_SEL = $F0E0D0;
 
-  WAVE_MAPPER_ = UINT(-1);
-  WHDR_DONE_ = 1;
+  MAX_SEND_FILE = 4 * 1024 * 1024;
+  MAX_IN_FILE = 8 * 1024 * 1024;
+  MAX_VIEW_H = 2400;
+
+  VK_PRIOR_ = $21; VK_NEXT_ = $22; VK_END_ = $23; VK_HOME_ = $24; VK_LEFT_ = $25; VK_UP_ = $26; VK_RIGHT_ = $27; VK_DOWN_ = $28;
+  VK_DELETE_ = $2E; VK_SHIFT_ = $10; VK_CONTROL_ = $11; VK_MENU_ = $12; VK_ESCAPE_ = $1B; VK_RETURN_ = $0D; VK_TAB_ = $09;
 
 type
-  TWaveFormat = record
-    tag, channels: Word;
-    rate, bytesPerSec: DWORD;
-    align, bits, cbSize: Word;
-  end;
-  TWaveHdr = record
-    data: Pointer;
-    len, recorded: DWORD;
-    user: PtrUInt;
-    flags, loops: DWORD;
-    next: Pointer;
-    reserved: PtrUInt;
-  end;
-  PWaveHdr = ^TWaveHdr;
-  HWAVEOUT_ = THandle;
-
-  TNumDevs = function: UINT; API;
-  TOpen = function(out h: HWAVEOUT_; id: UINT; fmt: Pointer; cb, inst, flags: DWORD): UINT; API;
-  THdrFn = function(h: HWAVEOUT_; hdr: PWaveHdr; size: UINT): UINT; API;
-  THandleFn = function(h: HWAVEOUT_): UINT; API;
-  TSetVol = function(h: HWAVEOUT_; vol: DWORD): UINT; API;
-  TGetVol = function(h: HWAVEOUT_; vol: PDWORD): UINT; API;
   TGetModuleFileNameW = function(h: HMODULE; buf: PWideChar; n: DWORD): DWORD; API;
+  TSetTimer = function(wnd: HWND; id: PtrUInt; ms: UINT; fn: Pointer): PtrUInt; API;
+  TKillTimer = function(wnd: HWND; id: PtrUInt): BOOL; API;
+  TCreateDIBSection = function(dc: HDC; bi: Pointer; usage: UINT; bits: PPointer; section: THandle; offset: DWORD): HBITMAP; API;
+  TCreateDirectoryW = function(path: PWideChar; sa: Pointer): BOOL; API;
+  TDeleteFileW = function(path: PWideChar): BOOL; API;
+  TPtrProc = procedure(p: Pointer); API;
+  TFindData = record
+    attrs: DWORD;
+    created, accessed, written: array[0..1] of DWORD;
+    sizeHi, sizeLo: DWORD;
+    {$ifdef wince} oid: DWORD; {$else} res0, res1: DWORD; {$endif}
+    name: array[0..259] of WideChar;
+    {$ifndef wince} alt: array[0..13] of WideChar; {$endif}
+  end;
+  TFindFirstFileW = function(path: PWideChar; data: Pointer): THandle; API;
+  TFindNextFileW = function(h: THandle; data: Pointer): BOOL; API;
+  TFindClose = function(h: THandle): BOOL; API;
+
+  TEntry = record
+    name: UnicodeString;
+    folder: Boolean;
+    size: LongWord;
+  end;
+
+  TTransfer = record
+    used, out, finished, ok: Boolean;
+    name: UnicodeString;
+    size, permille: Integer;
+    state: UnicodeString;
+  end;
 
 var
-  pNumDevs: TNumDevs; pOpen: TOpen;
-  pPrepare, pUnprepare, pWrite: THdrFn; pReset, pClose: THandleFn;
-  pSetVol: TSetVol; pGetVol: TGetVol;
   pGetModuleFileNameW: TGetModuleFileNameW;
+  pSetTimer: TSetTimer; pKillTimer: TKillTimer;
+  pCreateDIBSection: TCreateDIBSection; pCreateDirectoryW: TCreateDirectoryW; pDeleteFileW: TDeleteFileW;
+  pFindFirstFileW: TFindFirstFileW; pFindNextFileW: TFindNextFileW; pFindClose: TFindClose;
+  pGlobalMemoryStatus: TPtrProc;
   hCore: HMODULE = 0;
-  MissingNames: UnicodeString = '';
+  Missing: UnicodeString = '';
 
   AppInst: HINST;
   hMain: HWND;
   CW, CH: Integer;
-  fNorm, fBold, fBig, fMono: HFONT;
+  ScreenDC: HDC = 0;
+  fNorm, fBold, fBig, fMono, fSmall: HFONT;
   MonoW: Integer = 8; MonoH: Integer = 14;
   Measured: Boolean = False;
-
-  { settings (main thread writes, sound thread reads when a frame starts) }
-  Band: Integer = NBANDS - 1;
-  Speed: Integer = 2;              { Fast: the least lag; Ctrl+P for Normal or Slow }
-  Volume: Integer = 50;
+  Screen: Integer = SCR_TYPE;
+  Quitting: Boolean = False;
+  ShiftDown, CtrlDown: Boolean;
+  ProgDir: UnicodeString = '';
   CfgPath: UnicodeString = '';
 
-  { what you typed, as shown }
-  Doc: array[0..DOCMAX - 1] of WideChar;
-  DocN: Integer = 0;
+  { settings }
+  Classic: Boolean = False;         { the version 2 tones, for older phone apps }
+  WideSilent: Boolean = False;      { the wide silent channel (18.2-21.2 kHz): faster, but some people hear it }
+  FastFiles: Boolean = False;       { files from here on the fast channel (a soft hiss) }
+  FastLevel: Integer = 1;           { 0 = 1/8, 1 = 1/4, 2 = 1/2 of full loudness }
+  OnCard: Boolean = False;          { received files on the storage card }
+  Band: Integer = NBANDS - 1;       { classic }
+  Speed: Integer = 2;
+  Volume: Integer = 50;
+  SetSel: Integer = 0;
 
-  { the queue: main thread adds, sound thread takes }
-  { the document as the phone should see it: main thread changes it, sound thread sends it }
-  Lock: TRTLCriticalSection;
-  Snd: TSender;
+  { typing }
+  Ts: TTextSender;
+  Show: array[0..SHOWMAX - 1] of WideChar;      { what was typed, as shown (keys as private-area characters) }
+  ShowN: Integer = 0;
+  ClassicSnd: TSender;
+  ClassicTm: TToneMaker;
+  ClassicLock: TRTLCriticalSection;
 
-  { sound thread state shown on screen }
-  SoundOK: Boolean = False;
-  SoundErr: UnicodeString = '';
-  SendingN: Integer = 0;           { bytes in the frame now playing, 0 = none }
-  SendingMs: Integer = 0;
-  FramesSent: Integer = 0;
-  Quit: Boolean = False;
-  hThread: THandle = 0;
-  hWave: HWAVEOUT_ = 0;
-  OldVol: DWORD = 0;
-  HaveOldVol: Boolean = False;
-  Hdr: array[0..NBUF - 1] of TWaveHdr;
-  Buf: array[0..NBUF - 1, 0..BUF_N - 1] of SmallInt;
-  Tm: TToneMaker;
+  { the link }
+  FuMap: TBitMap;                    { what the phone measured on the fast channel up }
+  HaveFuMap: Boolean = False;
+  FdMap: TBitMap; HaveFdMap: Boolean = False;     { what we measured on the fast channel down }
+  MapNo: Integer = 1;
+  PhoneHeard: LongWord = 0;          { when the phone was last heard (format 3) }
+  PhoneAnswers: Boolean = False;     { the phone has answered at least once }
+  PhoneHello: Boolean = False;
+  Answers: array[0..7] of record ch, typ, n: Integer; p: array[0..95] of Byte; end;
+  AnswerN: Integer = 0;
+  LastFromPhone: LongWord = 0;
+  CheckState: UnicodeString = '';
+  FuSpeed, FdSpeed: UnicodeString;
+  HelloAt: LongWord = 0;
+
+  { files }
+  Folder: UnicodeString = '';
+  Entries: array of TEntry;
+  NEntries: Integer = 0;
+  FileSel: Integer = 0; FileTop: Integer = 0;
+  Outgoing: array[0..15] of record s: TFileSend; t: Integer; end;
+  NOut: Integer = 0;
+  Incoming: record r: TFileRecv; active: Boolean; t: Integer; doneAt: LongWord; end;
+  UnknownId: Integer = -1; UnknownAt: LongWord = 0;
+  Trans: array[0..15] of TTransfer;
+  NTrans: Integer = 0;
+  NextFileId: Integer = 1;
+  FileNote: UnicodeString = '';
+
+  { viewers }
+  Viewing: Integer = 0;              { 0 none, 1 picture, 2 text }
+  ViewBmp: HBITMAP = 0; ViewW, ViewH, ViewY: Integer;
+  ViewTitle: UnicodeString;
+  ViewText: UnicodeString; ViewLines: array of Integer; ViewLine: Integer;
+  Playing: Boolean = False;
+  PlayData: TByteArr;
+  PlayWav: TWav;
+  PlayPos: Int64; PlayStep: Int64;   { linear interpolation to 44,100, in 1/65536 }
+  PlayPrev, PlayCur: Integer;
+  PlayBuf: array[0..8191] of SmallInt;
+  PlayBufN, PlayBufI: Integer;
+  PlayName: UnicodeString;
+
+  { remote }
+  Scr: TScreen;
+  RemoteOn: Boolean = False;         { the phone says it shows its screen }
+  RemoteMode: Integer = 1;           { 0 whole screen, 1 zoom, 2 zoom x2 }
+  RemoteBmp: HBITMAP = 0; RemoteBits: PWord = nil;
+  RemoteAsked: LongWord = 0;
+  PenX, PenY: Integer; PenAt: LongWord; PenDown: Boolean = False;
+  ScreenMsgs: Integer = 0;
 
 { ---------- small helpers ---------- }
 
@@ -134,14 +187,21 @@ begin
   Str(i, s); Result := US(s);
 end;
 
-function KHz(hz: Integer): UnicodeString;           { 20000 -> "20.0" }
+function KHz(hz: Integer): UnicodeString;
 begin
   Result := IU(hz div 1000) + '.' + IU((hz mod 1000) div 100);
 end;
 
-function BandName(b: Integer): UnicodeString;
+function SizeText(b: Int64): UnicodeString;
 begin
-  Result := KHz(BAND_HZ[b]) + '-' + KHz(BAND_HZ[b] + 15 * STEP_HZ) + ' kHz';
+  if b < 1024 then Result := IU(b) + ' bytes'
+  else if b < 1024 * 1024 then Result := IU((b + 512) div 1024) + ' KB'
+  else Result := IU(b div (1024 * 1024)) + '.' + IU((b mod (1024 * 1024)) * 10 div (1024 * 1024)) + ' MB';
+end;
+
+function TimeText(s: Integer): UnicodeString;
+begin
+  if s < 60 then Result := IU(s) + ' s' else Result := 'about ' + IU((s + 30) div 60) + ' min';
 end;
 
 function MkRect(l, t, r, b: Integer): TRect;
@@ -156,8 +216,91 @@ begin
   lf.lfHeight := -h;
   lf.lfWeight := weight;
   lf.lfCharSet := DEFAULT_CHARSET;
-  for i := 1 to Length(face) do lf.lfFaceName[i-1] := face[i];
+  for i := 1 to Length(face) do lf.lfFaceName[i - 1] := face[i];
   Result := CreateFontIndirectW(@lf);
+end;
+
+function Lower(c: WideChar): WideChar;
+begin
+  if (c >= 'A') and (c <= 'Z') then Result := WideChar(Ord(c) + 32) else Result := c;
+end;
+
+function EndsCI(const s, tail: UnicodeString): Boolean;
+var i, o: Integer;
+begin
+  Result := False;
+  if Length(s) < Length(tail) then Exit;
+  o := Length(s) - Length(tail);
+  for i := 1 to Length(tail) do if Lower(s[o + i]) <> Lower(tail[i]) then Exit;
+  Result := True;
+end;
+
+function SameW(const a, b: UnicodeString): Boolean;
+var i: Integer;
+begin
+  Result := False;
+  if Length(a) <> Length(b) then Exit;
+  for i := 1 to Length(a) do if a[i] <> b[i] then Exit;
+  Result := True;
+end;
+
+function LessCI(const a, b: UnicodeString): Boolean;
+var i, n: Integer; x, y: WideChar;
+begin
+  n := Length(a); if Length(b) < n then n := Length(b);
+  for i := 1 to n do
+  begin
+    x := Lower(a[i]); y := Lower(b[i]);
+    if x <> y then begin Result := x < y; Exit; end;
+  end;
+  Result := Length(a) < Length(b);
+end;
+
+function ToUtf8(const s: UnicodeString): TByteArr;
+var i, n, u: Integer;
+begin
+  SetLength(Result, Length(s) * 3);
+  n := 0;
+  for i := 1 to Length(s) do
+  begin
+    u := Ord(s[i]);
+    if u < $80 then begin Result[n] := u; Inc(n); end
+    else if u < $800 then begin Result[n] := $C0 or (u shr 6); Result[n + 1] := $80 or (u and $3F); Inc(n, 2); end
+    else begin Result[n] := $E0 or (u shr 12); Result[n + 1] := $80 or ((u shr 6) and $3F); Result[n + 2] := $80 or (u and $3F); Inc(n, 3); end;
+  end;
+  SetLength(Result, n);
+end;
+
+function FromUtf8(p: PByte; n: Integer): UnicodeString;
+var i, u, k: Integer;
+begin
+  SetLength(Result, n);
+  k := 0; i := 0;
+  while i < n do
+  begin
+    u := p[i];
+    if (u >= $E0) and (i + 2 < n) then begin u := ((u and 15) shl 12) or ((p[i + 1] and 63) shl 6) or (p[i + 2] and 63); Inc(i, 3); end
+    else if (u >= $C0) and (i + 1 < n) then begin u := ((u and 31) shl 6) or (p[i + 1] and 63); Inc(i, 2); end
+    else Inc(i);
+    Inc(k); Result[k] := WideChar(u);
+  end;
+  SetLength(Result, k);
+end;
+
+{ a name the file system takes, from what the other side sent }
+function SafeName(const s: UnicodeString): UnicodeString;
+var i: Integer; c: WideChar;
+begin
+  Result := '';
+  for i := 1 to Length(s) do
+  begin
+    c := s[i];
+    if (c = '\') or (c = '/') or (c = ':') or (c = '*') or (c = '?') or (c = '"') or (c = '<') or (c = '>') or (c = '|') or (Ord(c) < 32) then c := '_';
+    Result := Result + c;
+    if Length(Result) >= 100 then Break;
+  end;
+  while (Length(Result) > 0) and ((Result[1] = '.') or (Result[1] = ' ')) do Delete(Result, 1, 1);
+  if Length(Result) = 0 then Result := 'file';
 end;
 
 { ---------- looking functions up by name ---------- }
@@ -184,48 +327,62 @@ begin
   {$endif}
   if Result = nil then
   begin
-    if MissingNames <> '' then MissingNames := MissingNames + ', ';
-    MissingNames := MissingNames + US(fn);
+    if Missing <> '' then Missing := Missing + ', ';
+    Missing := Missing + US(fn);
   end;
 end;
 
 procedure ResolveAll;
-const MM = 'winmm.dll'; K = 'kernel32.dll';
+const K = 'kernel32.dll'; U = 'user32.dll'; G = 'gdi32.dll';
 begin
   {$ifdef wince}
   hCore := LoadLibraryW('coredll.dll');
   if hCore = 0 then hCore := GetModuleHandleW('coredll.dll');
   {$endif}
-  pNumDevs := TNumDevs(Find('waveOutGetNumDevs', MM));
-  pOpen := TOpen(Find('waveOutOpen', MM));
-  pPrepare := THdrFn(Find('waveOutPrepareHeader', MM));
-  pUnprepare := THdrFn(Find('waveOutUnprepareHeader', MM));
-  pWrite := THdrFn(Find('waveOutWrite', MM));
-  pReset := THandleFn(Find('waveOutReset', MM));
-  pClose := THandleFn(Find('waveOutClose', MM));
-  pSetVol := TSetVol(Find('waveOutSetVolume', MM));
-  pGetVol := TGetVol(Find('waveOutGetVolume', MM));
   pGetModuleFileNameW := TGetModuleFileNameW(Find('GetModuleFileNameW', K));
+  pSetTimer := TSetTimer(Find('SetTimer', U));
+  pKillTimer := TKillTimer(Find('KillTimer', U));
+  pCreateDIBSection := TCreateDIBSection(Find('CreateDIBSection', G));
+  pCreateDirectoryW := TCreateDirectoryW(Find('CreateDirectoryW', K));
+  pDeleteFileW := TDeleteFileW(Find('DeleteFileW', K));
+  pFindFirstFileW := TFindFirstFileW(Find('FindFirstFileW', K));
+  pFindNextFileW := TFindNextFileW(Find('FindNextFileW', K));
+  pFindClose := TFindClose(Find('FindClose', K));
+  pGlobalMemoryStatus := TPtrProc(Find('GlobalMemoryStatus', K));
+  AudioResolve;
 end;
 
-{ ---------- settings file: four bytes next to the program ---------- }
+function MemoryFor(bytes: Int64): Boolean;
+type TMemStat = record len, load: DWORD; totalPhys, availPhys, totalPage, availPage, totalVirt, availVirt: PtrUInt; end;
+var m: TMemStat;
+begin
+  Result := True;
+  if not Assigned(pGlobalMemoryStatus) then Exit;
+  FillChar(m, SizeOf(m), 0);
+  m.len := SizeOf(m);
+  pGlobalMemoryStatus(@m);
+  if m.availPhys > 0 then Result := Int64(m.availPhys) > bytes + 1024 * 1024;
+end;
 
-procedure FindCfg;
+{ ---------- settings: a few bytes next to the program ---------- }
+
+procedure FindDirs;
 var buf: array[0..259] of WideChar; n, i, cut: Integer;
 begin
-  CfgPath := CFGNAME;
-  if not Assigned(pGetModuleFileNameW) then Exit;
-  n := pGetModuleFileNameW(0, @buf[0], 259);
-  if n <= 0 then Exit;
-  cut := 0;
-  for i := 0 to n - 1 do if buf[i] = '\' then cut := i + 1;
-  SetLength(CfgPath, cut);
-  for i := 0 to cut - 1 do CfgPath[i + 1] := buf[i];
-  CfgPath := CfgPath + CFGNAME;
+  ProgDir := '';
+  if Assigned(pGetModuleFileNameW) then
+  begin
+    n := pGetModuleFileNameW(0, @buf[0], 259);
+    cut := 0;
+    for i := 0 to n - 1 do if buf[i] = '\' then cut := i + 1;
+    SetLength(ProgDir, cut);
+    for i := 0 to cut - 1 do ProgDir[i + 1] := buf[i];
+  end;
+  CfgPath := ProgDir + CFGNAME;
 end;
 
 procedure LoadCfg;
-var h: THandle; b: array[0..3] of Byte; got: DWORD;
+var h: THandle; b: array[0..15] of Byte; got: DWORD;
 begin
   h := CreateFileW(PWideChar(CfgPath), GENERIC_READ, FILE_SHARE_READ, nil, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
   if h = INVALID_HANDLE_VALUE then Exit;
@@ -235,154 +392,868 @@ begin
     if b[1] < NBANDS then Band := b[1];
     if b[2] < NSPEEDS then Speed := b[2];
     if (b[3] >= 10) and (b[3] <= 100) then Volume := b[3];
+    { version 3 adds a second part }
+    got := 0;
+    if ReadFile(h, {$ifdef wince}@b{$else}b{$endif}, 6, {$ifdef wince}@got{$else}got{$endif}, nil) and (got = 6) and (b[0] = $33) then
+    begin
+      Classic := b[1] <> 0; WideSilent := b[2] <> 0; FastFiles := b[3] <> 0;
+      if b[4] <= 2 then FastLevel := b[4];
+      OnCard := b[5] <> 0;
+    end;
   end;
   CloseHandle(h);
 end;
 
 procedure SaveCfg;
-var h: THandle; b: array[0..3] of Byte; got: DWORD;
+var h: THandle; b: array[0..9] of Byte; got: DWORD;
 begin
   h := CreateFileW(PWideChar(CfgPath), GENERIC_WRITE, 0, nil, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
   if h = INVALID_HANDLE_VALUE then Exit;
   b[0] := $57; b[1] := Band; b[2] := Speed; b[3] := Volume;
+  b[4] := $33; b[5] := Ord(Classic); b[6] := Ord(WideSilent); b[7] := Ord(FastFiles); b[8] := FastLevel; b[9] := Ord(OnCard);
   got := 0;
-  WriteFile(h, {$ifdef wince}@b{$else}b{$endif}, 4, {$ifdef wince}@got{$else}got{$endif}, nil);
+  WriteFile(h, {$ifdef wince}@b{$else}b{$endif}, 10, {$ifdef wince}@got{$else}got{$endif}, nil);
   CloseHandle(h);
 end;
 
-{ ---------- the queue ---------- }
-
-procedure SendChar(c: WideChar);
+function InFolder: UnicodeString;
 begin
-  EnterCriticalSection(Lock);
-  SnType(Snd, c, GetTickCount);
-  LeaveCriticalSection(Lock);
+  {$ifdef wince}
+  if OnCard then Result := '\Storage Card\HPC Whisper\' else Result := '\My Documents\HPC Whisper\';
+  {$else}
+  Result := ProgDir + 'HPC Whisper\';
+  {$endif}
 end;
 
-procedure SendBackspace;
+procedure MakeInFolder;
+var f: UnicodeString;
 begin
-  EnterCriticalSection(Lock);
-  SnBackspace(Snd, GetTickCount);
-  LeaveCriticalSection(Lock);
+  if not Assigned(pCreateDirectoryW) then Exit;
+  f := InFolder;
+  pCreateDirectoryW(PWideChar(Copy(f, 1, Length(f) - 1)), nil);
 end;
 
-procedure SendNewDocument;
-begin
-  EnterCriticalSection(Lock);
-  SnNewDoc(Snd);
-  LeaveCriticalSection(Lock);
-end;
+{ ---------- files on the handheld ---------- }
 
-{ bytes typed that have not gone out even once }
-function Waiting: Integer;
-begin
-  EnterCriticalSection(Lock);
-  Result := Snd.L - Snd.liveFrom;
-  LeaveCriticalSection(Lock);
-end;
-
-{ ---------- the sound thread ---------- }
-
-function OpenSound: Boolean;
-var fmt: TWaveFormat; v: DWORD;
+function ReadWhole(const path: UnicodeString; maxSize: Integer; var d: TByteArr): Boolean;
+var f: File; n: Int64;
 begin
   Result := False;
-  if MissingNames <> '' then begin SoundErr := 'Missing: ' + MissingNames; Exit; end;
-  if pNumDevs() = 0 then begin SoundErr := 'No sound device found.'; Exit; end;
-  FillChar(fmt, SizeOf(fmt), 0);
-  fmt.tag := 1; fmt.channels := 1; fmt.rate := RATE; fmt.bits := 16;
-  fmt.align := 2; fmt.bytesPerSec := RATE * 2;
-  if pOpen(hWave, WAVE_MAPPER_, @fmt, 0, 0, 0) <> 0 then
+  SetLength(d, 0);
+  {$I-}
+  Assign(f, path); FileMode := 0; Reset(f, 1);
+  if IOResult <> 0 then Exit;
+  n := FileSize(f);
+  if (n < 0) or (n > maxSize) or not MemoryFor(n) then begin Close(f); IOResult; Exit; end;
+  SetLength(d, n);
+  if n > 0 then BlockRead(f, d[0], n);
+  Close(f);
+  Result := IOResult = 0;
+  {$I+}
+end;
+
+function WriteWhole(const path: UnicodeString; p: PByte; n: Integer): Boolean;
+var f: File;
+begin
+  {$I-}
+  Assign(f, path); Rewrite(f, 1);
+  if IOResult <> 0 then begin Result := False; Exit; end;
+  if n > 0 then BlockWrite(f, p^, n);
+  Close(f);
+  Result := IOResult = 0;
+  {$I+}
+end;
+
+function Exists(const path: UnicodeString): Boolean;
+var f: File;
+begin
+  {$I-}
+  Assign(f, path); FileMode := 0; Reset(f, 1);
+  Result := IOResult = 0;
+  if Result then Close(f);
+  IOResult;
+  {$I+}
+end;
+
+{ "name.jpg", or "name (2).jpg" when that exists }
+function FreeName(const folder, name: UnicodeString): UnicodeString;
+var dot, i, k: Integer; base, ext: UnicodeString;
+begin
+  Result := name;
+  if not Exists(folder + name) then Exit;
+  dot := 0;
+  for i := 1 to Length(name) do if name[i] = '.' then dot := i;
+  if dot > 1 then begin base := Copy(name, 1, dot - 1); ext := Copy(name, dot, 99); end
+  else begin base := name; ext := ''; end;
+  for k := 2 to 99 do
   begin
-    SoundErr := 'The sound device would not open at 44100 samples/s.';
+    Result := base + ' (' + IU(k) + ')' + ext;
+    if not Exists(folder + Result) then Exit;
+  end;
+end;
+
+procedure ListFolder;
+var h: THandle; fd: TFindData; nm: UnicodeString; i, j: Integer; t: TEntry;
+begin
+  NEntries := 0;
+  SetLength(Entries, 64);
+  if Length(Folder) > 1 then
+  begin
+    Entries[0].name := '..'; Entries[0].folder := True; Entries[0].size := 0; NEntries := 1;
+  end;
+  if Assigned(pFindFirstFileW) and Assigned(pFindNextFileW) and Assigned(pFindClose) then
+  begin
+    FillChar(fd, SizeOf(fd), 0);
+    h := pFindFirstFileW(PWideChar(Folder + '*'), @fd);
+    if h <> INVALID_HANDLE_VALUE then
+    begin
+      repeat
+        nm := PWideChar(@fd.name[0]);
+        if not SameW(nm, '.') and not SameW(nm, '..') then
+        begin
+          if NEntries >= Length(Entries) then SetLength(Entries, NEntries * 2);
+          Entries[NEntries].name := nm;
+          Entries[NEntries].folder := (fd.attrs and $10) <> 0;
+          Entries[NEntries].size := fd.sizeLo;
+          Inc(NEntries);
+        end;
+        FillChar(fd, SizeOf(fd), 0);
+      until (not pFindNextFileW(h, @fd)) or (NEntries > 2000);
+      pFindClose(h);
+    end;
+  end;
+  { folders first, then by name }
+  for i := 1 to NEntries - 1 do
+  begin
+    t := Entries[i]; j := i - 1;
+    while (j >= 0) and (not SameW(Entries[j].name, '..')) and
+          ((t.folder and not Entries[j].folder) or ((t.folder = Entries[j].folder) and LessCI(t.name, Entries[j].name))) do
+    begin
+      Entries[j + 1] := Entries[j]; Dec(j);
+    end;
+    Entries[j + 1] := t;
+  end;
+  if FileSel >= NEntries then FileSel := NEntries - 1;
+  if FileSel < 0 then FileSel := 0;
+end;
+
+procedure OpenFolder(const f: UnicodeString);
+begin
+  Folder := f;
+  FileSel := 0; FileTop := 0;
+  ListFolder;
+end;
+
+{ ---------- sending ---------- }
+
+function SilentCh: Integer;
+begin
+  if WideSilent then Result := CH_SUW else Result := CH_SU;
+end;
+
+function FastLevelQ15: Integer;
+begin
+  case FastLevel of 0: Result := 4096; 2: Result := 16384; else Result := 8192; end;
+end;
+
+{ makes a frame and queues it; False when the queue is full }
+function SendMsg(ch, typ: Integer; const p: array of Byte; n: Integer): Boolean;
+var m: TBitMap; x: TSamples; lvl: Integer;
+begin
+  if ch = CH_FU then
+  begin
+    if HaveFuMap then m := FuMap else StdMap(ch, m);
+    lvl := FastLevelQ15;
+  end
+  else begin StdMap(ch, m); lvl := 0; end;
+  if typ = T_TRAIN then x := MakeTrain(ch, lvl)
+  else x := MakeFrame(ch, m, typ, p, n, lvl);
+  Result := AudioSend(x);
+end;
+
+{ an answer to the phone (MAP, FILE_NEED, HELLO): sent when the channel is free }
+procedure Answer(typ: Integer; const p: array of Byte; n: Integer);
+var i: Integer;
+begin
+  if AnswerN > High(Answers) then Exit;
+  Answers[AnswerN].ch := SilentCh; Answers[AnswerN].typ := typ; Answers[AnswerN].n := n;
+  for i := 0 to n - 1 do Answers[AnswerN].p[i] := p[i];
+  Inc(AnswerN);
+end;
+
+procedure SayHello(reply: Boolean);
+var p: array[0..3] of Byte;
+begin
+  p[0] := 3;
+  p[1] := (1 shl CH_SD) or (1 shl CH_FD);                              { what this handheld hears }
+  p[2] := (1 shl CH_SU) or (1 shl CH_SUW) or (1 shl CH_FU);            { and plays }
+  p[3] := Ord(reply);
+  Answer(T_HELLO, p, 4);
+end;
+
+{ ---------- the record of transfers, for the Files screen ---------- }
+
+function NewTransfer(isOut: Boolean; const name: UnicodeString; size: Integer): Integer;
+var i: Integer;
+begin
+  if NTrans > High(Trans) then
+  begin
+    for i := 0 to NTrans - 2 do Trans[i] := Trans[i + 1];
+    Dec(NTrans);
+    for i := 0 to NOut - 1 do Dec(Outgoing[i].t);
+    Dec(Incoming.t);
+  end;
+  Result := NTrans; Inc(NTrans);
+  Trans[Result].used := True; Trans[Result].out := isOut; Trans[Result].finished := False; Trans[Result].ok := False;
+  Trans[Result].name := name; Trans[Result].size := size; Trans[Result].permille := 0;
+  Trans[Result].state := 'Waiting';
+end;
+
+procedure SetTrans(t: Integer; const st: UnicodeString; permille: Integer; fin, ok: Boolean);
+begin
+  if (t < 0) or (t >= NTrans) then Exit;
+  Trans[t].state := st; Trans[t].permille := permille; Trans[t].finished := fin; Trans[t].ok := ok;
+end;
+
+{ ---------- the typing document as shown ---------- }
+
+procedure ShowAdd(c: WideChar);
+begin
+  if ShowN >= SHOWMAX then
+  begin
+    Move(Show[1000], Show[0], (SHOWMAX - 1000) * SizeOf(WideChar));
+    Dec(ShowN, 1000);
+  end;
+  Show[ShowN] := c; Inc(ShowN);
+end;
+
+function IsKeyChar(c: WideChar): Boolean; inline;
+begin
+  Result := (Ord(c) >= KEY_BASE) and (Ord(c) < KEY_BASE + $100);
+end;
+
+procedure TypeChar(c: WideChar);
+begin
+  ShowAdd(c);
+  if Classic then
+  begin
+    EnterCriticalSection(ClassicLock);
+    if c = #9 then SnType(ClassicSnd, ' ', GetTickCount) else SnType(ClassicSnd, c, GetTickCount);
+    LeaveCriticalSection(ClassicLock);
+  end
+  else TsType(Ts, c, GetTickCount);
+end;
+
+procedure TypeKey(code: Integer);
+begin
+  if Classic then Exit;                              { the older phone apps know only text }
+  ShowAdd(WideChar(KEY_BASE + code));
+  TsKey(Ts, code, GetTickCount);
+end;
+
+procedure TypeBackspace;
+begin
+  if Classic then
+  begin
+    if ShowN > 0 then Dec(ShowN);
+    EnterCriticalSection(ClassicLock);
+    SnBackspace(ClassicSnd, GetTickCount);
+    LeaveCriticalSection(ClassicLock);
     Exit;
   end;
-  { the system volume goes to full while the program runs (your volume
-    setting scales the tones themselves), and back when it closes }
-  v := 0;
-  if pGetVol(0, @v) = 0 then begin OldVol := v; HaveOldVol := True; end;
-  pSetVol(0, $FFFFFFFF);
-  pSetVol(hWave, $FFFFFFFF);
+  { as the phone sees it: a character typed since the last key goes; otherwise the phone deletes }
+  if Ts.L > Ts.keyEnd then
+  begin
+    if (ShowN > 0) and not IsKeyChar(Show[ShowN - 1]) then Dec(ShowN);
+    TsBackspace(Ts, GetTickCount);
+  end
+  else TypeKey(K_BACKSPACE);
+end;
+
+procedure NewPage;
+begin
+  ShowN := 0;
+  TsNewDoc(Ts);
+  EnterCriticalSection(ClassicLock);
+  SnNewDoc(ClassicSnd);
+  LeaveCriticalSection(ClassicLock);
+end;
+
+{ the classic tones, played by the sound thread when nothing else is queued }
+function ClassicFillFn(var buf: array of SmallInt; n: Integer): Boolean;
+var f: TFrame; got: Boolean;
+begin
+  if not Classic then begin Result := False; Exit; end;
+  EnterCriticalSection(ClassicLock);
+  if not ClassicTm.playing then
+  begin
+    got := SnNext(ClassicSnd, GetTickCount, f);
+    if got then
+    begin
+      ClassicTm.band := Band; ClassicTm.speed := Speed; ClassicTm.volume := Volume;
+      TmStart(ClassicTm, f);
+    end;
+  end;
+  Result := TmFill(ClassicTm, buf, n);
+  LeaveCriticalSection(ClassicLock);
+end;
+
+{ ---------- files: sending ---------- }
+
+function KindOf(const name: UnicodeString): Integer;
+begin
+  if EndsCI(name, '.jpg') or EndsCI(name, '.jpeg') or EndsCI(name, '.png') or EndsCI(name, '.bmp') or EndsCI(name, '.gif') then Result := KIND_PICTURE
+  else if EndsCI(name, '.wav') then Result := KIND_SOUND
+  else if EndsCI(name, '.txt') or EndsCI(name, '.htm') or EndsCI(name, '.html') or EndsCI(name, '.csv') then Result := KIND_TEXT
+  else if EndsCI(name, '.pwd') or EndsCI(name, '.doc') or EndsCI(name, '.pxl') or EndsCI(name, '.epub') or EndsCI(name, '.pdf') then Result := KIND_DOCUMENT
+  else Result := KIND_OTHER;
+end;
+
+function Compressed(const name: UnicodeString): Boolean;
+begin
+  Result := EndsCI(name, '.jpg') or EndsCI(name, '.jpeg') or EndsCI(name, '.png') or EndsCI(name, '.gif') or EndsCI(name, '.zip')
+    or EndsCI(name, '.epub') or EndsCI(name, '.mp3') or EndsCI(name, '.cab');
+end;
+
+{ compresses with zlib when that helps: the phone unpacks it on arrival }
+function Deflated(const d: TByteArr; var z: TByteArr): Boolean; forward;
+
+procedure SendFile(const path, name: UnicodeString);
+var d, z: TByteArr; kind: Integer;
+begin
+  if NOut > High(Outgoing) then begin FileNote := 'Too many files waiting.'; Exit; end;
+  if not ReadWhole(path, MAX_SEND_FILE, d) then begin FileNote := name + ' cannot be read (or is over 4 MB).'; Exit; end;
+  kind := KindOf(name);
+  if (not Compressed(name)) and (Length(d) > 64) and Deflated(d, z) and (Length(z) < Length(d) * 9 div 10) then
+  begin
+    d := z; kind := kind or KIND_ZLIB;
+  end;
+  FsInit(Outgoing[NOut].s, NextFileId, ToUtf8(name), kind, d);
+  NextFileId := (NextFileId + 1) and $FFFF;
+  Outgoing[NOut].t := NewTransfer(True, name, Length(d));
+  Inc(NOut);
+  FileNote := '';
+end;
+
+procedure CancelSending;
+var p: array[0..1] of Byte; i: Integer;
+begin
+  if NOut = 0 then Exit;
+  p[0] := Outgoing[0].s.id shr 8; p[1] := Outgoing[0].s.id and 255;
+  if FastFiles then SendMsg(CH_FU, T_FILE_CANCEL, p, 2) else SendMsg(SilentCh, T_FILE_CANCEL, p, 2);
+  SetTrans(Outgoing[0].t, 'Cancelled', Trans[Outgoing[0].t].permille, True, False);
+  for i := 0 to NOut - 2 do Outgoing[i] := Outgoing[i + 1];
+  Dec(NOut);
+end;
+
+{ ---------- files: receiving ---------- }
+
+procedure FinishIncoming;
+var name, path: UnicodeString; d: PByte; n: LongWord; ok: Boolean;
+begin
+  Incoming.active := False;
+  Incoming.doneAt := GetTickCount;
+  name := SafeName(FromUtf8(@Incoming.r.nameUtf8[0], Length(Incoming.r.nameUtf8)));
+  MakeInFolder;
+  name := FreeName(InFolder, name);
+  path := InFolder + name;
+  if (Incoming.r.kind and KIND_ZLIB) <> 0 then
+  begin
+    d := InflateAll(@Incoming.r.data[0], Length(Incoming.r.data), MAX_IN_FILE, n);
+    if d = nil then begin SetTrans(Incoming.t, 'Arrived damaged', 1000, True, False); Exit; end;
+    ok := WriteWhole(path, d, n);
+    FreeMem(d);
+  end
+  else if Length(Incoming.r.data) > 0 then ok := WriteWhole(path, @Incoming.r.data[0], Length(Incoming.r.data))
+  else ok := WriteWhole(path, nil, 0);
+  SetLength(Incoming.r.data, 0);
+  Trans[Incoming.t].name := name;
+  if ok then SetTrans(Incoming.t, 'Saved in ' + InFolder, 1000, True, True)
+  else SetTrans(Incoming.t, 'Could not be saved (is there room?)', 1000, True, False);
+  if (Screen = SCR_FILES) and SameW(Folder, InFolder) then ListFolder;
+end;
+
+procedure OnOffer(const p: array of Byte; n: Integer);
+var id: Integer; nm: UnicodeString;
+begin
+  id := FrIdOf(p, n);
+  if (Incoming.r.id = id) and (Incoming.active or (GetTickCount - Incoming.doneAt < 120000)) and (Length(Incoming.r.got) > 0) then
+  begin
+    FrOffer(Incoming.r, GetTickCount);
+    Exit;
+  end;
+  if Incoming.active then
+  begin
+    { a new file while one is still coming: the old one is given up }
+    SetTrans(Incoming.t, 'Interrupted', Trans[Incoming.t].permille, True, False);
+    Incoming.active := False;
+  end;
+  if (n >= 6) and not MemoryFor((LongInt(p[2]) shl 24) or (p[3] shl 16) or (p[4] shl 8) or p[5]) then
+  begin
+    FileNote := 'A file from the phone is too large for the free memory.';
+    Exit;
+  end;
+  if not FrFromOffer(Incoming.r, p, n, GetTickCount, MAX_IN_FILE) then Exit;
+  Incoming.active := True;
+  nm := SafeName(FromUtf8(@Incoming.r.nameUtf8[0], Length(Incoming.r.nameUtf8)));
+  Incoming.t := NewTransfer(False, nm, Incoming.r.size);
+  SetTrans(Incoming.t, 'Receiving', 0, False, False);
+  if UnknownId = id then UnknownId := -1;
+  ListenFast := True;
+end;
+
+procedure OnData(const p: array of Byte; n: Integer);
+var id, before: Integer;
+begin
+  id := FrIdOf(p, n);
+  if (Length(Incoming.r.got) = 0) or (Incoming.r.id <> id) then
+  begin
+    UnknownId := id; UnknownAt := GetTickCount;
+    Exit;
+  end;
+  before := Incoming.r.count;
+  FrData(Incoming.r, p, n, GetTickCount);
+  if Incoming.active and (Incoming.r.count <> before) then
+    SetTrans(Incoming.t, 'Receiving', Incoming.r.count * 1000 div Incoming.r.packets, False, False);
+end;
+
+{ ---------- the link check ---------- }
+
+procedure CheckLink;
+var p: array[0..0] of Byte;
+begin
+  ListenFast := True;
+  SayHello(False);
+  { the fast channel up: TRAIN, the phone answers with a map; the fast channel down: the phone sends TRAIN when asked }
+  SendMsg(CH_FU, T_TRAIN, p, 0);
+  p[0] := CH_FD;
+  Answer(T_CHECK, p, 1);
+  CheckState := 'Checking: a soft hiss from each side, for a few seconds…';
+  FuSpeed := ''; FdSpeed := '';
+end;
+
+function SpeedText(const m: TBitMap): UnicodeString;
+var bits, k: Integer;
+begin
+  bits := MapBits(m);
+  k := bits * MRATE div NSYM * 85 div 100;                { bit/s after error protection, about }
+  Result := 'about ' + IU(k div 1000) + '.' + IU((k mod 1000) div 100) + ' kbit/s (' + IU(bits) + ' bits a symbol)';
+end;
+
+{ ---------- what the phone said ---------- }
+
+procedure OnTrain(const t: TTrainResult);
+var m: TBitMap; b: array[0..63] of Byte; n: Integer;
+begin
+  if t.ch <> CH_FD then Exit;
+  MapNo := MapNo mod 31 + 1;
+  MapFromSnr(CH_FD, MapNo, t.snr10, m);
+  if MapBits(m) >= 8 then
+  begin
+    FdMap := m; HaveFdMap := True;
+    AudioAddMap(m);
+    n := MapToMsg(m, b);
+    Answer(T_MAP, b, n);
+    FdSpeed := SpeedText(m);
+  end
+  else FdSpeed := 'too weak: raise the phone''s media volume, or bring it closer';
+end;
+
+procedure OnPhone(const g: TGotMsg);
+var m: TBitMap; typ, n: Integer;
+begin
+  typ := g.msg.typ; n := g.msg.len;
+  PhoneHeard := GetTickCount;
+  PhoneAnswers := True;
+  case typ of
+    T_TEXT_ACK: TsAck(Ts, g.msg.data, n, GetTickCount);
+    T_MAP:
+      if MapFromMsg(g.msg.data, n, m) and (m.ch = CH_FU) then
+      begin
+        FuMap := m; HaveFuMap := True;
+        FuSpeed := SpeedText(m);
+      end;
+    T_HELLO:
+      begin
+        PhoneHello := True;
+        if (n >= 4) and ((g.msg.data[3] and 1) = 0) then
+        begin
+          HaveFuMap := False;                  { a phone that has just started knows no maps }
+          if GetTickCount - HelloAt > 3000 then begin HelloAt := GetTickCount; SayHello(True); end;
+        end;
+      end;
+    T_CHECK: if (n >= 1) and (g.msg.data[0] = CH_FU) then begin ListenFast := True; SendMsg(CH_FU, T_TRAIN, g.msg.data, 0); end;
+    T_TRAIN: ;
+    T_FILE_OFFER: OnOffer(g.msg.data, n);
+    T_FILE_DATA: OnData(g.msg.data, n);
+    T_FILE_NEED: if NOut > 0 then FsNeed(Outgoing[0].s, g.msg.data, n);
+    T_FILE_CANCEL:
+      if Incoming.active and (FrIdOf(g.msg.data, n) = Incoming.r.id) then
+      begin
+        Incoming.active := False;
+        SetTrans(Incoming.t, 'Cancelled on the phone', Trans[Incoming.t].permille, True, False);
+      end;
+    T_SCREEN:
+      if ScrApply(Scr, g.msg.data, n) then
+      begin
+        Inc(ScreenMsgs);
+        RemoteOn := True;
+        if Screen = SCR_REMOTE then InvalidateRect(hMain, nil, False);
+      end;
+    T_INPUT:
+      if n >= 1 then
+      begin
+        if g.msg.data[0] = 6 then begin RemoteOn := True; ListenFast := True; end
+        else if g.msg.data[0] = 7 then RemoteOn := False;
+      end;
+  end;
+end;
+
+function Deflated(const d: TByteArr; var z: TByteArr): Boolean;
+var n: LongWord;
+begin
+  Result := False;
+  if not MemoryFor(Length(d) + 1024) then Exit;
+  SetLength(z, Length(d) + Length(d) div 8 + 64);
+  n := DeflateBuf(@d[0], Length(d), @z[0], Length(z));
+  if n = 0 then begin SetLength(z, 0); Exit; end;
+  SetLength(z, n);
   Result := True;
 end;
 
-function SoundThread(param: Pointer): DWORD; API;
-var k, i, n: Integer; playing: array[0..NBUF - 1] of Boolean; busy, was: Boolean;
-    f: TFrame; got: Boolean;
+{ ---------- the sound player (WAV files) ---------- }
+
+procedure StopPlaying;
 begin
-  Result := 0;
-  SoundOK := OpenSound;
-  PostMessageW(hMain, WM_UPDATE, 0, 0);
-  if not SoundOK then Exit;
-  TmInit(Tm, RATE);
-  for i := 0 to NBUF - 1 do playing[i] := False;
-  busy := False;
-  k := 0;
-  while not Quit do
+  Playing := False;
+  SetLength(PlayData, 0);
+end;
+
+function PlayNext: Integer;            { the next sample of the file, or -100000 at the end }
+begin
+  if PlayBufI >= PlayBufN then
   begin
-    if playing[k] then
+    PlayBufN := WavRead(PlayWav, PlayBuf, Length(PlayBuf));
+    PlayBufI := 0;
+    if PlayBufN = 0 then begin Result := -100000; Exit; end;
+  end;
+  Result := PlayBuf[PlayBufI]; Inc(PlayBufI);
+end;
+
+procedure StartPlaying(const path, name: UnicodeString);
+var v: Integer;
+begin
+  StopPlaying;
+  if not ReadWhole(path, MAX_IN_FILE, PlayData) or (Length(PlayData) < 44) then begin FileNote := name + ' cannot be read.'; Exit; end;
+  if not WavOpen(PlayWav, @PlayData[0], Length(PlayData)) then
+  begin
+    FileNote := name + ': this kind of WAV cannot be played here (PCM and IMA ADPCM can).';
+    SetLength(PlayData, 0); Exit;
+  end;
+  PlayStep := Int64(PlayWav.rate) * 65536 div 44100;
+  PlayPos := 0; PlayBufN := 0; PlayBufI := 0;
+  v := PlayNext; if v = -100000 then v := 0; PlayPrev := v;
+  v := PlayNext; if v = -100000 then v := 0; PlayCur := v;
+  PlayName := name;
+  Playing := True;
+  FileNote := 'Playing ' + name + ' (' + TimeText(WavSeconds(PlayWav)) + '). Esc stops.';
+end;
+
+{ keeps a little sound queued while playing }
+procedure FeedPlayer;
+var x: TSamples; i, v: Integer; ended: Boolean;
+begin
+  if not Playing then Exit;
+  while Playing and (AudioQueued < 3) do
+  begin
+    SetLength(x, 4410);
+    ended := False;
+    for i := 0 to 4409 do
     begin
-      while ((Hdr[k].flags and WHDR_DONE_) = 0) and not Quit do Sleep(5);
-      pUnprepare(hWave, @Hdr[k], SizeOf(TWaveHdr));
-      playing[k] := False;
-    end;
-    if Quit then Break;
-    { free: the next frame, if the document has something to send (new
-      text at once, repeats during pauses) }
-    if not busy then
-    begin
-      EnterCriticalSection(Lock);
-      got := SnNext(Snd, GetTickCount, f);
-      LeaveCriticalSection(Lock);
-      if got then
+      if ended then begin x[i] := 0; Continue; end;
+      v := PlayPrev + Integer((Int64(PlayCur - PlayPrev) * PlayPos) div 65536);
+      x[i] := v div 2;                               { half loudness: the speaker is close to your ear }
+      PlayPos := PlayPos + PlayStep;
+      while PlayPos >= 65536 do
       begin
-        Tm.band := Band; Tm.speed := Speed; Tm.volume := Volume;
-        TmStart(Tm, f);
-        SendingN := 1; SendingMs := FrameMs(f, Speed);
-        PostMessageW(hMain, WM_UPDATE, 0, 0);
+        PlayPos := PlayPos - 65536;
+        PlayPrev := PlayCur;
+        v := PlayNext;
+        if v = -100000 then begin ended := True; Break; end;
+        PlayCur := v;
       end;
     end;
-    was := busy;
-    busy := TmFill(Tm, Buf[k], BUF_N);
-    if was and not busy then
+    AudioSend(x);
+    if ended then begin StopPlaying; FileNote := 'Played ' + PlayName + '.'; end;
+  end;
+end;
+
+{ ---------- viewers ---------- }
+
+function MakeBitmap(pix: PWord; w, h: Integer): HBITMAP;
+type TBI = record hdr: BITMAPINFOHEADER; mask: array[0..2] of DWORD; end;
+var bi: TBI; bits: Pointer; y, stride: Integer;
+begin
+  Result := 0;
+  if not Assigned(pCreateDIBSection) then Exit;
+  FillChar(bi, SizeOf(bi), 0);
+  bi.hdr.biSize := SizeOf(BITMAPINFOHEADER);
+  bi.hdr.biWidth := w; bi.hdr.biHeight := h;
+  bi.hdr.biPlanes := 1; bi.hdr.biBitCount := 16;
+  bi.hdr.biCompression := BI_BITFIELDS;
+  bi.mask[0] := $F800; bi.mask[1] := $07E0; bi.mask[2] := $001F;
+  bits := nil;
+  Result := pCreateDIBSection(ScreenDC, @bi, DIB_RGB_COLORS, @bits, 0, 0);
+  if (Result = 0) or (bits = nil) then begin Result := 0; Exit; end;
+  stride := ((w * 2 + 3) div 4) * 4;
+  if pix <> nil then
+    for y := 0 to h - 1 do Move((pix + y * w)^, (PByte(bits) + (h - 1 - y) * stride)^, w * 2);
+end;
+
+procedure CloseViewer;
+begin
+  if ViewBmp <> 0 then DeleteObject(ViewBmp);
+  ViewBmp := 0; Viewing := 0; ViewText := ''; SetLength(ViewLines, 0);
+end;
+
+function ContentH: Integer;
+begin
+  Result := CH - TITLE_H - STATUS_H;
+end;
+
+procedure ViewPicture(const path, name: UnicodeString);
+var d: TByteArr; w, h, tw, th: Integer; pix: PWord;
+begin
+  CloseViewer;
+  if not ReadWhole(path, MAX_IN_FILE, d) then begin FileNote := name + ' cannot be read.'; Exit; end;
+  if not ImageSize(@d[0], Length(d), w, h) then begin FileNote := name + ': not a picture this program can show (JPEG, PNG).'; Exit; end;
+  tw := w; th := h;
+  if tw > CW then begin th := Int64(h) * CW div w; tw := CW; end;     { as wide as the screen at most, then scroll }
+  if th > MAX_VIEW_H then begin tw := Int64(tw) * MAX_VIEW_H div th; th := MAX_VIEW_H; end;
+  if tw < 1 then tw := 1; if th < 1 then th := 1;
+  if not MemoryFor(Int64(tw) * th * 4) then begin FileNote := name + ' is too large for the free memory.'; Exit; end;
+  GetMem(pix, tw * th * 2);
+  if pix = nil then begin FileNote := 'Not enough memory for ' + name + '.'; Exit; end;
+  if DecodeImage(@d[0], Length(d), tw, th, $FFFFFF, pix) then ViewBmp := MakeBitmap(pix, tw, th);
+  FreeMem(pix);
+  if ViewBmp = 0 then begin FileNote := name + ' could not be decoded.'; Exit; end;
+  ViewW := tw; ViewH := th; ViewY := 0;
+  ViewTitle := name + '   ' + IU(w) + ' x ' + IU(h);
+  Viewing := 1;
+end;
+
+procedure WrapText(cols: Integer);
+var i, start, last, n: Integer;
+begin
+  SetLength(ViewLines, 0);
+  n := 0; start := 1;
+  while start <= Length(ViewText) do
+  begin
+    i := start; last := -1;
+    while (i <= Length(ViewText)) and (ViewText[i] <> #10) and (i - start < cols) do
     begin
-      SendingN := 0; Inc(FramesSent);
-      PostMessageW(hMain, WM_UPDATE, 0, 0);
+      if ViewText[i] = ' ' then last := i;
+      Inc(i);
     end;
-    FillChar(Hdr[k], SizeOf(TWaveHdr), 0);
-    Hdr[k].data := @Buf[k][0];
-    Hdr[k].len := BUF_N * 2;
-    if pPrepare(hWave, @Hdr[k], SizeOf(TWaveHdr)) = 0 then
-      if pWrite(hWave, @Hdr[k], SizeOf(TWaveHdr)) = 0 then playing[k] := True;
-    if not playing[k] then Sleep(100);           { writing failed: do not spin }
-    k := (k + 1) mod NBUF;
+    if (i <= Length(ViewText)) and (ViewText[i] <> #10) and (last > start) then i := last + 1;
+    if n >= Length(ViewLines) then SetLength(ViewLines, n * 2 + 64);
+    ViewLines[n] := start; Inc(n);
+    if (i <= Length(ViewText)) and (ViewText[i] = #10) then Inc(i);
+    start := i;
+    if n > 20000 then Break;
   end;
-  pReset(hWave);
-  for k := 0 to NBUF - 1 do if playing[k] then pUnprepare(hWave, @Hdr[k], SizeOf(TWaveHdr));
-  pClose(hWave);
-  if HaveOldVol then pSetVol(0, OldVol);
+  if n >= Length(ViewLines) then SetLength(ViewLines, n + 1);
+  ViewLines[n] := Length(ViewText) + 1;
+  SetLength(ViewLines, n + 1);
 end;
 
-{ ---------- the text ---------- }
-
-procedure DocAdd(c: WideChar);
+procedure ViewTextFile(const path, name: UnicodeString);
+var d: TByteArr; i, k: Integer;
 begin
-  if DocN >= DOCMAX then
-  begin
-    Move(Doc[1000], Doc[0], (DOCMAX - 1000) * SizeOf(WideChar));
-    Dec(DocN, 1000);
-  end;
-  Doc[DocN] := c; Inc(DocN);
+  CloseViewer;
+  if not ReadWhole(path, 256 * 1024, d) then begin FileNote := name + ' cannot be read (or is over 256 KB).'; Exit; end;
+  if Length(d) = 0 then ViewText := '' else ViewText := FromUtf8(@d[0], Length(d));
+  { line ends to #10, tabs to spaces }
+  k := 0;
+  for i := 1 to Length(ViewText) do
+    if ViewText[i] <> #13 then
+    begin
+      Inc(k);
+      if ViewText[i] = #9 then ViewText[k] := ' ' else ViewText[k] := ViewText[i];
+    end;
+  SetLength(ViewText, k);
+  WrapText((CW - 16) div MonoW);
+  ViewLine := 0;
+  ViewTitle := name;
+  Viewing := 2;
 end;
 
-procedure TypeText(const s: UnicodeString);
-var i: Integer;
+procedure OpenEntry;
+var e: TEntry; path: UnicodeString; i: Integer;
 begin
-  for i := 1 to Length(s) do
+  if (FileSel < 0) or (FileSel >= NEntries) then Exit;
+  e := Entries[FileSel];
+  if e.folder then
   begin
-    DocAdd(s[i]);
-    SendChar(s[i]);
+    if SameW(e.name, '..') then
+    begin
+      i := Length(Folder) - 1;
+      while (i > 0) and (Folder[i] <> '\') do Dec(i);
+      OpenFolder(Copy(Folder, 1, i));
+    end
+    else OpenFolder(Folder + e.name + '\');
+    Exit;
   end;
+  path := Folder + e.name;
+  if EndsCI(e.name, '.jpg') or EndsCI(e.name, '.jpeg') or EndsCI(e.name, '.png') then ViewPicture(path, e.name)
+  else if EndsCI(e.name, '.wav') then StartPlaying(path, e.name)
+  else if EndsCI(e.name, '.txt') or EndsCI(e.name, '.csv') or EndsCI(e.name, '.htm') or EndsCI(e.name, '.html') or EndsCI(e.name, '.md') then ViewTextFile(path, e.name)
+  else FileNote := e.name + ': open it from the handheld''s own programs (it is in ' + Folder + ').';
+end;
+
+{ ---------- the remote ---------- }
+
+procedure RemoteSend(const p: array of Byte; n: Integer);
+begin
+  Answer(T_INPUT, p, n);
+end;
+
+procedure RemoteView;
+var p: array[0..5] of Byte; h: Integer;
+begin
+  h := ContentH; if h > SCR_MAXH then h := SCR_MAXH;
+  p[0] := 4; p[1] := RemoteMode; p[2] := CW shr 8; p[3] := CW and 255; p[4] := h shr 8; p[5] := h and 255;
+  RemoteSend(p, 6);
+  ScrInit(Scr);
+end;
+
+procedure RemoteScroll(dx, dy: Integer);
+var p: array[0..4] of Byte;
+begin
+  p[0] := 8; p[1] := (dx shr 8) and 255; p[2] := dx and 255; p[3] := (dy shr 8) and 255; p[4] := dy and 255;
+  RemoteSend(p, 5);
+end;
+
+procedure RemoteSimple(kind, arg: Integer);
+var p: array[0..1] of Byte;
+begin
+  p[0] := kind; p[1] := arg;
+  if kind = 9 then RemoteSend(p, 2) else RemoteSend(p, 1);
+end;
+
+procedure RemoteTouch(kind, x1, y1, x2, y2: Integer);
+var p: array[0..8] of Byte;
+begin
+  if x1 < 0 then x1 := 0; if y1 < 0 then y1 := 0; if x2 < 0 then x2 := 0; if y2 < 0 then y2 := 0;
+  p[0] := kind; p[1] := x1 shr 8; p[2] := x1 and 255; p[3] := y1 shr 8; p[4] := y1 and 255;
+  p[5] := x2 shr 8; p[6] := x2 and 255; p[7] := y2 shr 8; p[8] := y2 and 255;
+  if kind = 3 then RemoteSend(p, 9) else RemoteSend(p, 5);
+end;
+
+{ the changed tiles into the remote picture's bitmap }
+procedure RemoteBlit;
+type TBI = record hdr: BITMAPINFOHEADER; mask: array[0..2] of DWORD; end;
+var tx, ty, x, y, g, o: Integer; row: PWord; bi: TBI; bits: Pointer; pal: array[0..15] of Word;
+begin
+  if RemoteBmp = 0 then
+  begin
+    if not Assigned(pCreateDIBSection) then Exit;
+    FillChar(bi, SizeOf(bi), 0);
+    bi.hdr.biSize := SizeOf(BITMAPINFOHEADER);
+    bi.hdr.biWidth := SCR_MAXW; bi.hdr.biHeight := -SCR_MAXH;        { top row first }
+    bi.hdr.biPlanes := 1; bi.hdr.biBitCount := 16; bi.hdr.biCompression := BI_BITFIELDS;
+    bi.mask[0] := $F800; bi.mask[1] := $07E0; bi.mask[2] := $001F;
+    bits := nil;
+    RemoteBmp := pCreateDIBSection(ScreenDC, @bi, DIB_RGB_COLORS, @bits, 0, 0);
+    if (RemoteBmp = 0) or (bits = nil) then begin RemoteBmp := 0; Exit; end;
+    RemoteBits := bits;
+    FillChar(RemoteBits^, SCR_MAXW * SCR_MAXH * 2, $FF);
+    for ty := 0 to SCR_TH - 1 do for tx := 0 to SCR_TW - 1 do Scr.changed[ty, tx] := True;
+  end;
+  for g := 0 to 15 do pal[g] := (((g * 31 + 7) div 15) shl 11) or (((g * 63 + 7) div 15) shl 5) or ((g * 31 + 7) div 15);
+  for ty := 0 to SCR_TH - 1 do
+    for tx := 0 to SCR_TW - 1 do
+      if Scr.changed[ty, tx] then
+      begin
+        Scr.changed[ty, tx] := False;
+        for y := ty * SCR_T to ty * SCR_T + SCR_T - 1 do
+        begin
+          row := RemoteBits + y * SCR_MAXW + tx * SCR_T;
+          o := y * SCR_MAXW + tx * SCR_T;
+          for x := 0 to SCR_T - 1 do row[x] := pal[Scr.pix[o + x]];
+        end;
+      end;
+  Scr.anyChanged := False;
+end;
+
+{ ---------- the timer: hearing, answering, sending ---------- }
+
+var PhoneHeardSD: LongWord = 0;
+
+procedure Pump;
+var g: TGotMsg; t: TTrainResult; now: LongWord; p: array[0..127] of Byte; n, typ, i: Integer; fp: TByteArr;
+    changed: Boolean;
+begin
+  changed := False;
+  while AudioTake(g) do
+  begin
+    if g.ch = CH_SD then PhoneHeardSD := GetTickCount;
+    OnPhone(g);
+    if g.msg.typ <> T_SCREEN then changed := True;
+  end;
+  while AudioTakeTrain(t) do begin OnTrain(t); changed := True; end;
+  FeedPlayer;
+  now := GetTickCount;
+  { files coming in: the answers }
+  if (Length(Incoming.r.got) > 0) and FrNeedDue(Incoming.r, now) and (Incoming.active or (now - Incoming.doneAt < 120000)) then
+  begin
+    SetLength(fp, 0);
+    n := FrNeed(Incoming.r, fp);
+    Answer(T_FILE_NEED, fp, n);
+  end;
+  if Incoming.active and FrComplete(Incoming.r) then begin FinishIncoming; changed := True; end;
+  if (UnknownId >= 0) and (now - UnknownAt > QUIET_MS) then
+  begin
+    SetLength(fp, 0);
+    n := FrNeedOffer(UnknownId, fp);
+    Answer(T_FILE_NEED, fp, n);
+    UnknownId := -1;
+  end;
+  if AudioQueued > 0 then begin if changed then InvalidateRect(hMain, nil, False); Exit; end;
+  { answers first, once the phone has been quiet on the silent channel for a moment }
+  if (AnswerN > 0) and (now - PhoneHeardSD >= 150) then
+  begin
+    SendMsg(Answers[0].ch, Answers[0].typ, Answers[0].p, Answers[0].n);
+    for i := 0 to AnswerN - 2 do Answers[i] := Answers[i + 1];
+    Dec(AnswerN);
+    InvalidateRect(hMain, nil, False);
+    Exit;
+  end;
+  if not Classic then
+  begin
+    n := TsNext(Ts, now, p);
+    if n > 0 then begin SendMsg(SilentCh, T_TEXT, p, n); InvalidateRect(hMain, nil, False); Exit; end;
+  end;
+  if (NOut > 0) and not Playing then
+  begin
+    SetLength(fp, 0);
+    if FsNext(Outgoing[0].s, now, typ, fp, n) then
+    begin
+      if FastFiles then SendMsg(CH_FU, typ, fp, n) else SendMsg(SilentCh, typ, fp, n);
+      SetTrans(Outgoing[0].t, 'Sending', FsProgress1000(Outgoing[0].s), False, False);
+      changed := True;
+    end;
+    if Outgoing[0].s.done or Outgoing[0].s.failed then
+    begin
+      if Outgoing[0].s.failed then SetTrans(Outgoing[0].t, 'Stopped: the phone does not answer', FsProgress1000(Outgoing[0].s), True, False)
+      else if Outgoing[0].s.confirmedAll then SetTrans(Outgoing[0].t, 'On the phone (Downloads/HPC Whisper)', 1000, True, True)
+      else SetTrans(Outgoing[0].t, 'Sent (the phone could not confirm)', 1000, True, True);
+      for i := 0 to NOut - 2 do Outgoing[i] := Outgoing[i + 1];
+      Dec(NOut);
+      changed := True;
+    end;
+  end;
+  if changed then InvalidateRect(hMain, nil, False);
 end;
 
 { ---------- drawing ---------- }
@@ -406,11 +1277,12 @@ begin
   DeleteObject(br);
 end;
 
-function BtnRect(i: Integer): TRect;
-var w: Integer;
+procedure Button(dc: HDC; const rc: TRect; const lbl, key: UnicodeString);
 begin
-  w := (CW - 16 - (NBTN - 1) * 5) div NBTN;
-  Result := MkRect(8 + i * (w + 5), BTN_Y, 8 + i * (w + 5) + w, BTN_Y + BTN_H);
+  FillR(dc, rc, COL_NAVY);
+  FillR(dc, MkRect(rc.left + 1, rc.top + 1, rc.right - 1, rc.bottom - 1), COL_HI);
+  Txt(dc, lbl, MkRect(rc.left + 6, rc.top + 3, rc.right - 4, rc.bottom), fBold, COL_NAVY, DT_LEFT or DT_SINGLELINE);
+  Txt(dc, key, MkRect(rc.left + 6, rc.top + 4, rc.right - 5, rc.bottom), fSmall, COL_GREY, DT_RIGHT or DT_SINGLELINE);
 end;
 
 procedure MeasureMono(dc: HDC);
@@ -425,25 +1297,45 @@ begin
   if rc.bottom > 8 then MonoH := rc.bottom;
 end;
 
-{ the end of the text, wrapped to the width, as many lines as fit }
-procedure DrawDoc(dc: HDC);
-const MAXL = 400;
-var cols, rows, i, j, nl, start, x: Integer;
-    ls, ln: array[0..MAXL - 1] of Integer;     { line starts and lengths }
-    line: UnicodeString; y: Integer;
+function TabRect(i: Integer): TRect;
+const W = 76;
 begin
-  cols := (CW - 2 * TEXT_X) div MonoW;
-  rows := (STATUS_Y - 2 - TEXT_Y) div MonoH;
+  Result := MkRect(CW - NSCR * W + i * W, 0, CW - NSCR * W + (i + 1) * W - 2, TITLE_H);
+end;
+
+function KeyLabel(code: Integer): UnicodeString;
+begin
+  case code of
+    K_BACKSPACE: Result := '[Bksp]'; K_TAB: Result := '[Tab]'; K_SHIFT_TAB: Result := '[Shift+Tab]'; K_ESC: Result := '[Esc]';
+    K_PGUP: Result := '[PgUp]'; K_PGDN: Result := '[PgDn]'; K_END: Result := '[End]'; K_HOME: Result := '[Home]';
+    K_LEFT: Result := '[Left]'; K_UP: Result := '[Up]'; K_RIGHT: Result := '[Right]'; K_DOWN: Result := '[Down]';
+    K_DELETE: Result := '[Del]'; K_SELALL: Result := '[Ctrl+A]'; K_COPY: Result := '[Ctrl+C]'; K_PASTE: Result := '[Ctrl+V]';
+    K_CUT: Result := '[Ctrl+X]'; K_UNDO: Result := '[Ctrl+Z]'; K_SEND: Result := '[Send]'; K_BACK: Result := '[Back]';
+    K_HOMESCREEN: Result := '[Home screen]'; K_RECENTS: Result := '[Recent apps]';
+  else Result := '[Key]';
+  end;
+end;
+
+{ the end of the typed text, keys as labels, wrapped to the width }
+procedure DrawDoc(dc: HDC; top, bottom: Integer);
+const MAXL = 300;
+var cols, rows, i, j, nl, start, x, y, k: Integer; s: UnicodeString;
+    ls, ln: array[0..MAXL - 1] of Integer; line: UnicodeString;
+begin
+  cols := (CW - 16) div MonoW;
+  rows := (bottom - top) div MonoH;
   if cols < 10 then cols := 10;
-  { wrap the last part of the document only (enough for the screen) }
-  start := DocN - cols * rows * 2;
+  start := ShowN - cols * rows * 2;
   if start < 0 then start := 0;
-  while (start > 0) and (Doc[start - 1] <> #10) do Dec(start);
-  nl := 0; i := start;
-  ls[0] := start; ln[0] := 0;
-  while i < DocN do
+  while (start > 0) and (Show[start - 1] <> #10) do Dec(start);
+  s := '';
+  for i := start to ShowN - 1 do
+    if IsKeyChar(Show[i]) then s := s + KeyLabel(Ord(Show[i]) - KEY_BASE)
+    else s := s + Show[i];
+  nl := 0; ls[0] := 1; ln[0] := 0;
+  for i := 1 to Length(s) do
   begin
-    if Doc[i] = #10 then
+    if s[i] = #10 then
     begin
       Inc(nl); if nl >= MAXL then Break;
       ls[nl] := i + 1; ln[nl] := 0;
@@ -452,11 +1344,10 @@ begin
     begin
       if ln[nl] >= cols then
       begin
-        { break at the last space, if there is one }
         j := ls[nl] + ln[nl] - 1;
-        while (j > ls[nl]) and (Doc[j] <> ' ') do Dec(j);
+        while (j > ls[nl]) and (s[j] <> ' ') do Dec(j);
         Inc(nl); if nl >= MAXL then Break;
-        if (j > ls[nl - 1]) and (Doc[j] = ' ') then
+        if (j > ls[nl - 1]) and (s[j] = ' ') then
         begin
           ln[nl - 1] := j + 1 - ls[nl - 1];
           ls[nl] := j + 1; ln[nl] := i - (j + 1);
@@ -465,71 +1356,338 @@ begin
       end;
       Inc(ln[nl]);
     end;
-    Inc(i);
   end;
   if nl >= MAXL then nl := MAXL - 1;
-  { draw the last rows }
   j := nl - rows + 1; if j < 0 then j := 0;
-  y := TEXT_Y;
+  y := top;
   for i := j to nl do
   begin
-    SetLength(line, ln[i]);
-    for x := 0 to ln[i] - 1 do line[x + 1] := Doc[ls[i] + x];
-    Txt(dc, line, MkRect(TEXT_X, y, CW - TEXT_X, y + MonoH), fMono, COL_TEXT, DT_LEFT or DT_SINGLELINE);
+    line := Copy(s, ls[i], ln[i]);
+    Txt(dc, line, MkRect(8, y, CW - 8, y + MonoH), fMono, COL_TEXT, DT_LEFT or DT_SINGLELINE);
+    { keys in another colour: drawn again over the text }
+    k := 1;
+    while k <= Length(line) do
+    begin
+      if line[k] = '[' then
+      begin
+        x := k;
+        while (x <= Length(line)) and (line[x] <> ']') do Inc(x);
+        Txt(dc, Copy(line, k, x - k + 1), MkRect(8 + (k - 1) * MonoW, y, CW - 8, y + MonoH), fMono, COL_KEY, DT_LEFT or DT_SINGLELINE);
+        k := x;
+      end;
+      Inc(k);
+    end;
     if i = nl then
     begin
-      { the cursor }
-      x := TEXT_X + ln[i] * MonoW;
-      if x > CW - TEXT_X - 2 then x := CW - TEXT_X - 2;
-      FillR(dc, MkRect(x + 1, y + 1, x + 3, y + MonoH - 1), COL_SEND);
+      x := 8 + ln[i] * MonoW;
+      if x > CW - 10 then x := CW - 10;
+      FillR(dc, MkRect(x + 1, y + 1, x + 3, y + MonoH - 1), COL_GOOD);
     end;
     y := y + MonoH;
   end;
-  if DocN = 0 then
-    Txt(dc, 'Start typing. Open the receiver page on your phone, tap Listen, and hold it near this handheld.',
-        MkRect(TEXT_X + 12, TEXT_Y, CW - TEXT_X, TEXT_Y + 40), fNorm, COL_GREY, DT_LEFT or DT_WORDBREAK);
+  if ShowN = 0 then
+    Txt(dc, 'Start typing. On the phone, open any app, tap a text field and switch to the HPC Whisper keyboard. ' +
+        'Tab, the arrows and Ctrl+C, V, X, Z go to the phone too. Alt+S presses Send there.',
+        MkRect(20, top + 4, CW - 20, top + 60), fNorm, COL_GREY, DT_LEFT or DT_WORDBREAK);
+end;
+
+const
+  TYPE_BTN = 5;
+  TYPE_BTN_LABEL: array[0..TYPE_BTN - 1] of UnicodeString = ('Send', 'Back', 'Home', 'New page', 'Exit');
+  TYPE_BTN_KEY: array[0..TYPE_BTN - 1] of UnicodeString = ('Alt+S', 'Alt+B', 'Alt+H', 'Alt+N', 'Alt+Q');
+
+function TypeBtnRect(i: Integer): TRect;
+var w, y: Integer;
+begin
+  w := (CW - 16 - (TYPE_BTN - 1) * 5) div TYPE_BTN;
+  y := CH - STATUS_H - 25;
+  Result := MkRect(8 + i * (w + 5), y, 8 + i * (w + 5) + w, y + 22);
+end;
+
+procedure DrawType(dc: HDC);
+var i: Integer;
+begin
+  DrawDoc(dc, TITLE_H + 3, CH - STATUS_H - 28);
+  for i := 0 to TYPE_BTN - 1 do Button(dc, TypeBtnRect(i), TYPE_BTN_LABEL[i], TYPE_BTN_KEY[i]);
+end;
+
+procedure DrawFiles(dc: HDC);
+var top, rows, i, y, x2: Integer; e: TEntry; s: UnicodeString; col: COLORREF; rc: TRect; mdc: HDC;
+begin
+  top := TITLE_H + 2;
+  if Viewing = 1 then
+  begin
+    rc := MkRect(0, top, CW, CH - STATUS_H);
+    FillR(dc, rc, $808080);
+    x2 := (CW - ViewW) div 2;
+    y := top;
+    if ViewH < ContentH then y := top + (ContentH - ViewH) div 2;
+    i := ViewH - ViewY; if i > ContentH then i := ContentH;      { no further down than the status line }
+    mdc := CreateCompatibleDC(dc);
+    SelectObject(mdc, ViewBmp);
+    BitBlt(dc, x2, y, ViewW, i, mdc, 0, ViewY, SRCCOPY);
+    DeleteDC(mdc);
+    Exit;
+  end;
+  if Viewing = 2 then
+  begin
+    rows := (CH - STATUS_H - top - 4) div MonoH;
+    y := top + 2;
+    for i := ViewLine to ViewLine + rows - 1 do
+    begin
+      if i >= Length(ViewLines) - 1 then Break;
+      s := Copy(ViewText, ViewLines[i], ViewLines[i + 1] - ViewLines[i]);
+      while (Length(s) > 0) and ((s[Length(s)] = #10) or (s[Length(s)] = ' ')) do SetLength(s, Length(s) - 1);
+      Txt(dc, s, MkRect(8, y, CW - 8, y + MonoH), fMono, COL_TEXT, DT_LEFT or DT_SINGLELINE);
+      y := y + MonoH;
+    end;
+    Exit;
+  end;
+  { the folder on the left, transfers on the right }
+  x2 := 380;
+  Txt(dc, Folder, MkRect(8, top, x2 - 8, top + 16), fBold, COL_NAVY, DT_LEFT or DT_SINGLELINE);
+  rows := (CH - STATUS_H - top - 22 - 18) div 15;
+  if FileSel < FileTop then FileTop := FileSel;
+  if FileSel >= FileTop + rows then FileTop := FileSel - rows + 1;
+  y := top + 18;
+  for i := FileTop to FileTop + rows - 1 do
+  begin
+    if i >= NEntries then Break;
+    e := Entries[i];
+    if i = FileSel then FillR(dc, MkRect(4, y, x2 - 6, y + 15), COL_SEL);
+    if e.folder then s := e.name + '\' else s := e.name;
+    Txt(dc, s, MkRect(8, y, x2 - 70, y + 15), fNorm, COL_TEXT, DT_LEFT or DT_SINGLELINE or DT_END_ELLIPSIS);
+    if not e.folder then Txt(dc, SizeText(e.size), MkRect(x2 - 70, y, x2 - 10, y + 15), fSmall, COL_GREY, DT_RIGHT or DT_SINGLELINE);
+    y := y + 15;
+  end;
+  if NEntries = 0 then Txt(dc, '(empty)', MkRect(8, y, x2, y + 15), fNorm, COL_GREY, DT_LEFT or DT_SINGLELINE);
+  Txt(dc, 'Enter open   S send to the phone   Backspace up   I received   C cancel', MkRect(8, CH - STATUS_H - 17, x2 + 60, CH - STATUS_H - 2),
+      fSmall, COL_GREY, DT_LEFT or DT_SINGLELINE);
+  FillR(dc, MkRect(x2, top, x2 + 1, CH - STATUS_H - 20), COL_LINE);
+  Txt(dc, 'Transfers', MkRect(x2 + 10, top, CW - 8, top + 16), fBold, COL_NAVY, DT_LEFT or DT_SINGLELINE);
+  y := top + 18;
+  if NTrans = 0 then
+    Txt(dc, 'To send a file to the phone, select it and press S. ' +
+        'From the phone: Share, then HPC Whisper, in any app. Files arrive in ' + InFolder,
+        MkRect(x2 + 10, y, CW - 8, y + 90), fNorm, COL_GREY, DT_LEFT or DT_WORDBREAK);
+  for i := NTrans - 1 downto 0 do
+  begin
+    if y > CH - STATUS_H - 50 then Break;
+    if Trans[i].out then s := '-> ' else s := '<- ';
+    Txt(dc, s + Trans[i].name, MkRect(x2 + 10, y, CW - 8, y + 15), fBold, COL_TEXT, DT_LEFT or DT_SINGLELINE or DT_END_ELLIPSIS);
+    y := y + 15;
+    if Trans[i].finished then begin if Trans[i].ok then col := COL_GOOD else col := COL_FAIL; end else col := COL_GREY;
+    s := Trans[i].state;
+    if not Trans[i].finished then s := s + ', ' + IU(Trans[i].permille div 10) + '% of ' + SizeText(Trans[i].size);
+    Txt(dc, s, MkRect(x2 + 10, y, CW - 8, y + 14), fSmall, col, DT_LEFT or DT_SINGLELINE or DT_END_ELLIPSIS);
+    y := y + 14;
+    if not Trans[i].finished then
+    begin
+      FillR(dc, MkRect(x2 + 10, y + 1, CW - 10, y + 5), COL_LINE);
+      FillR(dc, MkRect(x2 + 10, y + 1, x2 + 10 + (CW - 20 - x2) * Trans[i].permille div 1000, y + 5), COL_GOOD);
+      y := y + 7;
+    end;
+    y := y + 4;
+  end;
+  if FileNote <> '' then Txt(dc, FileNote, MkRect(x2 + 10, CH - STATUS_H - 46, CW - 8, CH - STATUS_H - 2), fNorm, COL_FAIL, DT_LEFT or DT_WORDBREAK);
+end;
+
+procedure DrawRemote(dc: HDC);
+var mdc: HDC; top, h, w: Integer;
+begin
+  top := TITLE_H;
+  if (Scr.messages = 0) or not RemoteOn then
+  begin
+    if RemoteOn then
+      Txt(dc, 'The phone is sending its screen: it fills in from the top over a few seconds.',
+          MkRect(20, top + 20, CW - 20, top + 60), fBig, COL_NAVY, DT_LEFT or DT_WORDBREAK)
+    else
+      Txt(dc, 'To see the phone''s screen here: in the HPC Whisper app on the phone, tap Connect, then Start the remote. ' +
+          'Or press Enter here to ask the phone (it shows a notification to tap).' + #10#10 +
+          'Then: tap the picture to tap on the phone (it needs the HPC Whisper helper on the phone). ' +
+          'Arrows and Page Up/Down move the view, Alt+Z switches between zoom and the whole screen, Alt+U refreshes. ' +
+          'What you type goes to the phone as on the Type screen.',
+          MkRect(20, top + 14, CW - 20, CH - STATUS_H - 4), fNorm, COL_TEXT, DT_LEFT or DT_WORDBREAK);
+    Exit;
+  end;
+  if Scr.anyChanged or (RemoteBmp = 0) then RemoteBlit;
+  if RemoteBmp = 0 then Exit;
+  w := Scr.tw * SCR_T; if w > CW then w := CW;
+  h := Scr.th * SCR_T; if h > ContentH then h := ContentH;
+  mdc := CreateCompatibleDC(dc);
+  SelectObject(mdc, RemoteBmp);
+  BitBlt(dc, 0, top, w, h, mdc, 0, 0, SRCCOPY);
+  DeleteDC(mdc);
+end;
+
+procedure DrawLink(dc: HDC);
+var y: Integer; s: UnicodeString;
+  procedure Line(const a, b: UnicodeString; col: COLORREF);
+  begin
+    Txt(dc, a, MkRect(12, y, 200, y + 16), fBold, COL_NAVY, DT_LEFT or DT_SINGLELINE);
+    Txt(dc, b, MkRect(200, y, CW - 12, y + 16), fNorm, col, DT_LEFT or DT_SINGLELINE or DT_END_ELLIPSIS);
+    y := y + 17;
+  end;
+begin
+  y := TITLE_H + 6;
+  if not OutOk then Line('Sound out', OutErr, COL_FAIL) else Line('Sound out', 'open, 44,100 samples/s', COL_TEXT);
+  if not InOk then Line('Microphone', InErr, COL_FAIL)
+  else
+  begin
+    s := 'open, really ' + IU(InRate100 div 100) + '.' + IU((InRate100 mod 100) div 10) + ' samples/s';
+    if not RateMeasured then s := s + ' (measuring, about 12 s)';
+    s := s + ', loudest ' + IU(InPeak * 100 div 32768) + '%';
+    Line('Microphone', s, COL_TEXT);
+  end;
+  if PhoneHeard = 0 then Line('The phone', 'not heard yet (it needs HPC Whisper 3, connected or with the keyboard open)', COL_GREY)
+  else Line('The phone', 'heard ' + IU((GetTickCount - PhoneHeard) div 1000) + ' s ago', COL_GOOD);
+  Line('Typing', 'silent, ' + KHz(100 * Chans[SilentCh].bins[0]) + '-' + KHz(100 * Chans[SilentCh].bins[Chans[SilentCh].n - 1]) + ' kHz', COL_TEXT);
+  if FuSpeed <> '' then Line('Fast, to the phone', FuSpeed, COL_TEXT) else Line('Fast, to the phone', 'not measured (standard: about 7 kbit/s)', COL_GREY);
+  if FdSpeed <> '' then Line('Fast, from the phone', FdSpeed, COL_TEXT) else Line('Fast, from the phone', 'not measured', COL_GREY);
+  Line('Frames', IU(FramesOut) + ' sent, ' + IU(FramesIn) + ' heard, ' + IU(FramesBad) + ' not readable', COL_TEXT);
+  if Missing <> '' then Line('Missing', Missing, COL_FAIL);
+  y := y + 4;
+  if CheckState <> '' then Txt(dc, CheckState, MkRect(12, y, CW - 12, y + 16), fNorm, COL_GREY, DT_LEFT or DT_SINGLELINE);
+  Button(dc, MkRect(12, CH - STATUS_H - 27, 200, CH - STATUS_H - 5), 'Check the link', 'Alt+K');
+end;
+
+const NSET = 8;
+
+function SettingName(i: Integer): UnicodeString;
+begin
+  case i of
+    0: Result := 'Typing format';
+    1: Result := 'Silent channel';
+    2: Result := 'Files to the phone';
+    3: Result := 'Fast loudness';
+    4: Result := 'Received files';
+    5: Result := 'Classic band';
+    6: Result := 'Classic speed';
+    7: Result := 'Classic volume';
+  else Result := '';
+  end;
+end;
+
+function SettingValue(i: Integer): UnicodeString;
+begin
+  case i of
+    0: if Classic then Result := 'Classic (version 1 and 2 phone apps, the receiver page): text only'
+       else Result := 'Format 3: silent, all keys, the phone confirms';
+    1: if WideSilent then Result := 'Wide, 18.2-21.2 kHz: twice as fast, some people hear it'
+       else Result := 'Narrow, 20.0-21.2 kHz: inaudible';
+    2: if FastFiles then Result := 'Fast: a soft hiss, about 7-12 kbit/s' else Result := 'Silent: about 1-2 kbit/s';
+    3: case FastLevel of 0: Result := '1/8'; 2: Result := '1/2'; else Result := '1/4'; end;
+    4: if OnCard then Result := '\Storage Card\HPC Whisper' else Result := '\My Documents\HPC Whisper';
+    5: Result := KHz(BAND_HZ[Band]) + '-' + KHz(BAND_HZ[Band] + 15 * STEP_HZ) + ' kHz';
+    6: Result := US(SPEED_NAME[Speed]);
+    7: Result := IU(Volume) + '%';
+  else Result := '';
+  end;
+end;
+
+procedure ChangeSetting(i, dir: Integer);
+begin
+  case i of
+    0: begin Classic := not Classic; NewPage; end;
+    1: WideSilent := not WideSilent;
+    2: FastFiles := not FastFiles;
+    3: FastLevel := (FastLevel + 3 + dir) mod 3;
+    4: OnCard := not OnCard;
+    5: Band := (Band + NBANDS + dir) mod NBANDS;
+    6: Speed := (Speed + NSPEEDS + dir) mod NSPEEDS;
+    7: begin Volume := Volume + 10 * dir; if Volume > 100 then Volume := 10; if Volume < 10 then Volume := 100; end;
+  end;
+  SaveCfg;
+end;
+
+procedure DrawSettings(dc: HDC);
+var i, y: Integer;
+begin
+  y := TITLE_H + 6;
+  for i := 0 to NSET - 1 do
+  begin
+    if (i >= 5) and not Classic then Break;
+    if i = SetSel then FillR(dc, MkRect(6, y - 1, CW - 6, y + 16), COL_SEL);
+    Txt(dc, SettingName(i), MkRect(12, y, 170, y + 16), fBold, COL_NAVY, DT_LEFT or DT_SINGLELINE);
+    Txt(dc, SettingValue(i), MkRect(170, y, CW - 12, y + 16), fNorm, COL_TEXT, DT_LEFT or DT_SINGLELINE or DT_END_ELLIPSIS);
+    y := y + 18;
+  end;
+  Txt(dc, 'Up and Down choose, Left, Right or Enter change. ' +
+      'HPC Whisper ' + VERSION + ' by ' + CREATOR + '. Shortcuts: Alt+1 to Alt+5 screens, Alt+S Send, Alt+B Back, ' +
+      'Alt+H Home screen, Alt+W Recent apps, Alt+N new page, Alt+K check the link, Alt+Q quit.',
+      MkRect(12, CH - STATUS_H - 48, CW - 12, CH - STATUS_H - 2), fSmall, COL_GREY, DT_LEFT or DT_WORDBREAK);
+end;
+
+function StatusText(out col: COLORREF): UnicodeString;
+var u, w: Integer;
+begin
+  col := COL_GREY;
+  if not OutOk then
+  begin
+    if OutErr <> '' then Result := OutErr else Result := 'Opening sound…';
+    col := COL_FAIL; Exit;
+  end;
+  if Playing then begin Result := 'Playing ' + PlayName; Exit; end;
+  if NOut > 0 then
+  begin
+    Result := 'Sending ' + Trans[Outgoing[0].t].name + ', ' + IU(FsProgress1000(Outgoing[0].s) div 10) + '%';
+    col := COL_GOOD; Exit;
+  end;
+  if Incoming.active then
+  begin
+    Result := 'Receiving ' + Trans[Incoming.t].name + ', ' + IU(Trans[Incoming.t].permille div 10) + '%';
+    col := COL_GOOD; Exit;
+  end;
+  if Classic then
+  begin
+    EnterCriticalSection(ClassicLock);
+    w := ClassicSnd.L - ClassicSnd.liveFrom;
+    LeaveCriticalSection(ClassicLock);
+    if w > 0 then begin Result := IU(w) + ' waiting (Classic)'; col := COL_GOOD; end
+    else Result := 'Classic: ' + KHz(BAND_HZ[Band]) + ' kHz, ' + US(SPEED_NAME[Speed]);
+    Exit;
+  end;
+  w := TsWaiting(Ts); u := TsUnconfirmed(Ts);
+  if w > 0 then begin Result := 'Sending, ' + IU(w) + ' waiting'; col := COL_GOOD; end
+  else if u > 0 then begin Result := IU(u) + ' not yet confirmed by the phone'; col := COL_GOOD; end
+  else if u = 0 then begin if Ts.L > 0 then Result := 'All on the phone' else Result := 'The phone hears this handheld'; col := COL_GOOD; end
+  else if PhoneHeard <> 0 then Result := 'Phone heard: ready'
+  else Result := 'Ready (the phone has not answered yet)';
 end;
 
 procedure Draw(dc: HDC);
-var i, w: Integer; rc: TRect; s: UnicodeString; col: COLORREF;
+var i: Integer; rc: TRect; s: UnicodeString; col: COLORREF;
 begin
   if not Measured then begin MeasureMono(dc); Measured := True; end;
   FillR(dc, MkRect(0, 0, CW, CH), COL_PAPER);
   SetBkMode(dc, TRANSPARENT);
   FillR(dc, MkRect(0, 0, CW, TITLE_H), COL_NAVY);
-  Txt(dc, APPNAME + ' ' + VERSION {$ifndef wince} + '  (desktop test build)'{$endif},
-      MkRect(8, 3, 400, TITLE_H), fBig, $FFFFFF, DT_LEFT or DT_SINGLELINE);
-  Txt(dc, 'by ' + CREATOR, MkRect(300, 5, CW - 8, TITLE_H), fNorm, $E6D2C8, DT_RIGHT or DT_SINGLELINE);
-
-  DrawDoc(dc);
-
-  { status line }
-  FillR(dc, MkRect(0, STATUS_Y - 2, CW, STATUS_Y - 1), $E0D8D0);
-  s := BandName(Band) + '   ' + US(SPEED_NAME[Speed]) + ' (' + IU(SPEED_MS[Speed]) + ' ms)   Volume ' + IU(Volume) + '%';
-  Txt(dc, s, MkRect(8, STATUS_Y + 1, CW - 8, STATUS_Y + 17), fNorm, COL_GREY, DT_LEFT or DT_SINGLELINE);
-  w := Waiting;
-  if not SoundOK then
+  if Viewing <> 0 then s := ViewTitle else s := APPNAME + ' ' + VERSION {$ifndef wince} + ' (desktop test)'{$endif};
+  Txt(dc, s, MkRect(8, 3, TabRect(0).left - 4, TITLE_H), fBig, $FFFFFF, DT_LEFT or DT_SINGLELINE or DT_END_ELLIPSIS);
+  for i := 0 to NSCR - 1 do
   begin
-    if SoundErr = '' then s := 'Opening sound...' else s := SoundErr;
-    col := COL_FAIL;
-  end
-  else if SendingN > 0 then
-  begin
-    if w > 0 then s := 'Sending, ' + IU(w) + ' waiting' else s := 'Sending';
-    col := COL_SEND;
-  end
-  else if w > 0 then begin s := IU(w) + ' waiting'; col := COL_SEND; end
-  else begin s := 'Ready   (' + IU(FramesSent) + ' sent)'; col := COL_GREY; end;
-  Txt(dc, s, MkRect(8, STATUS_Y + 1, CW - 8, STATUS_Y + 17), fBold, col, DT_RIGHT or DT_SINGLELINE);
-
-  for i := 0 to NBTN - 1 do
-  begin
-    rc := BtnRect(i);
-    FillR(dc, rc, COL_NAVY);
-    FillR(dc, MkRect(rc.left + 1, rc.top + 1, rc.right - 1, rc.bottom - 1), COL_HI);
-    Txt(dc, BTN_LABEL[i], MkRect(rc.left + 8, rc.top + 5, rc.right - 8, rc.bottom), fBold, COL_NAVY, DT_LEFT or DT_SINGLELINE);
-    Txt(dc, BTN_KEY[i], MkRect(rc.left + 8, rc.top + 5, rc.right - 8, rc.bottom), fNorm, COL_GREY, DT_RIGHT or DT_SINGLELINE);
+    rc := TabRect(i);
+    if i = Screen then FillR(dc, MkRect(rc.left, 3, rc.right, TITLE_H), COL_PAPER);
+    if i = Screen then col := COL_NAVY else col := $E6D2C8;
+    Txt(dc, SCR_NAME[i], MkRect(rc.left + 5, 5, rc.right, TITLE_H), fBold, col, DT_LEFT or DT_SINGLELINE);
+    Txt(dc, IU(i + 1), MkRect(rc.left, 6, rc.right - 4, TITLE_H), fSmall, COL_GREY, DT_RIGHT or DT_SINGLELINE);
   end;
+  case Screen of
+    SCR_TYPE: DrawType(dc);
+    SCR_FILES: DrawFiles(dc);
+    SCR_REMOTE: DrawRemote(dc);
+    SCR_LINK: DrawLink(dc);
+    SCR_SETTINGS: DrawSettings(dc);
+  end;
+  { the status line }
+  FillR(dc, MkRect(0, CH - STATUS_H, CW, CH), COL_HI);
+  FillR(dc, MkRect(0, CH - STATUS_H, CW, CH - STATUS_H + 1), COL_LINE);
+  s := StatusText(col);
+  Txt(dc, s, MkRect(8, CH - STATUS_H + 2, CW - 8, CH), fBold, col, DT_LEFT or DT_SINGLELINE);
+  if Screen = SCR_REMOTE then s := 'Alt+Z zoom  Alt+U refresh  Alt+B Back  Alt+S Send'
+  else if Viewing <> 0 then s := 'Arrows scroll   Esc closes'
+  else s := 'Alt+S Send   Alt+B Back   Alt+1-5 screens';
+  Txt(dc, s, MkRect(8, CH - STATUS_H + 3, CW - 8, CH), fSmall, COL_GREY, DT_RIGHT or DT_SINGLELINE);
 end;
 
 procedure Paint(wnd: HWND);
@@ -552,58 +1710,248 @@ end;
 { ---------- input ---------- }
 
 procedure Leave;
-var n: Integer;
 begin
+  if Quitting then Exit;
+  Quitting := True;
   SaveCfg;
-  Quit := True;
-  n := 0;
-  if hThread <> 0 then
-    while (WaitForSingleObject(hThread, 100) <> WAIT_OBJECT_0) and (n < 30) do Inc(n);
+  if Assigned(pKillTimer) then pKillTimer(hMain, TIMER_ID);
+  AudioStop;
   DestroyWindow(hMain);
 end;
 
-procedure Command(c: Integer);
+procedure SetScreen(i: Integer);
 begin
-  case c of
-    0: begin Band := (Band + 1) mod NBANDS; SaveCfg; end;
-    1: begin Speed := (Speed + 1) mod NSPEEDS; SaveCfg; end;
-    2: begin Volume := Volume + 10; if Volume > 100 then Volume := 10; SaveCfg; end;
-    3: TypeText(TEST_TEXT);
-    4: begin DocN := 0; SendNewDocument; end;      { a fresh page, here and on the phone }
-    5: Leave;
+  if (i < 0) or (i >= NSCR) then Exit;
+  if (Viewing <> 0) and (i <> SCR_FILES) then CloseViewer;
+  Screen := i;
+  if i = SCR_REMOTE then RemoteView;
+  if i = SCR_FILES then ListFolder;
+end;
+
+{ a key for the phone (Send, Back...): on the Remote screen it goes as a remote key, so it works without the keyboard open }
+procedure PhoneKey(code: Integer);
+begin
+  if (Screen = SCR_REMOTE) and RemoteOn then RemoteSimple(9, code) else TypeKey(code);
+end;
+
+function OnAlt(vk: Integer): Boolean;
+begin
+  Result := True;
+  case vk of
+    Ord('1')..Ord('5'): SetScreen(vk - Ord('1'));
+    Ord('T'): SetScreen(SCR_TYPE);
+    Ord('F'): SetScreen(SCR_FILES);
+    Ord('R'): SetScreen(SCR_REMOTE);
+    Ord('L'): SetScreen(SCR_LINK);
+    Ord('O'): SetScreen(SCR_SETTINGS);
+    Ord('S'): PhoneKey(K_SEND);
+    Ord('B'): PhoneKey(K_BACK);
+    Ord('H'): PhoneKey(K_HOMESCREEN);
+    Ord('W'): PhoneKey(K_RECENTS);
+    Ord('N'): NewPage;
+    Ord('K'): begin SetScreen(SCR_LINK); CheckLink; end;
+    Ord('Z'): if Screen = SCR_REMOTE then begin if RemoteMode = 0 then RemoteMode := 1 else RemoteMode := 0; RemoteView; end;
+    Ord('X'): if Screen = SCR_REMOTE then begin if RemoteMode = 2 then RemoteMode := 1 else RemoteMode := 2; RemoteView; end;
+    Ord('U'): if Screen = SCR_REMOTE then RemoteSimple(5, 0);
+    Ord('Q'): Leave;
+  else Result := False;
   end;
 end;
 
-procedure OnTap(x, y: Integer);
-var i: Integer; rc: TRect;
+procedure FileMove(d: Integer);
 begin
-  for i := 0 to NBTN - 1 do
+  FileSel := FileSel + d;
+  if FileSel >= NEntries then FileSel := NEntries - 1;
+  if FileSel < 0 then FileSel := 0;
+end;
+
+procedure ViewerKey(vk: Integer);
+var page: Integer;
+begin
+  if Viewing = 1 then
   begin
-    rc := BtnRect(i);
-    if (x >= rc.left) and (x < rc.right) and (y >= rc.top) and (y < rc.bottom) then begin Command(i); Exit; end;
+    page := ContentH - 20;
+    case vk of
+      VK_DOWN_: ViewY := ViewY + 40; VK_UP_: ViewY := ViewY - 40;
+      VK_NEXT_: ViewY := ViewY + page; VK_PRIOR_: ViewY := ViewY - page;
+      VK_HOME_: ViewY := 0; VK_END_: ViewY := ViewH;
+    end;
+    if ViewY > ViewH - ContentH then ViewY := ViewH - ContentH;
+    if ViewY < 0 then ViewY := 0;
+  end
+  else if Viewing = 2 then
+  begin
+    page := ContentH div MonoH - 1;
+    case vk of
+      VK_DOWN_: Inc(ViewLine); VK_UP_: Dec(ViewLine);
+      VK_NEXT_: ViewLine := ViewLine + page; VK_PRIOR_: ViewLine := ViewLine - page;
+      VK_HOME_: ViewLine := 0; VK_END_: ViewLine := Length(ViewLines);
+    end;
+    if ViewLine > Length(ViewLines) - 1 - page then ViewLine := Length(ViewLines) - 1 - page;
+    if ViewLine < 0 then ViewLine := 0;
+  end;
+end;
+
+procedure OnKeyDown(vk: Integer);
+var page: Integer;
+begin
+  if vk = VK_SHIFT_ then begin ShiftDown := True; Exit; end;
+  if vk = VK_CONTROL_ then begin CtrlDown := True; Exit; end;
+  if (Screen = SCR_FILES) and (Viewing <> 0) then begin ViewerKey(vk); Exit; end;
+  case Screen of
+    SCR_TYPE:
+      case vk of
+        VK_LEFT_: TypeKey(K_LEFT); VK_RIGHT_: TypeKey(K_RIGHT); VK_UP_: TypeKey(K_UP); VK_DOWN_: TypeKey(K_DOWN);
+        VK_HOME_: TypeKey(K_HOME); VK_END_: TypeKey(K_END); VK_PRIOR_: TypeKey(K_PGUP); VK_NEXT_: TypeKey(K_PGDN);
+        VK_DELETE_: TypeKey(K_DELETE);
+      end;
+    SCR_REMOTE:
+      begin
+        page := ContentH * 2 div 3;
+        case vk of
+          VK_UP_: RemoteScroll(0, -page div 2); VK_DOWN_: RemoteScroll(0, page div 2);
+          VK_LEFT_: RemoteScroll(-CW div 3, 0); VK_RIGHT_: RemoteScroll(CW div 3, 0);
+          VK_PRIOR_: RemoteScroll(0, -page); VK_NEXT_: RemoteScroll(0, page);
+          VK_DELETE_: TypeKey(K_DELETE);
+        end;
+      end;
+    SCR_FILES:
+      case vk of
+        VK_UP_: FileMove(-1); VK_DOWN_: FileMove(1);
+        VK_PRIOR_: FileMove(-10); VK_NEXT_: FileMove(10);
+        VK_HOME_: FileSel := 0; VK_END_: FileSel := NEntries - 1;
+      end;
+    SCR_SETTINGS:
+      case vk of
+        VK_UP_: if SetSel > 0 then Dec(SetSel);
+        VK_DOWN_: if (SetSel < NSET - 1) and (Classic or (SetSel < 4)) then Inc(SetSel);
+        VK_LEFT_: ChangeSetting(SetSel, -1);
+        VK_RIGHT_: ChangeSetting(SetSel, 1);
+      end;
+  end;
+end;
+
+procedure OnKeyUp(vk: Integer);
+begin
+  if vk = VK_SHIFT_ then ShiftDown := False;
+  if vk = VK_CONTROL_ then CtrlDown := False;
+end;
+
+procedure TypingChar(c: Integer);
+begin
+  case c of
+    8: TypeBackspace;
+    9: if ShiftDown then TypeKey(K_SHIFT_TAB) else if Classic then TypeChar(' ') else TypeKey(K_TAB);
+    13: TypeChar(#10);
+    27: TypeKey(K_ESC);
+    1: TypeKey(K_SELALL);
+    3: TypeKey(K_COPY);
+    22: TypeKey(K_PASTE);
+    24: TypeKey(K_CUT);
+    26: TypeKey(K_UNDO);
+  else
+    if c >= 32 then TypeChar(WideChar(c));
   end;
 end;
 
 procedure OnChar(c: Integer);
+var p: array[0..0] of Byte; i: Integer;
 begin
-  case c of
-    2: Command(0);                 { Ctrl+B }
-    16: Command(1);                { Ctrl+P }
-    22: Command(2);                { Ctrl+V }
-    20: Command(3);                { Ctrl+T }
-    12: Command(4);                { Ctrl+L }
-    17: Command(5);                { Ctrl+Q }
-    8:
-      if DocN > 0 then
+  case Screen of
+    SCR_TYPE: TypingChar(c);
+    SCR_REMOTE:
+      if (c = 13) and not RemoteOn then
       begin
-        Dec(DocN);
-        SendBackspace;
-      end;
-    13: begin DocAdd(#10); SendChar(#10); end;
-    9: TypeText(' ');
-  else
-    if c >= 32 then begin DocAdd(WideChar(c)); SendChar(WideChar(c)); end;
+        p[0] := 6; RemoteSend(p, 1); RemoteAsked := GetTickCount;
+      end
+      else TypingChar(c);
+    SCR_FILES:
+      if Viewing <> 0 then
+      begin
+        if (c = 27) or (c = 13) or (c = 8) then CloseViewer;
+      end
+      else
+        case c of
+          13: OpenEntry;
+          8: if Length(Folder) > 1 then
+             begin
+               i := Length(Folder) - 1;
+               while (i > 0) and (Folder[i] <> '\') do Dec(i);
+               OpenFolder(Copy(Folder, 1, i));
+             end;
+          27: if Playing then begin StopPlaying; FileNote := 'Stopped.'; end;
+          Ord('s'), Ord('S'):
+            if (FileSel >= 0) and (FileSel < NEntries) and not Entries[FileSel].folder then
+              SendFile(Folder + Entries[FileSel].name, Entries[FileSel].name);
+          Ord('i'), Ord('I'): begin MakeInFolder; OpenFolder(InFolder); end;
+          Ord('c'), Ord('C'): CancelSending;
+          Ord('\'): OpenFolder('\');
+        end;
+    SCR_SETTINGS:
+      if (c = 13) or (c = 32) then ChangeSetting(SetSel, 1);
+    SCR_LINK:
+      if c = 13 then CheckLink;
   end;
+end;
+
+var LastTapAt: LongWord = 0; LastTapSel: Integer = -1;
+
+procedure OnTap(x, y: Integer);
+var i, rows, top: Integer; rc: TRect;
+begin
+  for i := 0 to NSCR - 1 do
+  begin
+    rc := TabRect(i);
+    if (x >= rc.left) and (x < rc.right) and (y < TITLE_H) then begin SetScreen(i); Exit; end;
+  end;
+  case Screen of
+    SCR_TYPE:
+      for i := 0 to TYPE_BTN - 1 do
+      begin
+        rc := TypeBtnRect(i);
+        if (x >= rc.left) and (x < rc.right) and (y >= rc.top) and (y < rc.bottom) then
+          case i of
+            0: TypeKey(K_SEND); 1: TypeKey(K_BACK); 2: TypeKey(K_HOMESCREEN); 3: NewPage; 4: Leave;
+          end;
+      end;
+    SCR_FILES:
+      if Viewing <> 0 then CloseViewer
+      else if x < 380 then
+      begin
+        top := TITLE_H + 2 + 18;
+        rows := (y - top) div 15;
+        if (y >= top) and (FileTop + rows < NEntries) then
+        begin
+          i := FileTop + rows;
+          if (i = LastTapSel) and (GetTickCount - LastTapAt < 600) then begin FileSel := i; OpenEntry; LastTapSel := -1; end
+          else begin FileSel := i; LastTapSel := i; LastTapAt := GetTickCount; end;
+        end;
+      end;
+    SCR_SETTINGS:
+      begin
+        i := (y - TITLE_H - 6) div 18;
+        if (i >= 0) and (i < NSET) and (Classic or (i < 5)) then begin if i = SetSel then ChangeSetting(i, 1); SetSel := i; end;
+      end;
+    SCR_LINK:
+      if y >= CH - STATUS_H - 30 then CheckLink;
+    SCR_REMOTE:
+      if RemoteOn and (y >= TITLE_H) and (y < CH - STATUS_H) then
+      begin
+        PenDown := True; PenX := x; PenY := y - TITLE_H; PenAt := GetTickCount;
+      end;
+  end;
+end;
+
+procedure OnPenUp(x, y: Integer);
+var held: LongWord;
+begin
+  if not PenDown then Exit;
+  PenDown := False;
+  y := y - TITLE_H;
+  held := GetTickCount - PenAt;
+  if (Abs(x - PenX) > 12) or (Abs(y - PenY) > 12) then RemoteTouch(3, PenX, PenY, x, y)
+  else if held > 600 then RemoteTouch(2, PenX, PenY, 0, 0)
+  else RemoteTouch(1, PenX, PenY, 0, 0);
 end;
 
 function WndProc(wnd: HWND; msg: UINT; wp: WPARAM; lp: LPARAM): LRESULT; API;
@@ -612,17 +1960,30 @@ begin
   case msg of
     WM_PAINT: Paint(wnd);
     WM_ERASEBKGND: Result := 1;
-    WM_UPDATE: InvalidateRect(wnd, nil, False);
+    WM_AUDIO: begin Pump; if Screen = SCR_LINK then InvalidateRect(wnd, nil, False); end;
+    WM_TIMER: Pump;
     WM_LBUTTONDOWN:
       begin
         OnTap(SmallInt(lp and $FFFF), SmallInt((lp shr 16) and $FFFF));
-        if not Quit then InvalidateRect(wnd, nil, False);
+        if not Quitting then InvalidateRect(wnd, nil, False);
       end;
+    WM_LBUTTONUP:
+      if PenDown then begin OnPenUp(SmallInt(lp and $FFFF), SmallInt((lp shr 16) and $FFFF)); InvalidateRect(wnd, nil, False); end;
+    WM_KEYDOWN:
+      begin
+        OnKeyDown(wp);
+        if not Quitting then InvalidateRect(wnd, nil, False);
+      end;
+    WM_KEYUP: OnKeyUp(wp);
     WM_CHAR:
       begin
         OnChar(wp);
-        if not Quit then InvalidateRect(wnd, nil, False);
+        if not Quitting then InvalidateRect(wnd, nil, False);
       end;
+    WM_SYSKEYDOWN:
+      if OnAlt(wp) then begin if not Quitting then InvalidateRect(wnd, nil, False); end
+      else Result := DefWindowProcW(wnd, msg, wp, lp);
+    WM_SYSCHAR: ;                                  { handled as WM_SYSKEYDOWN; no beep }
     WM_CLOSE: Leave;
     WM_DESTROY: if wnd = hMain then PostQuitMessage(0);
   else
@@ -634,11 +1995,14 @@ var
   wc: WNDCLASSW;
   m: MSG;
   wa: TRect;
-  tid: DWORD;
 begin
+  ReturnNilIfGrowHeapFails := True;
   AppInst := GetModuleHandleW(nil);
-  InitializeCriticalSection(Lock);
-  SnInit(Snd, Byte(GetTickCount));                  { a new document id each start }
+  InitializeCriticalSection(ClassicLock);
+  TsInit(Ts, Byte(GetTickCount));                    { a new document id each start }
+  SnInit(ClassicSnd, Byte(GetTickCount + 77));
+  TmInit(ClassicTm, OUT_RATE);
+  ScrInit(Scr);
   FillChar(wc, SizeOf(wc), 0);
   wc.style := CS_HREDRAW or CS_VREDRAW;
   wc.lpfnWndProc := @WndProc;
@@ -654,10 +2018,13 @@ begin
   fNorm := MkFont(12, 400, 'Tahoma');
   fBold := MkFont(12, 700, 'Tahoma');
   fBig := MkFont(14, 700, 'Tahoma');
+  fSmall := MkFont(11, 400, 'Tahoma');
   fMono := MkFont(14, 400, 'Courier New');
   ResolveAll;
-  FindCfg;
+  FindDirs;
   LoadCfg;
+  MakeInFolder;
+  Folder := InFolder;
 
   if not SystemParametersInfoW(SPI_GETWORKAREA, 0, @wa, 0) then wa := MkRect(0, 0, 640, 214);
   {$ifndef wince}
@@ -667,12 +2034,17 @@ begin
   hMain := CreateWindowExW(0, PWideChar(CLSNAME), PWideChar(APPNAME), WS_POPUP or WS_VISIBLE,
     wa.left, wa.top, CW, CH, 0, 0, AppInst, nil);
   if hMain = 0 then Halt(2);
+  ScreenDC := CreateCompatibleDC(0);
   ShowWindow(hMain, SW_SHOW);
   UpdateWindow(hMain);
   SetForegroundWindow(hMain);
-  hThread := CreateThread(nil, 0, @SoundThread, nil, 0, tid);
-  if hThread <> 0 then SetThreadPriority(hThread, THREAD_PRIORITY_ABOVE_NORMAL);   { sound must never wait for drawing }
-  if hThread = 0 then begin SoundErr := 'The sound thread could not start.'; InvalidateRect(hMain, nil, False); end;
+  ListFolder;
+  NotifyWnd := hMain; NotifyMsg := WM_AUDIO;
+  ListenFast := True;
+  ClassicFill := @ClassicFillFn;
+  AudioStart;
+  if Assigned(pSetTimer) then pSetTimer(hMain, TIMER_ID, TIMER_MS, nil);
+  SayHello(False);
   while GetMessageW(@m, 0, 0, 0) do
   begin
     TranslateMessage(@m);

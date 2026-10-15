@@ -52,7 +52,12 @@ jobs:
       - name: Build the Android app
         env:
           BUILD_NUMBER: ${{ github.run_number }}
-        run: gradle -p android assembleRelease --no-daemon
+        run: |
+          set -o pipefail
+          gradle -p android assembleRelease --no-daemon 2>&1 | tee build.log || {
+            # the errors as annotations (readable without downloading the log)
+            grep -E "error:|\.java:[0-9]+|What went wrong|AAPT|Execution failed" build.log | head -60 | while IFS= read -r l; do echo "::error::$l"; done
+            exit 1; }
 
       - name: Collect the files
         run: |
