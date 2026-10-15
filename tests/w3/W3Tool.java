@@ -53,7 +53,7 @@ public class W3Tool {
                 Rx rx = new Rx(Channel.get(ch), new Rx.Sink() {
                     public void onMessage(Rx r, int t, byte[] m, float s, int f) { System.out.printf("msg %d %d %d %d %s%n", t, m.length, Math.round(s * 10), f, hex(m)); }
                     public void onTrain(Rx r, float[] s) { StringBuilder b = new StringBuilder("train"); for (float v : s) b.append(' ').append(Math.round(v * 10)); System.out.println(b); }
-                    public void onFail(Rx r, String w) { }
+                    public void onFail(Rx r, String w) { if (System.getenv("W3FAIL") != null) System.out.println("fail " + w); }
                 });
                 if (a.length > 3) rx.addMap(map(ch, a[3]));
                 rx.push(y, 0, y.length);
