@@ -14,10 +14,21 @@ def main(rec, info):
     if np.max(np.abs(x)) < 0.002:
         print('Nothing was heard: the microphone may be off, or the phone too quiet.')
         return
+    x = x - np.mean(x)
+    print('clipped samples (the recording was too loud where these are): %d' % int(np.sum(np.abs(x) > 0.995)))
     ref = chirp(1000, 4000, 0.3, rate)
     # the same chirp also ends the test: look only where the whole test still fits after it
-    a, q = find(x, ref, 0, max(len(ref) + 1, len(x) - int((I['total'] - 1.2) * rate)))
-    print('start marker at %.2f s (match %.2f)' % (a / rate, q))
+    span = I['total'] - 1.0 - 0.3                     # start marker to end marker (s)
+    a, q = find(x, ref, 0, max(len(ref) + 1, len(x) - int((span - 2) * rate)))
+    b, q2 = find(x, ref, a + int((span - 1) * rate), a + int((span + 1) * rate))
+    # a handheld's sound chip may record slower or faster than it says: put that right
+    k = span * rate / max(1, b - a)
+    true_rate = rate / k
+    print('start marker at %.2f s (match %.2f), end marker (match %.2f)' % (a / rate, q, q2))
+    print('the handheld really records at about %.0f samples/s (it says %d)' % (true_rate, rate))
+    if abs(k - 1) > 0.0005 and q2 > 0.2:
+        x = resample(x, int(round(len(x) * k)))
+        a = int(round(a * k))
     # layout of phone-test.wav (seconds after the start marker's beginning)
     t_sweep = 0.3 + 0.25
     noise = np.mean(x[max(0, a - int(0.4 * rate)):max(1, a - int(0.05 * rate))] ** 2) + 1e-12
