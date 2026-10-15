@@ -137,6 +137,7 @@ zeros.
 | 0x02 | TEXT_ACK | doc id (1), known (2), L (2) | SD |
 | 0x10 | FILE_OFFER | file id (2), size (4), packets (2), kind (1), name (UTF-8) | FD; FU or SU |
 | 0x11 | FILE_DATA | file id (2), packet (2), data (up to 1,024) | FD; FU or SU |
+| 0x34 | PAIR_REPORT | see section 7 (38 bytes) | FU (handheld), FD (phone) |
 | 0x12 | FILE_NEED | file id (2), flags (1), have (2), then missing packets (2 each, up to 32) | the other side's silent channel |
 | 0x13 | FILE_CANCEL | file id (2) | either |
 | 0x20 | SCREEN | update (2), flags (1), then a zlib stream of tiles | FD |
@@ -215,11 +216,19 @@ picture's width in tiles and the next byte its height.
 SU and SD share a band, and a device hears its own sound loudly. So:
 
 - A device does not listen while it plays on a silent channel, nor for 50 ms
-  after. The handheld does not listen while it plays at all. The phone keeps
+  after. The handheld does not listen while it plays at all: its sound chip
+  (the Jornada 720's) cannot play and record at once, so it closes the
+  microphone, opens the output, plays, adds 150 ms of silence, closes the
+  output and opens the microphone again.
+- Every transmission after more than 300 ms of quiet starts with a 150 ms
+  lead-in: a 21.7 kHz tone at about −28 dB, faded in and out. Speakers that
+  were idle fade in their first sound; the lead-in takes that loss, not the
+  frame's sync symbol. The phone also keeps its output stream playing silence
+  between frames. The phone keeps
   listening while it plays on FD (another band), so taps and answers from
   the handheld reach it during a file or the remote's screen.
-- The phone answers (TEXT_ACK, FILE_NEED, MAP) only after 150 ms without
-  hearing the handheld.
+- The phone answers (TEXT_ACK, FILE_NEED, MAP) only after 450 ms without
+  hearing the handheld (time for it to open its microphone again).
 - A file sender sends 16 packets, then waits up to 1.5 s for FILE_NEED before
   going on.
 
@@ -261,3 +270,51 @@ pictures in 16 greys, one file a page; sound (and a video's sound) to WAV,
 IMA ADPCM 4-bit mono at 8,000 or 22,050 samples/s; video to five JPEG still
 pictures; text and other files compressed with zlib when that saves at least
 10 %.
+
+## 7. Pairing
+
+A check of the plain sound path, independent of frames, so it works even when
+no frame gets through. Either side starts it (Pair on its Link screen).
+
+**The test sound** (3,190 ms, made at any rate; amplitudes of 32,767):
+
+| From (ms) | Length | Sound |
+| --- | --- | --- |
+| 0 | 150 | lead-in, 21.7 kHz, 1,000 |
+| 150 | 250 | marker A, 2 kHz, 16,000 |
+| 400 | 100 | silence |
+| 500 | 32 × 70 | steps, 11,000 each: 500, 1,000, 1,500, 2,000, 3,000 … 17,000 (every 1,000), 17,500, 18,000, 18,500, 19,000, 19,400, 19,800, 20,200, 20,400, 20,600, 20,800, 21,000, 21,200, 21,500 Hz |
+| 2,740 | 100 | silence |
+| 2,840 | 250 | marker B, 2 kHz, 16,000 |
+| 3,090 | 100 | silence |
+
+Every tone fades in and out over 5 ms.
+
+**Hearing it.** The listener watches 2 kHz in 10 ms blocks; 150 ms above ten
+times the background is marker A. 3.4 s later it reads its recording from
+0.7 s before A, finds both markers exactly (5 ms Goertzel blocks, runs of at
+least 120 ms above a quarter of the peak), and takes *scale* = (B − A) / 2.69 s:
+the ratio of the listener's real sample rate to the rate it believes (the
+handheld sets its microphone rate from it). Each step is measured over its
+middle 50 ms at f / scale and compared with the same frequency in the
+background just before the sound: the signal-to-noise ratio in dB.
+
+**The turns.** The starter plays its sound and listens for up to 10 s. A side
+that hears a test sound while idle answers with its own. Once a side has both
+measured the other and played, it sends PAIR_REPORT.
+
+**PAIR_REPORT** (0x34): version (1) = 1, steps (1) = 32, then 32 bytes of
+dB + 20 (0 to 255), scale × 10,000 (2), the peak in % of full scale (1),
+clipped (1, 0 or 1).
+
+**Decisions.**
+
+- The handheld measures the phone's silent band (19.4–20.8 kHz) below 12 dB:
+  it keeps its fast down receiver on (the phone will answer there).
+- The phone is told its silent band (19.4–20.8 kHz) reaches the handheld at
+  below 12 dB, while 0.5–12 kHz is at least 15 dB: it sends on FD whatever it
+  would send on SD.
+- The handheld is told its silent band (20.2–21.2 kHz) reaches the phone at
+  below 15 dB, while 1–12 kHz is at least 15 dB: it types on FU.
+
+The decisions are kept until the next pairing.

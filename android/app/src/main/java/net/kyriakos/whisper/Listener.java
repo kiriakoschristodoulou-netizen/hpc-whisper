@@ -42,6 +42,8 @@ public final class Listener {
         /** A format 3 message (on the audio thread's behalf, posted to the main thread). */
         default void onMessage(int ch, int type, byte[] payload, float snrDb) { }
         default void onTrain(int ch, float[] snrDb) { }
+        /** The first marker of a pairing test sound was heard; ring position where it starts. */
+        default void onPairMarker(long pos) { }
     }
 
     /** The channels the phone listens on (from the handheld). */
@@ -53,6 +55,40 @@ public final class Listener {
     public volatile double measuredRate = 0;
     public volatile int framesW3 = 0, failsW3 = 0;
     private final ArrayList<long[]> recent = new ArrayList<>();      // {hash, time} of messages already passed on
+
+    // the last 6 seconds of the first microphone, for the pairing check (zero while the phone itself plays)
+    private float[] ring = new float[1];
+    private long ringPos = 0;
+    private double mkS1, mkS2, mkCoef, mkBg; private int mkN, mkRun; private long mkRunPos;
+
+    /** Copies n samples from ring position pos; returns how many were still there. */
+    public synchronized int ringCopy(long pos, float[] x, int n) {
+        if (pos < ringPos - ring.length) pos = ringPos - ring.length;
+        if (pos < 0) pos = 0;
+        int k = 0;
+        for (; k < n && pos + k < ringPos; k++) x[k] = ring[(int) ((pos + k) % ring.length)];
+        return k;
+    }
+
+    private synchronized void ringAdd(float[] f, int frames, int ch, Callback cb) {
+        int blk = Math.max(1, rate / 100);
+        for (int i = 0; i < frames; i++) {
+            float v = f[i * ch];
+            ring[(int) (ringPos % ring.length)] = v;
+            // the pairing marker: 2 kHz, at least 150 ms clearly above the background, in 10 ms blocks
+            double s0 = v + mkCoef * mkS1 - mkS2; mkS2 = mkS1; mkS1 = s0;
+            if (++mkN >= blk) {
+                double p = (mkS1 * mkS1 + mkS2 * mkS2 - mkCoef * mkS1 * mkS2) / mkN + 1e-18;
+                mkS1 = mkS2 = 0; mkN = 0;
+                if (mkBg == 0) mkBg = p;
+                if (p > mkBg * 10) {
+                    if (mkRun == 0) mkRunPos = ringPos - blk;
+                    if (++mkRun == 15) { long at = mkRunPos; main.post(() -> cb.onPairMarker(at)); }
+                } else { mkRun = 0; mkBg += (p - mkBg) / 16; }
+            }
+            ringPos++;
+        }
+    }
 
     /** The phone plays until then: format 3 ignores the microphone (nanoTime). */
     public void muteUntil(long nanos) { if (nanos > muteUntil) muteUntil = nanos; }
@@ -98,6 +134,8 @@ public final class Listener {
                 });
             }
         }
+        ring = new float[rate * 6]; ringPos = 0; mkS1 = mkS2 = mkBg = 0; mkN = mkRun = 0;
+        mkCoef = 2 * Math.cos(2 * Math.PI * 2000 / rate);
         thread = new Thread(() -> loop(rec, ch, cb), "whisper-listen");
         thread.setPriority(Thread.MAX_PRIORITY);
         thread.start();
@@ -177,6 +215,7 @@ public final class Listener {
                 boolean muted = nowN < muteUntil;
                 if (muted) Arrays.fill(f, 0, got, 0f);
                 for (int c = 0; c < ch; c++) rx[c].push(f, c, frames, ch);
+                ringAdd(f, frames, ch, cb);
                 // the microphone's real rate, against the clock (from 2 s after the start)
                 if (t0 == 0) { counted += frames; if (counted >= rate * 2L) { t0 = nowN; counted = 0; } }
                 else {

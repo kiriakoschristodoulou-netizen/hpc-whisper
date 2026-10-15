@@ -1,5 +1,5 @@
 program WhisperTools;
-{ Whisper Tools 3.2 (formerly HPC Whisper), for Windows CE handheld PCs (made on an HP Jornada 720).
+{ Whisper Tools 3.3 (formerly HPC Whisper), for Windows CE handheld PCs (made on an HP Jornada 720).
 
   Type here and the text goes into any app on your phone, with Tab, the
   arrows, Ctrl+C and the other keys; the phone confirms what has arrived.
@@ -19,10 +19,10 @@ program WhisperTools;
 {$ifdef wince}{$define API:=cdecl}{$else}{$define API:=stdcall}{$endif}
 {$packrecords c}
 {$R WhisperTools.res}
-uses Windows, w3core, w3tx, w3rx, waudio, wtext, wfile, wscreen, wwav, wimg, winf, wmodem;
+uses Windows, w3core, w3dsp, w3tx, w3rx, waudio, wtext, wfile, wscreen, wwav, wimg, winf, wmodem, wpair;
 
 const
-  VERSION = '3.2';
+  VERSION = '3.3';
   CREATOR = 'Kyriakos Christodoulou';
   CLSNAME: UnicodeString = 'WhisperTools';
   APPNAME: UnicodeString = 'Whisper Tools';
@@ -108,6 +108,8 @@ var
   FastFiles: Boolean = True;        { files from here on the fast channel (a soft hiss); silent is slow }
   FastLevel: Integer = 1;           { 0 = 1/8, 1 = 1/4, 2 = 1/2 of full loudness }
   OnCard: Boolean = False;          { received files on the storage card }
+  TypingOnFast: Boolean = False;    { the pairing check: the silent band does not reach the phone }
+  FastAlways: Boolean = False;      { the pairing check: the phone's silent band does not reach here, so it answers on the fast one }
   Band: Integer = NBANDS - 1;       { classic }
   Speed: Integer = 2;
   Volume: Integer = 50;
@@ -118,7 +120,6 @@ var
   Show: array[0..SHOWMAX - 1] of WideChar;      { what was typed, as shown (keys as private-area characters) }
   ShowN: Integer = 0;
   ClassicSnd: TSender;
-  ClassicTm: TToneMaker;
   ClassicLock: TRTLCriticalSection;
 
   { the link }
@@ -136,6 +137,14 @@ var
   FuSpeed, FdSpeed: UnicodeString;
   HelloAt: LongWord = 0;
   FastUntil: LongWord = 0;          { the fast receiver listens until then }
+  { the pairing check }
+  PairState: Integer = 0;           { 0 none, 1 playing ours, 2 listening for the phone's, 3 done }
+  PairDeadline: LongWord = 0;
+  PairMine, PairTheirs: TPairResult; { how this handheld hears the phone; how the phone hears this handheld }
+  HaveMine, HaveTheirs, PairPlayed, PairReported: Boolean;
+  LastMarkSeen: LongWord = 0;
+  PairNote: UnicodeString = '';
+  SpeakerNote: UnicodeString = '';
 
   { files }
   Folder: UnicodeString = '';
@@ -401,20 +410,26 @@ begin
       Classic := b[1] <> 0; WideSilent := b[2] <> 0; FastFiles := b[3] <> 0;
       if b[4] <= 2 then FastLevel := b[4];
       OnCard := b[5] <> 0;
+      got := 0;
+      if ReadFile(h, {$ifdef wince}@b{$else}b{$endif}, 3, {$ifdef wince}@got{$else}got{$endif}, nil) and (got = 3) and (b[0] = $34) then
+      begin
+        TypingOnFast := b[1] <> 0; FastAlways := b[2] <> 0;
+      end;
     end;
   end;
   CloseHandle(h);
 end;
 
 procedure SaveCfg;
-var h: THandle; b: array[0..9] of Byte; got: DWORD;
+var h: THandle; b: array[0..12] of Byte; got: DWORD;
 begin
   h := CreateFileW(PWideChar(CfgPath), GENERIC_WRITE, 0, nil, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
   if h = INVALID_HANDLE_VALUE then Exit;
   b[0] := $57; b[1] := Band; b[2] := Speed; b[3] := Volume;
   b[4] := $33; b[5] := Ord(Classic); b[6] := Ord(WideSilent); b[7] := Ord(FastFiles); b[8] := FastLevel; b[9] := Ord(OnCard);
+  b[10] := $34; b[11] := Ord(TypingOnFast); b[12] := Ord(FastAlways);
   got := 0;
-  WriteFile(h, {$ifdef wince}@b{$else}b{$endif}, 10, {$ifdef wince}@got{$else}got{$endif}, nil);
+  WriteFile(h, {$ifdef wince}@b{$else}b{$endif}, 13, {$ifdef wince}@got{$else}got{$endif}, nil);
   CloseHandle(h);
 end;
 
@@ -548,9 +563,12 @@ end;
 
 { ---------- sending ---------- }
 
+{ the channel for typing and answers: silent, or the fast one when the pairing check found the silent band
+  too weak for this pair }
 function SilentCh: Integer;
 begin
-  if WideSilent then Result := CH_SUW else Result := CH_SU;
+  if TypingOnFast then Result := CH_FU
+  else if WideSilent then Result := CH_SUW else Result := CH_SU;
 end;
 
 function FastLevelQ15: Integer;
@@ -681,23 +699,27 @@ begin
   LeaveCriticalSection(ClassicLock);
 end;
 
-{ the classic tones, played by the sound thread when nothing else is queued }
-function ClassicFillFn(var buf: array of SmallInt; n: Integer): Boolean;
-var f: TFrame; got: Boolean;
+{ the next frame of classic tones, as sound, when there is one }
+function ClassicSamples(var x: TSamples): Boolean;
+var f: TFrame; tm: TToneMaker; buf: array[0..4409] of SmallInt; n, i: Integer; more: Boolean;
 begin
-  if not Classic then begin Result := False; Exit; end;
+  Result := False;
+  if not Classic then Exit;
   EnterCriticalSection(ClassicLock);
-  if not ClassicTm.playing then
-  begin
-    got := SnNext(ClassicSnd, GetTickCount, f);
-    if got then
-    begin
-      ClassicTm.band := Band; ClassicTm.speed := Speed; ClassicTm.volume := Volume;
-      TmStart(ClassicTm, f);
-    end;
-  end;
-  Result := TmFill(ClassicTm, buf, n);
+  Result := SnNext(ClassicSnd, GetTickCount, f);
   LeaveCriticalSection(ClassicLock);
+  if not Result then Exit;
+  TmInit(tm, OUT_RATE);
+  tm.band := Band; tm.speed := Speed; tm.volume := Volume;
+  TmStart(tm, f);
+  SetLength(x, 0); n := 0;
+  repeat
+    for i := 0 to High(buf) do buf[i] := 0;
+    more := TmFill(tm, buf, Length(buf));
+    SetLength(x, n + Length(buf));
+    for i := 0 to High(buf) do x[n + i] := buf[i];
+    Inc(n, Length(buf));
+  until (not more) or (n > OUT_RATE * 5);
 end;
 
 { ---------- files: sending ---------- }
@@ -888,6 +910,14 @@ begin
       end;
     T_CHECK: if (n >= 1) and (g.msg.data[0] = CH_FU) then begin FastUntil := GetTickCount + 20000; SendMsg(CH_FU, T_TRAIN, g.msg.data, 0); end;
     T_TRAIN: ;
+    PAIR_REPORT:
+      if PairReportRead(g.msg.data, n, PairTheirs) then
+      begin
+        HaveTheirs := True;
+        { the phone tells how it hears this handheld: typing stays silent only if the silent band gets through }
+        TypingOnFast := (PairBand10(PairTheirs, 20200, 21200) < 150) and (PairBand10(PairTheirs, 1000, 12000) >= 150);
+        SaveCfg;
+      end;
     T_FILE_OFFER: OnOffer(g.msg.data, n);
     T_FILE_DATA: OnData(g.msg.data, n);
     T_FILE_NEED: if NOut > 0 then FsNeed(Outgoing[0].s, g.msg.data, n);
@@ -1190,12 +1220,97 @@ begin
   Scr.anyChanged := False;
 end;
 
+{ ---------- the pairing check (docs/FORMAT3.md, section 7) ---------- }
+
+procedure StartPair(answering: Boolean);
+var x: TSmallArr; i: Integer; y: TSamples;
+begin
+  PairState := 1; PairPlayed := False; PairReported := False;
+  if not answering then begin HaveMine := False; HaveTheirs := False; end;
+  PairNote := 'Playing the test sound (beeps), then listening for the phone''s...';
+  FastUntil := GetTickCount + 40000;
+  x := PairPattern(OUT_RATE);
+  SetLength(y, Length(x));
+  for i := 0 to High(x) do y[i] := x[i];
+  AudioSend(y);
+end;
+
+procedure TestSpeaker;
+var y: TSamples; i, n, g: Integer;
+begin
+  n := OUT_RATE;                                     { one second of 1 kHz, clearly audible }
+  SetLength(y, n);
+  for i := 0 to n - 1 do
+  begin
+    g := 12000;
+    if i < 441 then g := g * i div 441;
+    if n - 1 - i < 441 then g := g * (n - 1 - i) div 441;
+    y[i] := (g * SinI(Integer((Int64(1000) * i * 65536 div OUT_RATE) and $FFFF))) div 16384;
+  end;
+  AudioSend(y);
+  SpeakerNote := 'A one-second beep now: if you hear nothing, the sound does not get out (check Volume in the Control Panel).';
+end;
+
+function DbText(d10: Integer): UnicodeString;
+begin
+  if d10 <= -900 then begin Result := '-'; Exit; end;
+  if d10 >= 0 then Result := '+' + IU(d10 div 10) + ' dB' else Result := '-' + IU((-d10) div 10) + ' dB';
+end;
+
+procedure PairStep(now: LongWord);
+var x: TSmallArr; n: Integer; pos: Int64; b: array[0..63] of Byte;
+begin
+  { the phone's test sound: its first marker was heard; once all of it has had time to arrive, read it }
+  if (PairMarkAt <> 0) and (PairMarkAt <> LastMarkSeen) and (LongInt(now - PairMarkAt) >= 3400) then
+  begin
+    LastMarkSeen := PairMarkAt;
+    pos := PairMarkPos - Int64(700) * IN_RATE div 1000;
+    SetLength(x, Int64(4200) * IN_RATE div 1000);
+    n := AudioRingCopy(pos, x, Length(x));
+    if PairAnalyze(x, n, IN_RATE, PairMine) then
+    begin
+      HaveMine := True;
+      { the phone's silent band too weak here: it will answer on the fast channel, so that one stays on }
+      FastAlways := PairBand10(PairMine, 19400, 20800) < 120;
+      { the time between the markers is this microphone's real rate (the phone's clock is good) }
+      if (PairMine.scale10k > 9600) and (PairMine.scale10k < 10300) then InRate100 := Int64(IN_RATE) * PairMine.scale10k div 100;
+      SaveCfg;
+      if (PairState = 0) or (PairState = 3) then
+      begin
+        { the phone started: our turn }
+        StartPair(True);
+        PairNote := 'Heard the phone''s test sound; now playing this handheld''s...';
+      end
+      else if PairState = 2 then PairState := 3;
+    end;
+  end;
+  if (PairState = 1) and (AudioQueued = 0) then
+  begin
+    PairPlayed := True;
+    if HaveMine then PairState := 3
+    else begin PairState := 2; PairDeadline := now + 10000; PairNote := 'Listening for the phone''s test sound (press Pair on the phone if it does not start by itself)...'; end;
+  end;
+  if (PairState = 2) and (LongInt(now - PairDeadline) > 0) then
+  begin
+    PairState := 3;
+    PairNote := 'The phone''s test sound was not heard. Is Whisper Tools connected on the phone, its media volume about half?';
+  end;
+  { our report, once we have heard theirs and played ours }
+  if HaveMine and PairPlayed and not PairReported and (AudioQueued = 0) then
+  begin
+    PairReported := True;
+    n := PairReportMake(PairMine, b);
+    SendMsg(CH_FU, PAIR_REPORT, b, n);
+    if PairState = 3 then PairNote := 'Done. The results below; the phone shows its side.';
+  end;
+end;
+
 { ---------- the timer: hearing, answering, sending ---------- }
 
 var PhoneHeardSD: LongWord = 0;
 
 procedure Pump;
-var g: TGotMsg; t: TTrainResult; now: LongWord; p: array[0..127] of Byte; n, typ, i: Integer; fp: TByteArr;
+var g: TGotMsg; t: TTrainResult; now: LongWord; p: array[0..127] of Byte; n, typ, i: Integer; fp: TByteArr; cs: TSamples;
     changed: Boolean;
 begin
   changed := False;
@@ -1208,9 +1323,10 @@ begin
   while AudioTakeTrain(t) do begin OnTrain(t); changed := True; end;
   FeedPlayer;
   now := GetTickCount;
+  PairStep(now);
   { the fast receiver costs the processor a fifth of its time: it listens only when something fast can come
     (a file announced on the silent channel, the remote, a link check, or the Files and Remote screens) }
-  ListenFast := (Screen = SCR_FILES) or (Screen = SCR_REMOTE) or RemoteOn or Incoming.active or (LongInt(FastUntil - now) > 0);
+  ListenFast := FastAlways or (Screen = SCR_FILES) or (Screen = SCR_REMOTE) or RemoteOn or Incoming.active or (LongInt(FastUntil - now) > 0);
   { files coming in: the answers }
   if (Length(Incoming.r.got) > 0) and FrNeedDue(Incoming.r, now) and (Incoming.active or (now - Incoming.doneAt < 120000)) then
   begin
@@ -1227,6 +1343,9 @@ begin
     UnknownId := -1;
   end;
   if AudioQueued > 0 then begin if changed then InvalidateRect(hMain, nil, False); Exit; end;
+  if (PairState = 1) or (PairState = 2) then begin if changed then InvalidateRect(hMain, nil, False); Exit; end;
+  { classic tones }
+  if Classic and ClassicSamples(cs) then begin AudioSend(cs); InvalidateRect(hMain, nil, False); Exit; end;
   { answers first, once the phone has been quiet on the silent channel for a moment }
   if (AnswerN > 0) and (now - PhoneHeardSD >= 150) then
   begin
@@ -1537,37 +1656,66 @@ begin
   DeleteDC(mdc);
 end;
 
+function LinkBtn(i: Integer): TRect;
+var w: Integer;
+begin
+  w := (CW - 24 - 2 * 6) div 3;
+  Result := MkRect(12 + i * (w + 6), CH - STATUS_H - 27, 12 + i * (w + 6) + w, CH - STATUS_H - 5);
+end;
+
 procedure DrawLink(dc: HDC);
-var y: Integer; s: UnicodeString;
-  procedure Line(const a, b: UnicodeString; col: COLORREF);
+var y: Integer; s: UnicodeString; col: COLORREF;
+  procedure Line(const a, b: UnicodeString; c: COLORREF);
   begin
-    Txt(dc, a, MkRect(12, y, 200, y + 16), fBold, COL_NAVY, DT_LEFT or DT_SINGLELINE);
-    Txt(dc, b, MkRect(200, y, CW - 12, y + 16), fNorm, col, DT_LEFT or DT_SINGLELINE or DT_END_ELLIPSIS);
-    y := y + 17;
+    Txt(dc, a, MkRect(10, y, 150, y + 15), fBold, COL_NAVY, DT_LEFT or DT_SINGLELINE);
+    Txt(dc, b, MkRect(150, y, CW - 10, y + 15), fNorm, c, DT_LEFT or DT_SINGLELINE or DT_END_ELLIPSIS);
+    y := y + 15;
   end;
 begin
-  y := TITLE_H + 6;
-  if not OutOk then Line('Sound out', OutErr, COL_FAIL) else Line('Sound out', 'open, 44,100 samples/s', COL_TEXT);
-  if not InOk then Line('Microphone', InErr, COL_FAIL)
+  y := TITLE_H + 4;
+  if OutErr <> '' then Line('Speaker', OutErr, COL_FAIL)
+  else if Turns = 0 then Line('Speaker', 'has not played yet', COL_GREY)
+  else Line('Speaker', IU(Turns) + ' times, last ' + IU((GetTickCount - LastTurnAt) div 1000) + ' s ago for ' +
+    IU(LastTurnMs) + ' ms, loudest ' + IU(LastTurnPeak) + '%', COL_TEXT);
+  if InErr <> '' then Line('Microphone', InErr, COL_FAIL)
   else
   begin
-    s := 'open, really ' + IU(InRate100 div 100) + '.' + IU((InRate100 mod 100) div 10) + ' samples/s';
-    if not RateMeasured then s := s + ' (measuring, about 12 s)';
+    s := 'really ' + IU(InRate100 div 100) + ' samples/s';
+    if not RateMeasured and not HaveMine then s := s + ' (a guess until measured)';
     s := s + ', loudest ' + IU(InPeak * 100 div 32768) + '%';
+    if Overruns > 0 then s := s + ', fell behind ' + IU(Overruns) + ' times';
     Line('Microphone', s, COL_TEXT);
   end;
-  if PhoneHeard = 0 then Line('The phone', 'not heard yet (Whisper Tools on the phone: Connect, or the keyboard open)', COL_GREY)
-  else Line('The phone', 'heard ' + IU((GetTickCount - PhoneHeard) div 1000) + ' s ago', COL_GOOD);
-  Line('Typing', 'silent, ' + KHz(100 * Chans[SilentCh].bins[0]) + '-' + KHz(100 * Chans[SilentCh].bins[Chans[SilentCh].n - 1]) + ' kHz', COL_TEXT);
-  if FuSpeed <> '' then Line('Fast, to the phone', FuSpeed, COL_TEXT) else Line('Fast, to the phone', 'not measured (standard: about 7 kbit/s)', COL_GREY);
-  if FdSpeed <> '' then Line('Fast, from the phone', FdSpeed, COL_TEXT) else Line('Fast, from the phone', 'not measured', COL_GREY);
-  Line('Frames', IU(FramesOut) + ' sent, ' + IU(FramesIn) + ' heard, ' + IU(FramesBad) + ' not readable', COL_TEXT);
-  if Overruns > 0 then Line('Processor', 'fell behind ' + IU(Overruns) + ' times (sound skipped)', COL_FAIL);
-  if RateOdd <> 0 then Line('Microphone rate', 'a measurement of ' + IU(RateOdd div 100) + ' was ignored', COL_GREY);
-  if Missing <> '' then Line('Missing', Missing, COL_FAIL);
-  y := y + 4;
-  if CheckState <> '' then Txt(dc, CheckState, MkRect(12, y, CW - 12, y + 16), fNorm, COL_GREY, DT_LEFT or DT_SINGLELINE);
-  Button(dc, MkRect(12, CH - STATUS_H - 27, 200, CH - STATUS_H - 5), 'Check the link', 'Alt+K');
+  if PhoneHeard = 0 then Line('The phone', 'no frame heard yet', COL_GREY)
+  else Line('The phone', 'heard ' + IU((GetTickCount - PhoneHeard) div 1000) + ' s ago; frames ' + IU(FramesOut) + ' sent, ' +
+    IU(FramesIn) + ' heard, ' + IU(FramesBad) + ' not readable', COL_GOOD);
+  if HaveMine then
+  begin
+    if PairBand10(PairMine, 19400, 20800) >= 120 then col := COL_GOOD else col := COL_FAIL;
+    Line('Hears the phone', 'silent ' + DbText(PairBand10(PairMine, 19400, 20800)) + ', fast ' +
+      DbText(PairBand10(PairMine, 500, 12000)) + ' (1-12 kHz)' + ', mic at ' + IU(Int64(IN_RATE) * PairMine.scale10k div 10000), col);
+  end
+  else Line('Hears the phone', 'not measured: press Pair', COL_GREY);
+  if HaveTheirs then
+  begin
+    if PairBand10(PairTheirs, 20200, 21200) >= 150 then col := COL_GOOD else col := COL_FAIL;
+    Line('Phone hears this', 'silent ' + DbText(PairBand10(PairTheirs, 20200, 21200)) + ', wide ' +
+      DbText(PairBand10(PairTheirs, 18500, 21200)) + ', fast ' + DbText(PairBand10(PairTheirs, 1000, 12000)), col);
+  end
+  else Line('Phone hears this', 'not known yet (the phone sends it after pairing)', COL_GREY);
+  if TypingOnFast then s := 'on the fast channel (a soft hiss): the silent band does not reach the phone'
+  else s := 'silent, ' + KHz(100 * Chans[SilentCh].bins[0]) + '-' + KHz(100 * Chans[SilentCh].bins[Chans[SilentCh].n - 1]) + ' kHz';
+  Line('Typing goes', s, COL_TEXT);
+  s := '';
+  if FuSpeed <> '' then s := 'to the phone ' + FuSpeed + '  ';
+  if FdSpeed <> '' then s := s + 'from it ' + FdSpeed;
+  if s <> '' then Line('Fast channels', s, COL_TEXT);
+  if PairNote <> '' then begin Txt(dc, PairNote, MkRect(10, y, CW - 10, y + 15), fNorm, COL_KEY, DT_LEFT or DT_SINGLELINE or DT_END_ELLIPSIS); y := y + 15; end;
+  if SpeakerNote <> '' then begin Txt(dc, SpeakerNote, MkRect(10, y, CW - 10, y + 15), fNorm, COL_KEY, DT_LEFT or DT_SINGLELINE or DT_END_ELLIPSIS); y := y + 15; end;
+  if CheckState <> '' then Txt(dc, CheckState, MkRect(10, y, CW - 10, y + 15), fNorm, COL_GREY, DT_LEFT or DT_SINGLELINE or DT_END_ELLIPSIS);
+  Button(dc, LinkBtn(0), 'Pair', 'P');
+  Button(dc, LinkBtn(1), 'Test speaker', 'S');
+  Button(dc, LinkBtn(2), 'Check the link', 'K');
 end;
 
 const NSET = 8;
@@ -1863,6 +2011,7 @@ begin
     Ord('W'): PhoneKey(K_RECENTS);
     Ord('N'): NewPage;
     Ord('K'): begin SetScreen(SCR_LINK); CheckLink; end;
+    Ord('P'): begin SetScreen(SCR_LINK); StartPair(False); end;
     Ord('Z'): if Screen = SCR_REMOTE then begin if RemoteMode = 0 then RemoteMode := 1 else RemoteMode := 0; RemoteView; end;
     Ord('X'): if Screen = SCR_REMOTE then begin if RemoteMode = 2 then RemoteMode := 1 else RemoteMode := 2; RemoteView; end;
     Ord('U'): if Screen = SCR_REMOTE then RemoteSimple(5, 0);
@@ -2033,7 +2182,11 @@ begin
     SCR_SETTINGS:
       if (c = 13) or (c = 32) then ChangeSetting(SetSel, 1);
     SCR_LINK:
-      if c = 13 then CheckLink;
+      case c of
+        Ord('p'), Ord('P'): StartPair(False);
+        Ord('s'), Ord('S'): TestSpeaker;
+        Ord('k'), Ord('K'), 13: CheckLink;
+      end;
   end;
 end;
 
@@ -2082,7 +2235,12 @@ begin
         if (i >= 0) and (i < NSET) and (Classic or (i < 5)) then begin if i = SetSel then ChangeSetting(i, 1); SetSel := i; end;
       end;
     SCR_LINK:
-      if y >= CH - STATUS_H - 30 then CheckLink;
+      for i := 0 to 2 do
+      begin
+        rc := LinkBtn(i);
+        if (x >= rc.left) and (x < rc.right) and (y >= rc.top) and (y < rc.bottom) then
+          case i of 0: StartPair(False); 1: TestSpeaker; 2: CheckLink; end;
+      end;
     SCR_REMOTE:
       if RemoteOn and (y >= TITLE_H) and (y < CH - STATUS_H) then
       begin
@@ -2150,7 +2308,6 @@ begin
   InitializeCriticalSection(ClassicLock);
   TsInit(Ts, Byte(GetTickCount));                    { a new document id each start }
   SnInit(ClassicSnd, Byte(GetTickCount + 77));
-  TmInit(ClassicTm, OUT_RATE);
   ScrInit(Scr);
   FillChar(wc, SizeOf(wc), 0);
   wc.style := CS_HREDRAW or CS_VREDRAW;
@@ -2190,7 +2347,6 @@ begin
   ListFolder;
   NotifyWnd := hMain; NotifyMsg := WM_AUDIO;
   ListenFast := False;
-  ClassicFill := @ClassicFillFn;
   AudioStart;
   if Assigned(pSetTimer) then pSetTimer(hMain, TIMER_ID, TIMER_MS, nil);
   SayHello(False);

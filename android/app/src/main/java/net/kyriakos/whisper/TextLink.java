@@ -7,7 +7,8 @@ package net.kyriakos.whisper;
  * over it. Plain Java (tested on a computer).
  */
 public final class TextLink {
-    static final long QUIET_MS = 180, MIN_GAP_MS = 350;
+    // the handheld takes turns: after it plays, it needs a moment to open its microphone again
+    static final long QUIET_MS = 450, MIN_GAP_MS = 600;
 
     public final Mirror mirror = new Mirror();
     private boolean due;

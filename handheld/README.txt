@@ -1,4 +1,4 @@
-Whisper Tools 3.2 (formerly HPC Whisper)
+Whisper Tools 3.3 (formerly HPC Whisper)
 by Kyriakos Christodoulou
 
 Type on a Windows CE handheld PC and the text goes straight into any app
@@ -7,7 +7,7 @@ ways, and see the phone's screen on the handheld. It all travels as
 sound: no cable, no network. Made on, and for, the HP Jornada 720.
 
 THE PHONE
-  Android: install Whisper-Tools.apk (version 3.2 or later) from
+  Android: install Whisper-Tools.apk (version 3.3 or later) from
   https://github.com/kiriakoschristodoulou-netizen/hpc-whisper/releases
   Its home screen has a button for each tool. To type: set up the
   Keyboard, then in any app switch to the Whisper Tools keyboard. For
@@ -47,8 +47,10 @@ THE HOME SCREEN
               Alt+Z switches between zoom and the whole screen, Alt+X
               zooms in twice as far, Alt+U refreshes.
   4 Link      The sound in and out, the phone, and the speed of each
-              channel. Check the link (Alt+K) measures the fast channels
-              (a soft hiss from each side for a few seconds).
+              channel. Pair (P) checks the sound both ways and adjusts both
+              devices; Test speaker (S) plays a one-second beep; Check the
+              link (K) measures the fast channels (a soft hiss from each
+              side for a few seconds).
   5 Settings  Typing format (Format 3, or Classic for older phone apps and
               the receiver page), the silent channel (narrow 20.0-21.2 kHz,
               inaudible; or wide 18.2-21.2 kHz, twice as fast, some people
@@ -70,9 +72,22 @@ THE PROGRAM'S OWN SHORTCUTS (on Alt, so every Ctrl key reaches the phone)
   Alt+Q quit
 
 SOUND
-  Typing is silent (above 20 kHz). Files and the remote's screen use the
+  First time: on the Link screen press Test speaker (you should hear a
+  beep), then Pair. Typing is silent (above 20 kHz). Files and the remote's screen use the
   fast channels: a soft hiss while they move, quiet otherwise. Keep the
   phone within about a metre and its media volume at about half.
+
+WHAT IS NEW IN 3.3
+  Pair, on the Link screen of both devices: each plays a 3-second test
+  sound (beeps) in turn and measures how well it hears the other; each
+  side then adjusts itself (the handheld's microphone rate, and which
+  channel the phone answers on). Run it once with each new phone. Test
+  speaker plays a one-second beep, to check the handheld's sound gets out.
+  The handheld's sound chip cannot play and record at once (found in the
+  second device test): it now takes turns, listening most of the time and
+  closing the microphone while it plays. The phone keeps its sound output
+  running and starts each transmission with a short inaudible lead-in, so
+  the first part is no longer lost while the speaker wakes up.
 
 WHAT IS NEW IN 3.2
   The first device test found the handheld's processor could not keep up

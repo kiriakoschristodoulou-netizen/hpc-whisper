@@ -22,10 +22,10 @@ import java.nio.ByteOrder;
 import java.util.Locale;
 
 /** The link: connect, what the phone hears, the link check with each channel's speed, and the diagnostics recording. */
-public class LinkActivity extends ToolActivity {
+public class LinkActivity extends ToolActivity implements PairCheck.Watcher {
     private static final int RECORD_SECONDS = 30;
     private final Mirror mirror = new Mirror();
-    private TextView state, speeds, received, recState;
+    private TextView state, speeds, received, recState, pairText;
     private Button connectBtn, recBtn;
     private MeterView meter;
     private int unreadable;
@@ -50,6 +50,13 @@ public class LinkActivity extends ToolActivity {
         received.setTypeface(Typeface.MONOSPACE);
         received.setPadding(0, ui.dp(6), 0, 0);
         connectBtn = ui.button(c, "Connect", true, v -> { if (LinkService.on()) { if (recording) finishRecording(false); disconnect(); } else connect(); });
+
+        LinearLayout pc = ui.card("Pair");
+        ui.body(pc, "Run this first with each new phone or handheld. Both devices play a 3-second test sound (beeps) in "
+                + "turn and measure how well they hear each other; each side then adjusts itself. Start it here or on the handheld.");
+        pairText = ui.text(pc, "", 14, t().ink, false);
+        pairText.setPadding(0, ui.dp(6), 0, 0);
+        ui.button(pc, "Pair", true, v -> pair());
 
         LinearLayout chk = ui.card("Link check");
         ui.body(chk, "Measures the fast channels, which carry files and the remote, in both directions: a soft hiss from "
@@ -87,6 +94,35 @@ public class LinkActivity extends ToolActivity {
         speeds.setText(sp.toString());
         if (on) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
+
+    private void pair() {
+        if (!LinkService.on()) { if (connect()) handler.postDelayed(this::pair, 1200); return; }
+        PairCheck.get().start();
+    }
+
+    @Override public void onPair() { runOnUiThread(this::showPair); }
+
+    private void showPair() {
+        PairCheck p = PairCheck.get();
+        StringBuilder s = new StringBuilder(p.note);
+        if (p.mine != null) s.append("\n\nThis phone hears the handheld: ").append(bands(p.mine));
+        if (p.mine != null) s.append(String.format(Locale.US, "\nThe handheld's sound runs at %.1f%% of its stated rate", p.mine.scale10k / 100.0));
+        if (p.theirs != null) s.append("\nThe handheld hears this phone: ").append(bands(p.theirs));
+        if (p.theirs != null) s.append(Link.get().answersOnFast
+                ? "\nDecided: the silent band does not reach the handheld, so this phone answers on the fast channel (audible hiss)."
+                : "\nDecided: this phone answers on the silent channel.");
+        pairText.setText(s.toString().trim());
+    }
+
+    private static String bands(net.kyriakos.whisper.w3.Pair.Result r) {
+        return db(r.band10(500, 4000)) + " (speech band), " + db(r.band10(5000, 12000)) + " (middle), "
+                + db(r.band10(13000, 18000)) + " (high), " + db(r.band10(19400, 20800)) + " (silent band)"
+                + (r.clipped ? "; too loud: lower the volume" : "");
+    }
+    private static String db(int tenths) { return tenths < 60 ? "not heard" : (tenths / 10) + " dB"; }
+
+    @Override protected void onResume() { super.onResume(); PairCheck.get().watch(this); showPair(); }
+    @Override protected void onDestroy() { PairCheck.get().unwatch(this); super.onDestroy(); }
 
     private void checkLink() {
         if (!LinkService.on()) { if (connect()) handler.postDelayed(this::checkLink, 1200); return; }

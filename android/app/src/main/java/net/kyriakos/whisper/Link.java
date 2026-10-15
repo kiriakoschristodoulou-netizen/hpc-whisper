@@ -42,6 +42,8 @@ public final class Link {
     private final BitMap[] sendMaps = new BitMap[Channel.COUNT];   // what the handheld measured on our channels
     public volatile long lastHeard = 0;                            // ms, any format 3 message from the handheld
     public volatile boolean handheldAnswers = false;               // it has sent a format 3 message (it listens too)
+    /** The pairing check found the silent channel down too weak: answers go on the fast one. */
+    public volatile boolean answersOnFast = false;
 
     private Link() { }
 
@@ -53,6 +55,7 @@ public final class Link {
         app = ctx.getApplicationContext();
         if (!clients.contains(c)) clients.add(c);
         if (listener.isRunning()) return true;
+        PairCheck.get().load(app);
         boolean ok = listener.start(app, cb);
         if (ok) speakerOk = speaker.start();
         return ok;
@@ -76,12 +79,15 @@ public final class Link {
 
     public boolean send(int ch, int type, byte[] payload) {
         if (!speakerOk) return false;
+        if (ch == Channel.SD && answersOnFast) ch = Channel.FD;      // see PairCheck
         Channel c = Channel.get(ch);
         float[] f = type == T_TRAIN ? Tx.train(c, level(ch)) : Tx.frame(c, sendMap(ch), type, payload, level(ch));
         return speaker.play(f, ch == Channel.SD);
     }
 
     public int queued() { return speaker.queued(); }
+    /** The pairing check's test sound (made at the modem rate). */
+    public boolean playPattern(float[] f51) { return speakerOk && speaker.play(f51, true); }
     /** When everything queued so far will have sounded (currentTimeMillis). */
     public long playEndMs() { return speaker.endMs(); }
     /** Has the fast channel down been measured (a map from the handheld)? */
@@ -116,8 +122,10 @@ public final class Link {
             }
             for (Client c : clients) c.onTrain(ch, snr);
         }
+        @Override public void onPairMarker(long pos) { PairCheck.get().onMarker(pos); }
         @Override public void onMessage(int ch, int type, byte[] p, float snr) {
             long now = System.currentTimeMillis();
+            if (type == net.kyriakos.whisper.w3.Pair.REPORT) PairCheck.get().onReport(p);
             lastHeard = now;
             handheldAnswers = true;
             text.heard(now);

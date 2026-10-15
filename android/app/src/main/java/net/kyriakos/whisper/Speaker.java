@@ -83,18 +83,38 @@ final class Speaker {
     int queued() { return queue.size(); }
 
     private void loop() {
-        Resampler rs = null;
         short[] pcm = new short[0];
+        short[] silence = new short[Math.max(1, rate / 50)];          // 20 ms
+        // the lead-in: a quiet 21.7 kHz tone, faded in and out (inaudible; it lets the speaker wake up)
+        int ln = rate * 150 / 1000, ramp = rate / 100;
+        short[] lead = new short[ln];
+        for (int i = 0; i < ln; i++) {
+            double g = 1200;
+            if (i < ramp) g = g * i / ramp;
+            if (ln - 1 - i < ramp) g = g * (ln - 1 - i) / ramp;
+            lead[i] = (short) Math.round(g * Math.sin(2 * Math.PI * 21700.0 * i / rate));
+        }
+        long quietSince = System.nanoTime();
         while (running) {
             Item it;
-            try { it = queue.poll(50, TimeUnit.MILLISECONDS); } catch (InterruptedException e) { break; }
-            if (it == null) { if (playing && System.nanoTime() > playingUntil) playing = false; continue; }
+            try { it = queue.poll(10, TimeUnit.MILLISECONDS); } catch (InterruptedException e) { break; }
+            if (it == null) {
+                if (playing && System.nanoTime() > playingUntil) { playing = false; quietSince = System.nanoTime(); }
+                // keep the sound running between frames: a phone's speaker that stops fades the next sound in, and
+                // the first 20 ms of it (the frame's sync symbol) were lost (device test, 16 October 2026)
+                track.write(silence, 0, silence.length);
+                continue;
+            }
             float[] x = Resampler.convert(it.f, Channel.RATE, rate);
+            boolean wake = !playing && System.nanoTime() - quietSince > 300_000_000L;
+            int pre = wake ? lead.length : 0;
             // a little silence after each frame (format 3 asks for 25 ms between frames)
-            int n = x.length + rate / 30;
+            int n = pre + x.length + rate / 30;
             if (pcm.length < n) pcm = new short[n];
-            for (int i = 0; i < n; i++) {
-                float v = i < x.length ? x[i] : 0;
+            for (int i = 0; i < pre; i++) pcm[i] = lead[i];
+            for (int i = pre; i < n; i++) {
+                int j = i - pre;
+                float v = j < x.length ? x[j] : 0;
                 pcm[i] = (short) Math.max(-32767, Math.min(32767, Math.round(v * 32767)));
             }
             long now = System.nanoTime();
