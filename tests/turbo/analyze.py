@@ -58,10 +58,10 @@ def tone_power(x, a, b, f, rate=R):
 
 def wide_sweep(part, sw):
     """the whole range: the speaker's response, its distortion (2f, 3f) and ghosts"""
-    y, pad = part('wsweep')
+    y, pad = part(sw['name'])
     f0, f1, dur = sw['f0'], sw['f1'], sw['dur']
     win = int(0.02 * R)
-    print('\nFAST MODE: RESPONSE OVER THE WHOLE RANGE (sweep 0.5-21 kHz), dB relative to the strongest')
+    print('\nFAST MODE: RESPONSE OVER THE WHOLE RANGE (%s), dB relative to the strongest' % sw['label'])
     rows = []
     for tc in np.arange(0.05, dur - 0.05, 0.01):
         a = pad + int(tc * R) - win // 2
@@ -85,7 +85,7 @@ def wide_sweep(part, sw):
         print('  ' + '  '.join(line[i:i + 6]))
     def rel(col, lo, hi):
         k = (rows[:, 0] >= lo) & (rows[:, 0] < hi) & ~np.isnan(rows[:, col])
-        return 10 * np.log10(np.median(rows[k, col] / rows[k, 1]) + 1e-12) if k.any() else float('nan')
+        return 10 * np.log10(np.median(rows[k, col] / np.maximum(rows[k, 1], 1e-20)) + 1e-12) if k.any() else float('nan')
     print('  distortion (louder is worse): 2nd harmonic %+.0f dB, 3rd %+.0f dB (tones 1-5 kHz); '
           'ghost 900 Hz lower: %+.0f dB at 1-8 kHz, %+.0f dB at 12-19 kHz'
           % (rel(2, 1000, 5000), rel(3, 1000, 5000), rel(4, 1000, 8000), rel(4, 12000, 19000)))
@@ -140,8 +140,8 @@ def main(rec, secfile):
         if qa < 6:
             notes.append('%s: not found clearly (%.0f)' % (s['name'], qa))
             p0 = s0 + shift
-        if abs(late) > 0.002 * n + 40 and qb > 6:
-            notes.append('%s: the sound paused or jumped for %+.0f ms inside this part' % (s['name'], 1000 * late / R))
+        if abs(late) > 0.002 * n + 40 and qb > 6:          # more than the two clocks (or an echo) could explain
+            notes.append('%s: the sound paused or jumped for %+.1f ms inside this part' % (s['name'], 1000 * late / R))
             late, jumped = 0, True                      # keep the start's timing
         scale = (n - m + late) / (n - m)
         if qa > 6 and qb > 6 and not jumped and n > R:
@@ -166,38 +166,40 @@ def main(rec, secfile):
     y0, pad0 = part('sync1')
     noise = np.mean(y0[:pad0 - int(0.05 * R)] ** 2) if pad0 > int(0.05 * R) else 1e-12
 
-    # ---- sweep: response and ghosts ----
-    sw = sec['sweep']
-    yS, padS = part('sweep')
-    print('\nBAND RESPONSE (sweep), 100 Hz steps, dB relative to the strongest; ghosts at fixed distances')
-    resp, ghosts = {}, {}
-    win = int(0.02 * R)
-    for i in range(40, int(sw['dur'] * 50) - 40):
-        tc = sw['start'] + i / 50
-        f = sw['f0'] + (sw['f1'] - sw['f0']) * (tc - sw['start']) / sw['dur']
-        c = padS + int(round((tc - sw['start']) * R))
-        p0 = tone_power(yS, c - win // 2, c + win // 2, f)
-        fb = int(round(f / 100) * 100)
-        resp.setdefault(fb, []).append(p0)
-        for d in range(-3000, 3001, 100):
-            if d == 0 or abs(d) < 300:
-                continue
-            pd = tone_power(yS, c - win // 2, c + win // 2, f + d)
-            ghosts.setdefault(d, []).append(pd / (p0 + 1e-20))
-    top = max(np.median(v) for v in resp.values())
-    line = []
-    for fb in sorted(resp):
-        if 17500 <= fb <= 21900 and fb % 200 == 0:
-            line.append('%5.1f:%+4.0f' % (fb / 1000, 10 * np.log10(np.median(resp[fb]) / top + 1e-12)))
-    for i in range(0, len(line), 6):
-        print('  ' + '  '.join(line[i:i + 6]))
-    gl = sorted(((10 * np.log10(np.median(v) + 1e-12), d) for d, v in ghosts.items()), reverse=True)[:5]
-    print('  strongest ghosts: ' + ', '.join('%+d Hz at %+.0f dB' % (d, db) for db, d in gl))
-    snr_band = 10 * np.log10(top / (noise * win + 1e-20))
-    print('  tone vs background (20 ms window): %.0f dB' % snr_band)
+    if 'sweep' in sec:
+        # ---- sweep: response and ghosts ----
+        sw = sec['sweep']
+        yS, padS = part('sweep')
+        print('\nBAND RESPONSE (sweep), 100 Hz steps, dB relative to the strongest; ghosts at fixed distances')
+        resp, ghosts = {}, {}
+        win = int(0.02 * R)
+        for i in range(40, int(sw['dur'] * 50) - 40):
+            tc = sw['start'] + i / 50
+            f = sw['f0'] + (sw['f1'] - sw['f0']) * (tc - sw['start']) / sw['dur']
+            c = padS + int(round((tc - sw['start']) * R))
+            p0 = tone_power(yS, c - win // 2, c + win // 2, f)
+            fb = int(round(f / 100) * 100)
+            resp.setdefault(fb, []).append(p0)
+            for d in range(-3000, 3001, 100):
+                if d == 0 or abs(d) < 300:
+                    continue
+                pd = tone_power(yS, c - win // 2, c + win // 2, f + d)
+                ghosts.setdefault(d, []).append(pd / (p0 + 1e-20))
+        top = max(np.median(v) for v in resp.values())
+        line = []
+        for fb in sorted(resp):
+            if 17500 <= fb <= 21900 and fb % 200 == 0:
+                line.append('%5.1f:%+4.0f' % (fb / 1000, 10 * np.log10(np.median(resp[fb]) / top + 1e-12)))
+        for i in range(0, len(line), 6):
+            print('  ' + '  '.join(line[i:i + 6]))
+        gl = sorted(((10 * np.log10(np.median(v) + 1e-12), d) for d, v in ghosts.items()), reverse=True)[:5]
+        print('  strongest ghosts: ' + ', '.join('%+d Hz at %+.0f dB' % (d, db) for db, d in gl))
+        snr_band = 10 * np.log10(top / (noise * win + 1e-20))
+        print('  tone vs background (20 ms window): %.0f dB' % snr_band)
 
     # ---- multi-tone ----
-    print('\nMULTI-TONE (several tones at once)')
+    if any(t.get('kind') == 'multitone' for t in S['sections']):
+        print('\nMULTI-TONE (several tones at once)')
     for name in [t['name'] for t in S['sections'] if t.get('kind') == 'multitone']:
         s = sec[name]
         y, pad = part(name)
@@ -220,11 +222,19 @@ def main(rec, secfile):
               % (s['label'], 100 * ok / n, bits, bits * 1000 / ms, bits * 1000 / ms * max(0.0, 1 - 2.5 * ser)))
 
     # ---- OFDM ----
-    print('\nOFDM (many carriers, phase coded)')
+    fast_shown = silent_shown = False
+    if any(t.get('kind') == 'ofdm' and 'group' not in t for t in S['sections']):
+        print('\nOFDM (many carriers, phase coded)')
     for name in [t['name'] for t in S['sections'] if t.get('kind') == 'ofdm']:
-        if name == 'f1':
-            wide_sweep(part, sec['wsweep'])
+        if not fast_shown and (name == 'f1' or sec[name].get('group') == 'fast'):
+            fast_shown = True
+            for t in S['sections']:
+                if t.get('kind') == 'wsweep':
+                    wide_sweep(part, t)
             print('\nFAST MODE (audible, many carriers over the whole range)')
+        if sec[name].get('group') == 'silent' and fast_shown and not silent_shown:
+            silent_shown = True
+            print('\nSILENT MODE')
         s = sec[name]
         y, pad = part(name)
         freqs, nfft, ncp = np.array(s['freqs']), s['nfft'], s['ncp']
@@ -249,10 +259,11 @@ def main(rec, secfile):
             # per carrier SNR from the spread of the phase differences
             ang = np.angle(d * np.exp(-1j * data * np.pi / 2))
             evm = np.mean(ang ** 2, axis=0)
-            score = errs.mean()
+            score = errs.mean() + 0.01 * np.mean(evm)      # fewest errors, then the cleanest timing
             if best is None or score < best[0]:
                 best = (score, errs, evm, off)
-        score, errs, evm, off = best
+        _, errs, evm, off = best
+        score = errs.mean()
         per = errs.mean(axis=0)
         snr_c = 10 * np.log10(1 / np.maximum(evm, 1e-6))   # rough: phase noise to SNR
         good = (per < 0.02).sum()

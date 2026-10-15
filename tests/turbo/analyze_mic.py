@@ -18,7 +18,7 @@ def main(rec, info):
     print('clipped samples (the recording was too loud where these are): %d' % int(np.sum(np.abs(x) > 0.995)))
     ref = chirp(1000, 4000, 0.3, rate)
     # the same chirp also ends the test: look only where the whole test still fits after it
-    span = I['total'] - 1.0 - 0.3                     # start marker to end marker (s)
+    span = I.get('span', I['total'] - 1.0 - 0.3)       # start marker to end marker (s)
     a, q = find(x, ref, 0, max(len(ref) + 1, len(x) - int((span - 2) * rate)))
     b, q2 = find(x, ref, a + int((span - 1) * rate), a + int((span + 1) * rate))
     # a handheld's sound chip may record slower or faster than it says: put that right
@@ -30,19 +30,20 @@ def main(rec, info):
         x = resample(x, int(round(len(x) * k)))
         a = int(round(a * k))
     # layout of phone-test.wav (seconds after the start marker's beginning)
-    t_sweep = 0.3 + 0.25
+    sw = I.get('sweep', dict(start=0.3 + 0.25, f0=100.0, f1=23000.0, dur=8.0, log=True))
     noise = np.mean(x[max(0, a - int(0.4 * rate)):max(1, a - int(0.05 * rate))] ** 2) + 1e-12
     print('\nWHAT THE MICROPHONE HEARS (sweep), dB above the background in a 20 ms window')
-    f0, f1, T = 100.0, 23000.0, 8.0
-    k = np.log(f1 / f0)
+    f0, f1, T = sw['f0'], sw['f1'], sw['dur']
     win = int(0.02 * rate)
     line = []
     for f in [200, 500, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 11000, 12000, 14000,
               16000, 18000, 19000, 20000, 21000, 22000]:
         if f >= rate / 2:
             line.append('%5.1f kHz: above this rate' % (f / 1000)); continue
-        tf = T * np.log(f / f0) / k                       # when the sweep passes f
-        c = a + int((t_sweep + tf) * rate)
+        if not f0 <= f <= f1:
+            continue
+        tf = T * np.log(f / f0) / np.log(f1 / f0) if sw.get('log') else T * (f - f0) / (f1 - f0)
+        c = a + int((sw['start'] + tf) * rate)
         seg = x[c - win // 2:c + win // 2]
         t = np.arange(len(seg)) / rate
         p = abs(np.sum(seg * np.exp(-2j * np.pi * f * t))) ** 2 / len(seg)
@@ -60,14 +61,16 @@ def main(rec, info):
         base = a + int(o['start'] * rate)
         t = np.arange(nfft) / rate
         E = np.exp(-2j * np.pi * np.outer(t, freqs))
-        for off in range(-int(0.03 * rate), int(0.03 * rate), max(1, ncp // 6)):
+        for off in list(range(-int(0.03 * rate), int(0.03 * rate), max(1, ncp // 6))):
             Z = []
             for j in range(data.shape[0] + 1):
-                s0 = base + off + int(round(j * L)) + ncp
+                sf = base + off + j * L + ncp            # where the symbol really starts (not a whole sample)
+                s0 = int(np.floor(sf))
                 seg = x[s0:s0 + nfft]
                 if len(seg) < nfft:
                     break
-                Z.append(seg @ E)
+                # starting (sf - s0) samples early turns every carrier back by that much: undo it
+                Z.append((seg @ E) * np.exp(2j * np.pi * freqs * (sf - s0) / rate))
             if len(Z) < data.shape[0] + 1:
                 continue
             Z = np.array(Z)
@@ -76,13 +79,16 @@ def main(rec, info):
             dec = np.mod(np.round(np.angle(d) / (np.pi / 2)), 4).astype(int)
             ang = np.angle(d * np.exp(-1j * data * np.pi / 2))
             err = (dec != data)
-            if best is None or err.mean() < best[0]:
-                best = (err.mean(), err.mean(axis=0), 10 * np.log10(1 / np.maximum(np.mean(ang ** 2, axis=0), 1e-6)))
-        print('\n' + o['label'] + ':')
+            score = err.mean() + 0.01 * np.mean(ang ** 2)      # fewest errors, then the cleanest timing
+            if best is None or score < best[3]:
+                best = (err.mean(), err.mean(axis=0), 10 * np.log10(1 / np.maximum(np.mean(ang ** 2, axis=0), 1e-6)), score)
+        seg = x[base:base + int((data.shape[0] + 1) * L)]
+        pk = np.max(np.abs(seg)) if len(seg) else 0
+        print('\n' + o['label'] + ':  loudest %.0f %% of full scale%s' % (100 * pk, ', CLIPPED' if pk > 0.98 else ''))
         if best is None:
             print('  not found in the recording (it may have been cut short)'); continue
-        usable = freqs < rate / 2 * 0.92
-        _, per, snr = best
+        usable = freqs < min(rate, true_rate) / 2 * 0.97
+        _, per, snr, _ = best
         T = (nfft48 + ncp48) / 48000
         cap = sum(4 if v > 22 else 3 if v > 17 else 2 if v > 11 else 1 if v > 6 else 0 for v in snr[usable])
         print('  symbol errors %.1f %% over the %d carriers this rate can hold; with bits fitted to each carrier ~%.0f bit/s'

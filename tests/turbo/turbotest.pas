@@ -26,7 +26,7 @@ uses Windows;
 {$I sections.inc}
 
 const
-  VERSION = '1.0';
+  VERSION = '2.0';
   CLSNAME: UnicodeString = 'HPCTurboTest';
   APPNAME: UnicodeString = 'HPC Whisper Turbo Test';
   WM_UPDATE = WM_APP + 1;
