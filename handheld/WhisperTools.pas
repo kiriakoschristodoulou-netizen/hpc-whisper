@@ -1,5 +1,5 @@
 program WhisperTools;
-{ Whisper Tools 3.4, for Windows CE handheld PCs (made on an HP Jornada 720).
+{ Whisper Tools 3.5, for Windows CE handheld PCs (made on an HP Jornada 720).
 
   Type here and the text goes into any app on your phone, with Tab, the
   arrows, Ctrl+C and the other keys; the phone confirms what has arrived.
@@ -22,7 +22,7 @@ program WhisperTools;
 uses Windows, w3core, w3dsp, w3tx, w3rx, waudio, wtext, wfile, wscreen, wwav, wimg, winf, wmodem, wpair;
 
 const
-  VERSION = '3.4';
+  VERSION = '3.5';
   CREATOR = 'Kyriakos Christodoulou';
   CLSNAME: UnicodeString = 'WhisperTools';
   APPNAME: UnicodeString = 'Whisper Tools';
@@ -1239,14 +1239,14 @@ end;
 procedure TestSpeaker;
 var y: TSamples; i, n, g: Integer;
 begin
-  n := OUT_RATE;                                     { one second of 1 kHz, clearly audible }
+  n := OUT_RATE;                                     { one second of 1.2 kHz, clearly audible (its overtones miss 2 kHz, the pairing marker) }
   SetLength(y, n);
   for i := 0 to n - 1 do
   begin
     g := 12000;
     if i < 441 then g := g * i div 441;
     if n - 1 - i < 441 then g := g * (n - 1 - i) div 441;
-    y[i] := (g * SinI(Integer((Int64(1000) * i * 65536 div OUT_RATE) and $FFFF))) div 16384;
+    y[i] := (g * SinI(Integer((Int64(1200) * i * 65536 div OUT_RATE) and $FFFF))) div 16384;
   end;
   AudioSend(y);
   SpeakerNote := 'A one-second beep now: if you hear nothing, the sound does not get out (check Volume in the Control Panel).';
@@ -1289,7 +1289,7 @@ begin
   begin
     PairPlayed := True;
     if HaveMine then PairState := 3
-    else begin PairState := 2; PairDeadline := now + 10000; PairNote := 'Listening for the phone''s test sound (press Pair on the phone if it does not start by itself)...'; end;
+    else begin PairState := 2; PairDeadline := now + 15000; PairNote := 'Listening for the phone''s test sound (press Pair on the phone if it does not start by itself)...'; end;
   end;
   if (PairState = 2) and (LongInt(now - PairDeadline) > 0) then
   begin
@@ -1309,7 +1309,7 @@ end;
 { ---------- the timer: hearing, answering, sending ---------- }
 
 var PhoneHeardSD: LongWord = 0;
-const LISTEN_MS = 900;           { listening after each text frame of ours, for the phone's answer }
+const LISTEN_MS = 1100;          { listening after each text frame of ours, for the phone's answer (it may take ~0.6 s to sound) }
 var WaitAnswer: Boolean = False;  { the last turn held a text frame: the phone will confirm it }
 
 procedure Pump;

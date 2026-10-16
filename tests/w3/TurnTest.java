@@ -18,8 +18,8 @@ import java.util.Random;
  * Frame lengths come from the real transmitter (Tx). Device delays are the measured
  * or stated ones: the handheld's 150 ms lead-in and tail and about 60 ms to open its
  * microphone again; the phone reads a frame about 40 ms after it ends; its sound
- * comes out 300 ms late with the whole buffer filled with silence (3.3), about 70 ms
- * now. The same run with the 3.3 settings shows why no answer ever got through.
+ * comes out about 250-300 ms late (a full buffer of silence); 3.3 also waited 450 ms
+ * of quiet first, while 3.5 waits less by the delay it measures. The same run with the 3.3 settings shows why no answer ever got through.
  */
 public class TurnTest {
     static final int LEAD = 150, TAIL = 150, READ = 40;
@@ -33,11 +33,13 @@ public class TurnTest {
     /** One run; returns {answers sent, answers heard, phone talking over the handheld}. */
     static int[] run(boolean old, long seed) {
         Random rnd = new Random(seed);
-        int listen = old ? 0 : 900;                 // the handheld's listening window after a text frame
+        int listen = old ? 0 : 1100;                 // the handheld's listening window after a text frame
         // phone: from the answer to its sound (3.3 also waited 450 ms of quiet, not 200: the 250 more are added here)
-        int phoneDelay = (old ? 300 + 250 : 70) + EXTRA;
+        // 3.5 keeps the buffer full again (about 250 ms) and shortens its wait by the delay it measures
+        int phoneDelay = (old ? 300 + 250 : 250) + EXTRA;
         int ackMs = LEAD + frameMs(Channel.SD, 5);  // the phone's answer, with its lead-in
         TextLink tl = new TextLink();
+        if (!old) tl.quietMs = Math.max(30, 260 - phoneDelay);    // as Link does, from the measured delay
         // typing: bursts of keys, 5 a second, with pauses
         List<Integer> keys = new ArrayList<>();
         int t = 500;
@@ -69,7 +71,7 @@ public class TurnTest {
             }
             // the phone's answer timer (Link.ackCheck); it waits while a frame of the handheld is coming in
             if (ackDueCheck >= 0 && now >= ackDueCheck) {
-                boolean incoming = !old && hhTalkFrom >= 0 && now >= hhTalkFrom + LEAD;
+                boolean incoming = !old && frameEnds >= 0 && now >= hhTalkFrom + LEAD && now < frameEnds;   // Rx.busy()
                 if (incoming) ackDueCheck = now + 40;
                 else {
                     byte[] a = tl.ackIfDue(now);

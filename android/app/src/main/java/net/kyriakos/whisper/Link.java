@@ -58,7 +58,7 @@ public final class Link {
         if (listener.isRunning()) return true;
         PairCheck.get().load(app);
         boolean ok = listener.start(app, cb);
-        if (ok) speakerOk = speaker.start();
+        if (ok) speakerOk = speaker.start(app);
         return ok;
     }
 
@@ -98,6 +98,9 @@ public final class Link {
     /** Has the fast channel down been measured (a map from the handheld)? */
     public boolean fastDownTrained() { return sendMaps[Channel.FD] != null; }
     public boolean speaking() { return speaker.playing; }
+    /** Where the phone's sound goes, and how often its output had to be opened again. */
+    public String soundRoute() { return speaker.route; }
+    public int soundReopened() { return speaker.reopened; }
 
     // ---------- hearing ----------
 
@@ -106,6 +109,9 @@ public final class Link {
             long now = System.currentTimeMillis();
             // never over the handheld: if a frame of its is coming in, wait for its end
             if (listener.hearingFrame()) { main.postDelayed(this, 40); return; }
+            // the answer should sound about 0.3 s after the handheld's frame ended (it was read ~40 ms after):
+            // wait for that, less the time this phone's sound takes to come out
+            text.quietMs = Math.max(30, 260 - speaker.delayMs());
             byte[] a = text.ackIfDue(now);
             if (a != null) send(Channel.SD, T_TEXT_ACK, a);
             long next = text.nextCheck(System.currentTimeMillis());

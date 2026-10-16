@@ -8,9 +8,11 @@ package net.kyriakos.whisper;
  */
 public final class TextLink {
     // the handheld takes turns: after each frame it plays 150 ms of silence, closes its speaker, opens its
-    // microphone and listens for 900 ms (docs/FORMAT3.md, section 5). The answer sounds about 0.3 s after the
-    // frame ended (200 ms here, plus the reading and the phone's own sound delay), well inside that window.
+    // microphone and listens for 1.1 s (docs/FORMAT3.md, section 5). The answer should sound about 0.3 s after
+    // the frame ended: Link shortens this wait by the phone's own sound delay (tests/w3/TurnTest).
     static final long QUIET_MS = 200, MIN_GAP_MS = 600;
+    /** The wait before answering: QUIET_MS, or less when the phone's own sound is slow to come out (Link sets it). */
+    public volatile long quietMs = QUIET_MS;
 
     public final Mirror mirror = new Mirror();
     private boolean due;
@@ -34,7 +36,7 @@ public final class TextLink {
 
     /** The TEXT_ACK payload to send now, or null: doc id, known (2), L (2). */
     public byte[] ackIfDue(long nowMs) {
-        if (!due || nowMs - lastText < QUIET_MS) return null;
+        if (!due || nowMs - lastText < quietMs) return null;
         if (lastAck >= 0 && nowMs - lastAck < MIN_GAP_MS) return null;
         due = false;
         lastAck = nowMs;
@@ -45,7 +47,7 @@ public final class TextLink {
     /** When to look again for an answer to send (ms from now), or -1. */
     public long nextCheck(long nowMs) {
         if (!due) return -1;
-        long a = lastText + QUIET_MS - nowMs, b = lastAck < 0 ? 0 : lastAck + MIN_GAP_MS - nowMs;
+        long a = lastText + quietMs - nowMs, b = lastAck < 0 ? 0 : lastAck + MIN_GAP_MS - nowMs;
         return Math.max(10, Math.max(a, b));
     }
 

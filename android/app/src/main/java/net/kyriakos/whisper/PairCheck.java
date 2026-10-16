@@ -99,7 +99,8 @@ public final class PairCheck {
         level = LevelCheck.read(x, n, l.rate);
         link.silentLevel = level.level();
         save();
-        if (!level.ok) step("Loudness check: the bursts were not heard clearly; using the quietest level (" + pct(link.silentLevel) + ")");
+        if (!level.ok) step("Loudness check: this phone's microphone did not hear its own speaker clearly. Is its sound going to "
+                + "Bluetooth or another device (" + link.soundRoute() + ")? Using the quietest level (" + pct(link.silentLevel) + ")");
         else if (level.clean < 0) step("Loudness check: every level made a side-sound; using the quietest (" + pct(link.silentLevel) + ")");
         else step("Loudness check: clean up to " + pct(LevelCheck.LEVELS[level.clean]) + "; using " + pct(link.silentLevel));
         playPattern("Playing this phone's test sound (beeps)...");
@@ -126,7 +127,7 @@ public final class PairCheck {
                 played = true;
                 if (mine != null) { state = DONE; }
                 else {
-                    state = LISTENING; deadline = now + 10000;
+                    state = LISTENING; deadline = now + 15000;
                     note = "Listening for the handheld's test sound (it answers by itself; if not, press Pair on it)...";
                     step("Listening for the handheld's test sound");
                 }
@@ -135,7 +136,7 @@ public final class PairCheck {
             if (state == LISTENING && now > deadline) {
                 state = DONE;
                 note = "The handheld's test sound was not heard. Is Whisper Tools running on it, within a metre?";
-                step("No test sound from the handheld in 10 s");
+                step("No test sound from the handheld in 15 s");
                 changed();
             }
             if (mine != null && played && !reported) {

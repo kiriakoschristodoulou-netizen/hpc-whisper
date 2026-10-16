@@ -236,18 +236,20 @@ SU and SD share a band, and a device hears its own sound loudly. So:
   lead-in: a 21.7 kHz tone at about −28 dB, faded in and out. Speakers that
   were idle fade in their first sound; the lead-in takes that loss, not the
   frame's sync symbol. The phone also keeps its output stream playing silence
-  between frames, but keeps only about 40 ms of it queued, so that an answer
-  comes out within about 70 ms. The phone keeps
+  between frames (a buffer of about 100 ms, kept full), and always plays on
+  its own speaker, even when Bluetooth or a computer is set to play the
+  phone's sound. The phone keeps
   listening while it plays on FD (another band), so taps and answers from
   the handheld reach it during a file or the remote's screen.
-- After each TEXT frame the handheld listens for 900 ms (from when its
+- After each TEXT frame the handheld listens for 1.1 s (from when its
   microphone is open again) before it sends anything else but an answer;
   the window ends early when the phone's answer arrives.
-- The phone answers (TEXT_ACK, FILE_NEED, MAP) 200 ms after the handheld's
-  frame ended, and never while a frame from the handheld is still coming in.
-  Its answer then sounds about 0.3 s after the frame ended, inside the
-  handheld's window. (`tests/w3/TurnTest` checks these times, also for slower
-  devices.)
+- The phone answers (TEXT_ACK, FILE_NEED, MAP) so that its answer sounds
+  about 0.3 s after the handheld's frame ended: it waits 260 ms less its own
+  sound delay (measured from the sound card's timestamps; at least 30 ms),
+  and never while a frame from the handheld is still coming in. With a lead-in
+  and a 275 ms answer, this fits the handheld's window for any phone whose
+  sound comes out within about 0.65 s (`tests/w3/TurnTest`).
 - A file sender sends 16 packets, then waits up to 1.5 s for FILE_NEED before
   going on.
 

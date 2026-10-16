@@ -217,6 +217,9 @@ public final class Listener {
                         if (min <= 0) continue;
                         AudioRecord ar = new AudioRecord(sources[s], r, c, AudioFormat.ENCODING_PCM_16BIT, Math.max(min * 4, r));
                         if (ar.getState() == AudioRecord.STATE_INITIALIZED) {
+                            // the phone's own microphone, even when a Bluetooth headset is connected
+                            android.media.AudioDeviceInfo mic = Speaker.builtIn(ctx, AudioManager.GET_DEVICES_INPUTS, android.media.AudioDeviceInfo.TYPE_BUILTIN_MIC);
+                            if (mic != null) { try { ar.setPreferredDevice(mic); } catch (Exception ignored) { } }
                             rate = r; sourceName = names[s];
                             channelsName = ar.getChannelCount() == 2 ? "two microphones" : "one microphone";
                             return ar;
