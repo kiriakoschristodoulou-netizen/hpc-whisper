@@ -2,8 +2,6 @@
 
 # Whisper Tools
 
-*Formerly HPC Whisper.*
-
 Type on a Windows CE handheld PC and the text goes straight into any app on your
 phone (an email in Gmail, a message, a note), with Tab, the arrows and Ctrl+C,
 V, X, Z. Send files both ways, and see the phone's screen on the handheld (the
@@ -28,7 +26,7 @@ Made on, and for, the HP Jornada 720. Created by Kyriakos Christodoulou.
   Share. It reads the Classic format (on the handheld: Settings, Typing format,
   Classic). *Apple does not let keyboards use the microphone at all, so an
   iPhone keyboard is impossible.*
-- **Handheld:** `Whisper-Tools-32.zip` from the same release. Copy the folder
+- **Handheld:** `Whisper-Tools-34.zip` from the same release. Copy the folder
   inside it to the handheld and run `WhisperTools.exe`. Its home screen has a button for each tool.
 
 ## Which handhelds
@@ -57,7 +55,7 @@ The handheld program opens on a home screen with a button for each tool (tap one
 | Files | The handheld's files: Enter opens a picture, text or WAV sound; S sends a file to the phone. Files from the phone arrive in `\My Documents\Whisper Tools`. |
 | Remote | The phone's screen in 16 greys: zoom view first, Alt+Z for the whole screen. Tap the picture to tap the phone. |
 | Link | Sound, microphone rate, the phone, and each channel's speed; Alt+K checks the link. |
-| Settings | Format 3 or Classic, the silent channel, files fast or silent, loudness. |
+| Settings | Standard or Classic, the silent channel, files fast or silent, loudness. |
 
 The program's own shortcuts are on Alt (Alt+S Send, Alt+B Back, Alt+H Home
 screen, Alt+W Recent apps, Alt+N new page, Alt+Q quit), so every Ctrl key reaches
@@ -96,8 +94,8 @@ the phone's is Java; the two are tested against each other through a simulated
 room, including the Jornada's microphone running at 43,230 samples/s while it
 says 44,100.
 
-The Classic format ([docs/FORMAT.md](docs/FORMAT.md)) is kept for older phone
-apps and the receiver page: 16 tones 100 Hz apart, 4 bits per tone.
+The Classic format ([docs/FORMAT.md](docs/FORMAT.md)) is for the receiver page
+(iPhone and other phones without the app): 16 tones 100 Hz apart, 4 bits per tone.
 
 ## Files
 

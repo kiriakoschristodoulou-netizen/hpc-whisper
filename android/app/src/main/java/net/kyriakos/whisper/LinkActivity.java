@@ -24,7 +24,6 @@ import java.util.Locale;
 /** The link: connect, what the phone hears, the link check with each channel's speed, and the diagnostics recording. */
 public class LinkActivity extends ToolActivity implements PairCheck.Watcher {
     private static final int RECORD_SECONDS = 30;
-    private final Mirror mirror = new Mirror();
     private TextView state, speeds, received, recState, pairText;
     private Button connectBtn, recBtn;
     private MeterView meter;
@@ -52,8 +51,9 @@ public class LinkActivity extends ToolActivity implements PairCheck.Watcher {
         connectBtn = ui.button(c, "Connect", true, v -> { if (LinkService.on()) { if (recording) finishRecording(false); disconnect(); } else connect(); });
 
         LinearLayout pc = ui.card("Pair");
-        ui.body(pc, "Run this first with each new phone or handheld. Both devices play a 3-second test sound (beeps) in "
-                + "turn and measure how well they hear each other; each side then adjusts itself. Start it here or on the handheld.");
+        ui.body(pc, "Run this once with each new phone or handheld, in a quiet room. Started here, the phone first finds how "
+                + "loud it can play without a side-sound, then both devices play a 3-second test sound (beeps) in turn and "
+                + "measure how well they hear each other; each side then adjusts itself. It can also be started on the handheld.");
         pairText = ui.text(pc, "", 14, t().ink, false);
         pairText.setPadding(0, ui.dp(6), 0, 0);
         ui.button(pc, "Pair", true, v -> pair());
@@ -80,7 +80,7 @@ public class LinkActivity extends ToolActivity implements PairCheck.Watcher {
         StringBuilder s = new StringBuilder(linkLine());
         if (on && (l.lastHeard > 0 || lastFrame != null)) {
             if (l.handheldAnswers) s.append(l.speakerWorks() ? ", and it hears this phone" : "; this phone's speaker could not be opened");
-            else if (lastFrame != null && lastFrame.ms > 0) s.append(" (an older handheld program: typing only)");
+            else if (lastFrame != null && lastFrame.ms > 0) s.append(" (the handheld types in Classic: text only, nothing is confirmed)");
         } else if (on) s.append(" (").append(l.listener.sourceName).append(" microphone)");
         if (unreadable > 0) s.append(". ").append(unreadable).append(" pieces too weak to read");
         state.setText(s.toString());
@@ -111,12 +111,17 @@ public class LinkActivity extends ToolActivity implements PairCheck.Watcher {
         if (p.theirs != null) s.append(Link.get().answersOnFast
                 ? "\nDecided: the silent band does not reach the handheld, so this phone answers on the fast channel (audible hiss)."
                 : "\nDecided: this phone answers on the silent channel.");
+        s.append(String.format(Locale.US, "\nThis phone's silent sound: %d %% of full loudness", Math.round(Link.get().silentLevel * 100)));
+        if (!p.steps.isEmpty()) {
+            s.append("\n\nSteps:");
+            for (String st : p.steps) s.append("\n").append(st);
+        }
         pairText.setText(s.toString().trim());
     }
 
     private static String bands(net.kyriakos.whisper.w3.Pair.Result r) {
         return db(r.band10(500, 4000)) + " (speech band), " + db(r.band10(5000, 12000)) + " (middle), "
-                + db(r.band10(13000, 18000)) + " (high), " + db(r.band10(19400, 20800)) + " (silent band)"
+                + db(r.band10(13000, 18000)) + " (high), " + db(r.band10(20000, 21200)) + " (silent band)"
                 + (r.clipped ? "; too loud: lower the volume" : "");
     }
     private static String db(int tenths) { return tenths < 60 ? "not heard" : (tenths / 10) + " dB"; }
@@ -143,7 +148,7 @@ public class LinkActivity extends ToolActivity implements PairCheck.Watcher {
     @Override public void onFrame(Receiver.Frame f) {
         lastFrame = f;
         if (f.ms > 0) lastClassic = System.currentTimeMillis();
-        mirror.apply(f, System.currentTimeMillis());
+        Mirror mirror = Link.get().text.mirror;
         String s = Keys.show(mirror.text(0, mirror.L, "·"));
         if (s.length() > 300) s = "…" + s.substring(s.length() - 300);
         received.setText(s);

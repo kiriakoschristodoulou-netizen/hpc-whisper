@@ -49,7 +49,7 @@ begin
   C := Chans[ch];
   StdMap(ch, std);
   HeaderEncode(typ, msgLen, map.number, hdr);
-  Scramble(hdr, HDR_CODED);
+  Scramble(hdr, HDR_CODED, ch);
   SetLength(hr.b, HDR_CODED);
   for i := 0 to HDR_CODED - 1 do hr.b[i] := hdr[i];
   hr.pos := 0;
@@ -57,7 +57,7 @@ begin
   begin
     SetLength(pr.b, CodedLength(msgLen));
     PayloadEncode(msg, msgLen, pr.b);
-    Scramble(pr.b, Length(pr.b));
+    Scramble(pr.b, Length(pr.b), ch);
   end
   else SetLength(pr.b, 0);
   pr.pos := 0;
@@ -80,12 +80,14 @@ begin
     head := s < 2 + hsym;
     for cc := 0 to C.n - 1 do
     begin
-      amp := CAR_AMP;
+      { the silent channels have few carriers: build them 8 times larger, so that rounding in whole
+        numbers stays far below hearing (512 left noise only 50 dB under the carriers) }
+      if C.silent then amp := CAR_AMP * 8 else amp := CAR_AMP;
       if s = 0 then
       begin
         if (C.bins[cc] mod C.syncStep) <> 0 then Continue;
         p := 2 * SPhase(cc);
-        amp := 724;                                    { S uses half the carriers: as much power as the others }
+        if C.silent then amp := 724 * 8 else amp := 724; { S uses half the carriers: as much power as the others }
       end
       else if s = 1 then begin p := 2 * RPhase(cc); ph[cc] := p; end
       else
@@ -115,15 +117,25 @@ begin
       acc[base + k] := acc[base + k] + v;
     end;
   end;
-  { loudness: RMS a third of the peak (data symbols), then clip at the peak; the silent channels
-    RMS 1/2.2 of the peak (a little clipping, 3.5 dB more power per carrier) }
+  { loudness. Silent channels: the peak at the level, never clipped (clipping a sound near 20 kHz makes
+    harmonics that fold back to 6-12 kHz, where they are heard: device test, 16 October 2026).
+    Fast channels (a soft hiss anyway): RMS a third of the peak, then clip at the peak. }
   if level <= 0 then level := C.level;
   from := 2 * NSYM;
   e := 0;
-  for i := from to total - 1 do e := e + Int64(acc[i]) * acc[i];
-  if total - from > 0 then g := ISqrt(e div (total - from)) else g := 1;
-  if g < 1 then g := 1;
-  if C.silent then gq := (Int64(level) * 65536 * 10) div (22 * g) else gq := (Int64(level) * 65536) div (3 * g);
+  if C.silent then
+  begin
+    g := 1;
+    for i := 0 to total - 1 do if Abs(acc[i]) > g then g := Abs(acc[i]);
+    gq := (Int64(level) * 65536) div g;
+  end
+  else
+  begin
+    for i := from to total - 1 do e := e + Int64(acc[i]) * acc[i];
+    if total - from > 0 then g := ISqrt(e div (total - from)) else g := 1;
+    if g < 1 then g := 1;
+    gq := (Int64(level) * 65536) div (3 * g);
+  end;
   SetLength(Result, total);
   for i := 0 to total - 1 do
   begin
@@ -138,16 +150,52 @@ begin
   Result := Build(ch, map, typ, msg, msgLen, level);
 end;
 
-function To44(const x: TSamples): TSamples;
-var r: TResampler; pad: TSamples; n, i: Integer;
+{ 51,200 to 44,100 is always 512 : 441, so the filter's sub-steps repeat every 441 samples out: their
+  441 rows are made once (between the table's nearest sub-steps), and each sample out is then one
+  multiply per tap, at the exact sub-step. (The nearest sub-step alone left noise 54 dB under a silent
+  frame, in the band people hear; working between two on every sample cost a fifth more time.) }
+var
+  Tx44: array of SmallInt;                   { 441 rows of RSM_TAPS }
+
+procedure MakeTx44;
+var f, k, p0, w, c0, c1: Integer;
 begin
-  RsInit(r, Int64(MRATE) * 100, 4410000, False);
-  SetLength(pad, Length(x) + RSM_TAPS);
+  SetLength(Tx44, 441 * RSM_TAPS);
+  for f := 0 to 440 do
+  begin
+    { the sub-step f / 441 of a sample, in 256ths, and the rest in 256ths of that }
+    p0 := (f * 256) div 441;
+    w := ((f * 256 * 256) div 441) and 255;
+    for k := 0 to RSM_TAPS - 1 do
+    begin
+      c0 := RSM_DOWN[p0 * RSM_TAPS + k]; c1 := RSM_DOWN[(p0 + 1) * RSM_TAPS + k];
+      Tx44[f * RSM_TAPS + k] := c0 + ((c1 - c0) * w) div 256;
+    end;
+  end;
+end;
+
+function To44(const x: TSamples): TSamples;
+var n, j, i, f, k: Integer; acc: LongInt; pad: TSamples; cp: PSmallInt;
+begin
+  if Length(Tx44) = 0 then MakeTx44;
+  SetLength(pad, Length(x) + 2 * RSM_TAPS);
   for i := 0 to High(pad) do pad[i] := 0;
-  for i := 0 to High(x) do pad[i] := x[i];
-  SetLength(Result, Length(pad) * 44100 div MRATE + 64);
-  n := RsProcess(r, pad, 0, Length(pad), Result, 0);
+  for i := 0 to High(x) do pad[i + RSM_H - 1] := x[i];     { centred: sample j out sits at sample j * 512 / 441 in }
+  n := Int64(Length(x) + RSM_TAPS div 2) * 441 div 512;
   SetLength(Result, n);
+  i := 0; f := 0;                                           { the sample before, and the sub-step (of 441) }
+  for j := 0 to n - 1 do
+  begin
+    cp := @Tx44[f * RSM_TAPS];
+    acc := 0;
+    for k := 0 to RSM_TAPS - 1 do acc := acc + LongInt(pad[i + k]) * cp[k];
+    acc := SarLongint(acc, 14);
+    if acc > 32767 then acc := 32767 else if acc < -32767 then acc := -32767;
+    Result[j] := acc;
+    { the next sample out is 512/441 samples on: no division (the processor has none) }
+    Inc(f, 512);
+    while f >= 441 do begin Dec(f, 441); Inc(i); end;
+  end;
 end;
 
 function MakeFrame(ch: Integer; const map: TBitMap; typ: Integer; const msg: array of Byte; msgLen, level: Integer): TSamples;

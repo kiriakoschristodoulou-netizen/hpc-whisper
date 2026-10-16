@@ -25,7 +25,7 @@ about 43,230 to 43,310 samples per second (1.8 % fewer).
   carries bits in how much its phase turns from one symbol to the next
   (differential phase-shift keying), so the room's effect on its phase
   cancels out.
-- Each symbol is extended by 26 samples (0.5 ms) past its end and fades in and out (raised
+- Each symbol is extended by 48 samples (0.94 ms) past its end and fades in and out (raised
   cosine) inside its cyclic prefix and that extension, which overlaps the
   next symbol's prefix. The 512 samples a receiver reads are untouched.
 
@@ -35,16 +35,19 @@ about 43,230 to 43,310 samples per second (1.8 % fewer).
 | --- | --- | --- | --- | --- | --- |
 | SU narrow (default) | handheld → phone | even bins 200–212 (20.0–21.2 kHz) | 7 | 0, 6 | 2 |
 | SU wide | handheld → phone | even bins 182–212 (18.2–21.2 kHz) | 16 | 0, 15 | 2 |
-| SD | phone → handheld | even bins 194–208 (19.4–20.8 kHz) | 8 | 0, 7 | 2 |
+| SD | phone → handheld | even bins 200–212 (20.0–21.2 kHz) | 7 | 0, 6 | 2 |
 | FU | handheld → phone | bins 10–189 (1.0–18.9 kHz) | 180 | every 10th, and the last | 1 |
 | FD | phone → handheld | bins 5–119 (0.5–11.9 kHz) | 115 | every 10th, and the last | 1 |
 
 Silent carriers are 200 Hz apart so that a handheld's ghost tones (the
 Jornada 720 adds one 900 Hz below every tone) fall between them. SU narrow
 stays at 20 kHz and above, inaudible at 50 % volume; SU wide is faster and may
-be faintly audible to some. SD sits where the Jornada's microphone hears
-best above 19 kHz (test 2); it overlaps SU, so the two sides take turns
-(section 5).
+be faintly audible to some. SD uses the same carriers as SU narrow, also at
+20 kHz and above, so the two sides take turns (section 5).
+
+**Scrambling** (section 2) starts at W[0] for frames up (SU, FU) and at
+W[2048] for frames down (SD, FD). A frame, or its echo, therefore never reads
+as one from the other direction, although SU and SD share their carriers.
 
 **Pilots** never turn (their phase step is always 0). The receiver uses
 them to remove what all carriers share: a common phase step and a step that
@@ -68,9 +71,17 @@ of a value being its highest.
 
 ### Loudness
 
-Symbols are scaled so that their RMS level is a third of the chosen peak and
-then clipped at that peak. Defaults: silent channels 0.5 of full scale on the
-handheld (the earlier program's 50 %), fast channels 0.125 (quarter loudness, test 2).
+**Silent channels** are scaled so that the frame's peak is the chosen level,
+and are never clipped: clipping a sound near 20 kHz makes harmonics that fold
+back to 6–12 kHz, where they are heard (device test, 16 October 2026). Up to
+3 kHz below its band, a silent frame stays at least 55 dB under its own band,
+as sent at the device's rate (`tests/w3/AudibleTest`, both programs). Defaults:
+29,000 of 32,767 on the handheld; on the phone the level its loudness check
+chose (section 7), 0.45 until then.
+
+**Fast channels** (a soft hiss by design) are scaled so that their RMS level
+is a third of the chosen peak and then clipped at that peak: 0.125 of full
+scale by default (quarter loudness, test 2).
 
 ## 2. A frame
 
@@ -215,8 +226,9 @@ picture's width in tiles and the next byte its height.
 
 SU and SD share a band, and a device hears its own sound loudly. So:
 
-- A device does not listen while it plays on a silent channel, nor for 50 ms
-  after. The handheld does not listen while it plays at all: its sound chip
+- A device does not listen while its own silent sound is heard: the phone
+  ignores its microphone from when its sound really comes out (the sound
+  card's timestamps) until 60 ms after it ends, and listens before and after. The handheld does not listen while it plays at all: its sound chip
   (the Jornada 720's) cannot play and record at once, so it closes the
   microphone, opens the output, plays, adds 150 ms of silence, closes the
   output and opens the microphone again.
@@ -224,11 +236,18 @@ SU and SD share a band, and a device hears its own sound loudly. So:
   lead-in: a 21.7 kHz tone at about −28 dB, faded in and out. Speakers that
   were idle fade in their first sound; the lead-in takes that loss, not the
   frame's sync symbol. The phone also keeps its output stream playing silence
-  between frames. The phone keeps
+  between frames, but keeps only about 40 ms of it queued, so that an answer
+  comes out within about 70 ms. The phone keeps
   listening while it plays on FD (another band), so taps and answers from
   the handheld reach it during a file or the remote's screen.
-- The phone answers (TEXT_ACK, FILE_NEED, MAP) only after 450 ms without
-  hearing the handheld (time for it to open its microphone again).
+- After each TEXT frame the handheld listens for 900 ms (from when its
+  microphone is open again) before it sends anything else but an answer;
+  the window ends early when the phone's answer arrives.
+- The phone answers (TEXT_ACK, FILE_NEED, MAP) 200 ms after the handheld's
+  frame ended, and never while a frame from the handheld is still coming in.
+  Its answer then sounds about 0.3 s after the frame ended, inside the
+  handheld's window. (`tests/w3/TurnTest` checks these times, also for slower
+  devices.)
 - A file sender sends 16 packets, then waits up to 1.5 s for FILE_NEED before
   going on.
 
@@ -291,13 +310,23 @@ no frame gets through. Either side starts it (Pair on its Link screen).
 Every tone fades in and out over 5 ms.
 
 **Hearing it.** The listener watches 2 kHz in 10 ms blocks; 150 ms above ten
-times the background is marker A. 3.4 s later it reads its recording from
+times the background is marker A. For 4.5 s after that it takes no other
+marker (marker B and the 2 kHz step would otherwise look like new starts). 3.4 s later it reads its recording from
 0.7 s before A, finds both markers exactly (5 ms Goertzel blocks, runs of at
 least 120 ms above a quarter of the peak), and takes *scale* = (B − A) / 2.69 s:
 the ratio of the listener's real sample rate to the rate it believes (the
 handheld sets its microphone rate from it). Each step is measured over its
 middle 50 ms at f / scale and compared with the same frequency in the
 background just before the sound: the signal-to-noise ratio in dB.
+
+**Loudness check (the phone, when pairing is started on it).** Before its
+test sound the phone plays, with its microphone listening: 400 ms of
+silence, then a TRAIN frame on SD at each of the peaks 0.9, 0.65, 0.45, 0.3,
+0.2 and 0.13, with 250 ms between them. For each it measures what rises
+between 1 and 17 kHz above the room (its microphone is next to its speaker,
+and hears side-sounds far better than a person). It finds the loudest burst
+that raised nothing by 3 dB or more, and uses the next quieter level; if none
+was clean, or the bursts were not found, 0.13. (`tests/w3/LevelTest`.)
 
 **The turns.** The starter plays its sound and listens for up to 10 s. A side
 that hears a test sound while idle answers with its own. Once a side has both
@@ -309,9 +338,9 @@ clipped (1, 0 or 1).
 
 **Decisions.**
 
-- The handheld measures the phone's silent band (19.4–20.8 kHz) below 12 dB:
+- The handheld measures the phone's silent band (20.0–21.2 kHz) below 12 dB:
   it keeps its fast down receiver on (the phone will answer there).
-- The phone is told its silent band (19.4–20.8 kHz) reaches the handheld at
+- The phone is told its silent band (20.0–21.2 kHz) reaches the handheld at
   below 12 dB, while 0.5–12 kHz is at least 15 dB: it sends on FD whatever it
   would send on SD.
 - The handheld is told its silent band (20.2–21.2 kHz) reaches the phone at

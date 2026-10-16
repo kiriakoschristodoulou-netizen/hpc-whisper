@@ -10,6 +10,10 @@ import java.nio.charset.StandardCharsets;
 /**
  * Puts the handheld's text into whatever field is open, as a keyboard does.
  *
+ * It reads the link's one copy of the handheld's page (the same copy the link
+ * confirms from), so nothing the handheld sent before the field opened can
+ * leave a hole in it. A field gets only what is typed after it opened.
+ *
  * New text appears at once, underlined while it may still change (a gap from
  * a lost frame shows as "·" and fills in when the handheld repeats it). Text
  * that has been complete for a moment is written for good, and from then on
@@ -23,14 +27,19 @@ public final class Writer {
     private static final int LONGEST_UNDERLINE = 160;      // bytes; older text is written even with a gap
     private static final String GAP = "·";
 
-    public final Mirror mirror = new Mirror();
-    private int committed = 0;                              // bytes of the current document written for good
+    public final Mirror mirror;
+    private int doc = -1;                                   // the page this field writes from
+    private int committed = 0;                              // bytes of that page written for good
+    private byte[] done = new byte[0];                      // a copy of them, to know how much a Backspace takes back
     private String shown = "";                              // the underlined text in the field now
     private boolean singleLine = false;
     public int keysPressed = 0;
 
+    public Writer(Mirror shared) { mirror = shared; }
+
     /** A new field: only what is typed from now on goes into it. */
     public void startField(EditorInfo info) {
+        doc = mirror.doc;
         committed = mirror.L;
         shown = "";
         int cls = info.inputType & EditorInfo.TYPE_MASK_CLASS;
@@ -41,28 +50,40 @@ public final class Writer {
     /** The field is closing or the keyboard is hidden: write what is underlined as it is. */
     public void finish(InputConnection ic) {
         if (ic != null && !shown.isEmpty()) ic.finishComposingText();
+        doc = mirror.doc;
         committed = mirror.L;
         shown = "";
     }
 
-    public void frame(Receiver.Frame f, InputConnection ic, EditorInfo info, long now) {
-        if (f.doc != mirror.doc && mirror.doc != -1) {
-            // the handheld started a new page: what is underlined is written as it is
+    private void keep(int upTo) {
+        if (done.length < upTo) done = java.util.Arrays.copyOf(done, Math.max(upTo, done.length * 2 + 64));
+        System.arraycopy(mirror.bytes, committed, done, committed, upTo - committed);
+        committed = upTo;
+    }
+
+    /** A piece of text arrived (the link has already put it into the shared copy). */
+    public void frame(InputConnection ic, EditorInfo info, long now) {
+        Mirror m = mirror;
+        if (m.doc != doc) {
+            // the handheld started a new page: what is underlined is written as it is, and the new page goes in whole.
+            // But a field that opened before this phone knew any page joins the handheld's page where it is now:
+            // from the first piece heard (the earlier text was typed before the field opened).
             if (ic != null && !shown.isEmpty()) ic.finishComposingText();
             shown = "";
-            committed = 0;
+            int from = 0;
+            if (doc == -1) while (from < m.L && !m.known[from]) from++;
+            doc = m.doc;
+            committed = from;
         }
         // the handheld's Backspace went past text already written: take it back
-        if (f.doc == mirror.doc && f.L < committed && ic != null) {
-            int chars = Keys.strip(new String(mirror.bytes, f.L, committed - f.L, StandardCharsets.UTF_8)).length();
+        if (m.L < committed && ic != null) {
+            int chars = Keys.strip(new String(done, m.L, committed - m.L, StandardCharsets.UTF_8)).length();
             ic.beginBatchEdit();
             if (!shown.isEmpty()) { ic.setComposingText("", 1); ic.finishComposingText(); shown = ""; }
             ic.deleteSurroundingText(chars, 0);
             ic.endBatchEdit();
-            committed = f.L;
+            committed = m.L;
         }
-        boolean fresh = mirror.apply(f, now);
-        if (fresh) committed = 0;
         update(ic, info, now);
     }
 
@@ -70,6 +91,7 @@ public final class Writer {
     public void update(InputConnection ic, EditorInfo info, long now) {
         if (ic == null) return;
         Mirror m = mirror;
+        if (m.doc != doc) return;                           // frame() handles a new page
         if (committed > m.L) committed = m.L;
         int fu = m.firstUnknown(committed);
         // keys: the text before a key is written at once, then the key is pressed
@@ -81,7 +103,7 @@ public final class Writer {
             if (!shown.isEmpty() && before.isEmpty()) ic.commitText("", 1);
             shown = "";
             ic.endBatchEdit();
-            committed = k + 3;
+            keep(k + 3);
             press(ic, info, Keys.codeAt(m.bytes, k));
             keysPressed++;
         }
@@ -99,7 +121,7 @@ public final class Writer {
         else ic.setComposingText(under, 1);
         ic.endBatchEdit();
         shown = under;
-        committed = s;
+        keep(s);
     }
 
     /** Writes text for good (it replaces what is underlined). Enter in a one-line field does what Enter does there. */

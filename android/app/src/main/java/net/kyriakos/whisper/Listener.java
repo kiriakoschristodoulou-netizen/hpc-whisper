@@ -48,7 +48,9 @@ public final class Listener {
 
     /** The channels the phone listens on (from the handheld). */
     static final int[] LISTEN = {Channel.SU_NARROW, Channel.SU_WIDE, Channel.FU};
-    private volatile long muteUntil = 0;
+    /** When the phone itself sounds (nanoTime windows, from the speaker): the microphone is ignored then. */
+    private final java.util.ArrayDeque<long[]> mutes = new java.util.ArrayDeque<>();
+    private static final long IN_LATENCY_NS = 20_000_000L;      // a sample is read about this long after it was heard
     private final ConcurrentLinkedQueue<BitMap> newMaps = new ConcurrentLinkedQueue<>();
     private Rx[][] rx3;
     private Resampler[] rs3;
@@ -60,6 +62,9 @@ public final class Listener {
     private float[] ring = new float[1];
     private long ringPos = 0;
     private double mkS1, mkS2, mkCoef, mkBg; private int mkN, mkRun; private long mkRunPos;
+
+    /** The ring position of the newest sample. */
+    public synchronized long ringNow() { return ringPos; }
 
     /** Copies n samples from ring position pos; returns how many were still there. */
     public synchronized int ringCopy(long pos, float[] x, int n) {
@@ -91,7 +96,34 @@ public final class Listener {
     }
 
     /** The phone plays until then: format 3 ignores the microphone (nanoTime). */
-    public void muteUntil(long nanos) { if (nanos > muteUntil) muteUntil = nanos; }
+    public void muteBetween(long from, long until) { synchronized (mutes) { mutes.add(new long[]{from, until}); } }
+
+    /** Zeroes the samples of f (frames of ch channels, read just now) that were heard while the phone sounded. */
+    private void applyMutes(float[] f, int frames, int ch, long nowN) {
+        long t0 = nowN - IN_LATENCY_NS - (long) frames * 1_000_000_000L / rate;   // when f's first sample was heard
+        synchronized (mutes) {
+            while (!mutes.isEmpty() && mutes.peekFirst()[1] < t0) mutes.pollFirst();
+            for (long[] w : mutes) {
+                long a = (w[0] - t0) * rate / 1_000_000_000L, b = (w[1] - t0) * rate / 1_000_000_000L;
+                int i0 = (int) Math.max(0, a), i1 = (int) Math.min(frames, b);
+                if (i1 > i0) Arrays.fill(f, i0 * ch, i1 * ch, 0f);
+            }
+        }
+    }
+
+    /** A frame from the handheld is coming in right now, on a silent channel. */
+    public boolean hearingFrame() {
+        Rx[][] r = rx3;
+        if (r == null) return false;
+        for (Rx[] row : r) for (Rx x : row) if (x.ch.silent && x.busy()) return true;
+        return false;
+    }
+
+    /** True when the phone sounds now, or is about to (it should not start an answer then). */
+    public boolean phoneSounding(long nowN) {
+        synchronized (mutes) { for (long[] w : mutes) if (nowN < w[1] && nowN > w[0] - 200_000_000L) return true; }
+        return false;
+    }
     /** A bit map for what the handheld sends (from a link check). */
     public void addMap(BitMap m) { newMaps.add(m); }
 
@@ -130,7 +162,8 @@ public final class Listener {
                         if (fresh(type, msg)) main.post(() -> cb.onMessage(r.ch.id, type, msg, snr));
                     }
                     @Override public void onTrain(Rx r, float[] snr) { main.post(() -> cb.onTrain(r.ch.id, snr)); }
-                    @Override public void onFail(Rx r, String why) { failsW3++; }
+                    // the fast receivers start on noise all the time: only the silent channels count
+                    @Override public void onFail(Rx r, String why) { if (r.ch.silent) failsW3++; }
                 });
             }
         }
@@ -212,8 +245,7 @@ public final class Listener {
                 for (int i = 0; i < got; i++) f[i] = buf[i] / 32768f;
                 int frames = got / ch;
                 long nowN = System.nanoTime();
-                boolean muted = nowN < muteUntil;
-                if (muted) Arrays.fill(f, 0, got, 0f);
+                applyMutes(f, frames, ch, nowN);
                 for (int c = 0; c < ch; c++) rx[c].push(f, c, frames, ch);
                 ringAdd(f, frames, ch, cb);
                 // the microphone's real rate, against the clock (from 2 s after the start)

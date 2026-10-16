@@ -34,7 +34,7 @@ for name, fc in [("RSM_DOWN", 44100 / 2 / 51200), ("RSM_UP", 0.5)]:
     out.append(block(name, "SmallInt", [v for r in table(fc) for v in r]))
 out.append(block("COS4K", "SmallInt", [round(16384 * math.cos(2 * math.pi * i / 4096)) for i in range(4096)]))
 out.append(block("ATANTAB", "Integer", [round(math.atan(2 ** -i) / (2 * math.pi) * 65536) for i in range(16)]))
-out.append(block("FADETAB", "Integer", [round(32767 * (0.5 - 0.5 * math.cos(math.pi * k / 26))) for k in range(26)]))
+out.append(block("FADETAB", "Integer", [round(32767 * (0.5 - 0.5 * math.cos(math.pi * k / 48))) for k in range(48)]))
 # log2(1 + i/256), Q12, for signal-to-noise figures in whole numbers
 out.append(block("LOG2TAB", "Integer", [round(4096 * math.log2(1 + i / 256)) for i in range(257)]))
 # the listening filters' coefficients (Q14), as Rx.java computes them: high-pass at 17.5 kHz (Q 0.5412, 1.3066) and 300 Hz (Q 0.7071)

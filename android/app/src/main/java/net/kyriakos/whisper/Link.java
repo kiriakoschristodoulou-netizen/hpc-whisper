@@ -35,7 +35,8 @@ public final class Link {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final CopyOnWriteArrayList<Client> clients = new CopyOnWriteArrayList<>();
     public final Listener listener = new Listener();
-    private final Speaker speaker = new Speaker(listener::muteUntil);
+    private final Speaker speaker = new Speaker(listener::muteBetween);
+    /** Text from the handheld; text.mirror is the one copy of its page, for every screen and the keyboard. */
     public final TextLink text = new TextLink();
     private Context app;
     private boolean speakerOk;
@@ -75,7 +76,9 @@ public final class Link {
     public BitMap sendMap(int ch) { BitMap m = sendMaps[ch]; return m != null ? m : BitMap.standard(Channel.get(ch)); }
 
     /** Peak loudness of what the phone sends on a channel (of full scale). */
-    public static float level(int ch) { return ch == Channel.FD ? 0.35f : 0.9f; }
+    public float level(int ch) { return ch == Channel.FD ? 0.35f : ch == Channel.SD ? silentLevel : 0.5f; }
+    /** Peak of the silent channel down: as loud as this phone plays it without an audible side-sound (set by Pair). */
+    public volatile float silentLevel = 0.5f;
 
     public boolean send(int ch, int type, byte[] payload) {
         if (!speakerOk) return false;
@@ -88,6 +91,8 @@ public final class Link {
     public int queued() { return speaker.queued(); }
     /** The pairing check's test sound (made at the modem rate). */
     public boolean playPattern(float[] f51) { return speakerOk && speaker.play(f51, true); }
+    /** The loudness check: played without muting the microphone, which is what it listens with. */
+    public boolean playCheck(float[] f51) { return speakerOk && speaker.play(f51, false); }
     /** When everything queued so far will have sounded (currentTimeMillis). */
     public long playEndMs() { return speaker.endMs(); }
     /** Has the fast channel down been measured (a map from the handheld)? */
@@ -99,6 +104,8 @@ public final class Link {
     private final Runnable ackCheck = new Runnable() {
         @Override public void run() {
             long now = System.currentTimeMillis();
+            // never over the handheld: if a frame of its is coming in, wait for its end
+            if (listener.hearingFrame()) { main.postDelayed(this, 40); return; }
             byte[] a = text.ackIfDue(now);
             if (a != null) send(Channel.SD, T_TEXT_ACK, a);
             long next = text.nextCheck(System.currentTimeMillis());
@@ -107,7 +114,10 @@ public final class Link {
     };
 
     private final Listener.Callback cb = new Listener.Callback() {
-        @Override public void onFrame(Receiver.Frame f) { for (Client c : clients) c.onFrame(f); }
+        @Override public void onFrame(Receiver.Frame f) {
+            text.mirror.apply(f, System.currentTimeMillis());       // Classic text: into the one shared copy too
+            for (Client c : clients) c.onFrame(f);
+        }
         @Override public void onUnreadable() { for (Client c : clients) c.onUnreadable(); }
         @Override public void onLevels(float[] l) { for (Client c : clients) c.onLevels(l); }
         @Override public void onProblem(String m) { for (Client c : clients) c.onProblem(m); }

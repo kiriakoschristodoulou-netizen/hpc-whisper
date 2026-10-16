@@ -6,7 +6,7 @@ unit w3core;
 interface
 
 const
-  MRATE = 51200; NFFT = 512; NCP = 128; NSYM = NFFT + NCP; NFADE = 26;
+  MRATE = 51200; NFFT = 512; NCP = 128; NSYM = NFFT + NCP; NFADE = 48;
   CH_SU = 0; CH_SUW = 1; CH_SD = 2; CH_FU = 3; CH_FD = 4; NCHAN = 5;
   MAXCAR = 180;
   HDR_LEN = 3; HDR_CHECK = 6; HDR_CODED = HDR_LEN + HDR_CHECK;
@@ -41,7 +41,7 @@ var
 function SPhase(c: Integer): Integer;
 function RPhase(c: Integer): Integer;
 function TrainStep(c, s: Integer): Integer;
-procedure Scramble(var b: array of Byte; n: Integer);
+procedure Scramble(var b: array of Byte; n, ch: Integer);
 function Crc16(const b: array of Byte; off, n: Integer): Word;
 
 procedure RsEncode(var cw: array of Byte; off, k, p: Integer);              { check bytes after the k data bytes }
@@ -104,7 +104,7 @@ var i, j, x: Integer;
 begin
   MakeChan(CH_SU, 200, 212, 2, True);
   MakeChan(CH_SUW, 182, 212, 2, True);
-  MakeChan(CH_SD, 194, 208, 2, True);
+  MakeChan(CH_SD, 200, 212, 2, True);                 { the same band as SU (they take turns): above 20 kHz }
   MakeChan(CH_FU, 10, 189, 1, False);
   MakeChan(CH_FD, 5, 119, 1, False);
   x := 11;
@@ -129,10 +129,12 @@ function SPhase(c: Integer): Integer; begin Result := PSeq[(c * 7) and 255]; end
 function RPhase(c: Integer): Integer; begin Result := PSeq[(c * 7 + 101) and 255]; end;
 function TrainStep(c, s: Integer): Integer; begin Result := PSeq[(c * 3 + s * 11) and 255]; end;
 
-procedure Scramble(var b: array of Byte; n: Integer);
-var i: Integer;
+{ each direction scrambles from its own place (down: 2048 on): a frame, or its echo, is never read as one from the other side }
+procedure Scramble(var b: array of Byte; n, ch: Integer);
+var i, o: Integer;
 begin
-  for i := 0 to n - 1 do b[i] := b[i] xor WSeq[i and 4095];
+  if (ch = CH_SD) or (ch = CH_FD) then o := 2048 else o := 0;
+  for i := 0 to n - 1 do b[i] := b[i] xor WSeq[(i + o) and 4095];
 end;
 
 function Crc16(const b: array of Byte; off, n: Integer): Word;

@@ -12,7 +12,7 @@ public final class Tx {
         BitMap std = BitMap.standard(ch);
         byte[] hdr = Codec.header(type, msg.length, map.number);
         byte[] body = type != TRAIN ? Codec.encode(msg) : new byte[0];
-        Channel.scramble(hdr); Channel.scramble(body);          // so that no data lines the phases up
+        Channel.scramble(hdr, ch); Channel.scramble(body, ch);          // so that no data lines the phases up
         int hb = std.bitsPerSymbol(), pb = map.bitsPerSymbol();
         int hsym = (hdr.length * 8 + hb - 1) / hb;
         int psym = type == TRAIN ? TRAIN_SYMBOLS : (body.length * 8 + pb - 1) / pb;
@@ -62,11 +62,20 @@ public final class Tx {
                 out[base + k] += re[((k % N) + N) % N] * w;
             }
         }
-        // level: RMS a third of the peak, then clip at the peak (silent channels: 1/2.2, a little clipping, more power)
+        if (ch.silent) {
+            // silent channels: the peak at the level, never clipped. Clipping a sound near 20 kHz makes
+            // harmonics that fold back to 6-12 kHz, where they are heard (device test, 16 October 2026).
+            float pk = 1e-20f;
+            for (float v : out) pk = Math.max(pk, Math.abs(v));
+            float g = level / pk;
+            for (int i = 0; i < out.length; i++) out[i] *= g;
+            return out;
+        }
+        // fast channels (heard anyway, as a soft hiss): RMS a third of the peak, then clip at the peak
         double e = 0;
         int from = 2 * SYM;
         for (int i = from; i < out.length; i++) e += out[i] * out[i];
-        float g = (float) (level / (ch.silent ? 2.2 : 3) / Math.sqrt(e / Math.max(1, out.length - from) + 1e-20));
+        float g = (float) (level / 3 / Math.sqrt(e / Math.max(1, out.length - from) + 1e-20));
         for (int i = 0; i < out.length; i++) { float v = out[i] * g; out[i] = v > level ? level : v < -level ? -level : v; }
         return out;
     }

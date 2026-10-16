@@ -108,8 +108,10 @@ begin
     s0 := x[i] + (c * s1) div 65536 - s2;
     s2 := s1; s1 := s0;
   end;
-  { |X|^2 = s1^2 + s2^2 - c s1 s2, scaled down to stay in range, per sample squared }
-  s1 := s1 div 16; s2 := s2 div 16;
+  { |X|^2 = s1^2 + s2^2 - c s1 s2, per sample, in whole numbers. s1 and s2 stay below about 4e7 (full
+    loudness, 50 ms), so their squares (below 2e15) fit in 64 bits without scaling down first; the old
+    scaling rounded quiet tones to nothing (0 dB where they were 10-40 dB above the room). No floating
+    point: the handheld has no unit for it, and its library functions are not proven on the device. }
   Result := (s1 * s1 + s2 * s2 - (c * s1 div 65536) * s2) div len;
   if Result < 1 then Result := 1;
 end;

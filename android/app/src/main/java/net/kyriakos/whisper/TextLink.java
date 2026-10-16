@@ -7,8 +7,10 @@ package net.kyriakos.whisper;
  * over it. Plain Java (tested on a computer).
  */
 public final class TextLink {
-    // the handheld takes turns: after it plays, it needs a moment to open its microphone again
-    static final long QUIET_MS = 450, MIN_GAP_MS = 600;
+    // the handheld takes turns: after each frame it plays 150 ms of silence, closes its speaker, opens its
+    // microphone and listens for 900 ms (docs/FORMAT3.md, section 5). The answer sounds about 0.3 s after the
+    // frame ended (200 ms here, plus the reading and the phone's own sound delay), well inside that window.
+    static final long QUIET_MS = 200, MIN_GAP_MS = 600;
 
     public final Mirror mirror = new Mirror();
     private boolean due;

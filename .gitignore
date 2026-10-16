@@ -17,3 +17,5 @@ android/.gradle/
 android/build/
 android/app/build/
 *.ppu
+tests/w3/clsw/
+tests/arm/u/

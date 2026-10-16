@@ -3,7 +3,7 @@ package net.kyriakos.whisper.w3;
 /** The five sound channels of format 3 (docs/FORMAT3.md, section 1). */
 public final class Channel {
     public static final int SU_NARROW = 0, SU_WIDE = 1, SD = 2, FU = 3, FD = 4, COUNT = 5;
-    public static final int RATE = 51200, N = 512, CP = 128, SYM = N + CP, FADE = 26;
+    public static final int RATE = 51200, N = 512, CP = 128, SYM = N + CP, FADE = 48;
     public static final String[] NAMES = {"silent up", "silent up (wide)", "silent down", "fast up", "fast down"};
 
     public final int id;
@@ -36,7 +36,7 @@ public final class Channel {
     private static final Channel[] ALL = {
             make(SU_NARROW, 200, 212, 2, true),
             make(SU_WIDE, 182, 212, 2, true),
-            make(SD, 194, 208, 2, true),
+            make(SD, 200, 212, 2, true),            // the same band as SU (they take turns): above 20 kHz
             make(FU, 10, 189, 1, false),
             make(FD, 5, 119, 1, false),
     };
@@ -56,5 +56,7 @@ public final class Channel {
     public static int sPhase(int c) { return P[(c * 7) & 255]; }
     public static int rPhase(int c) { return P[(c * 7 + 101) & 255]; }
     public static int trainStep(int c, int s) { return P[(c * 3 + s * 11) & 255]; }
-    public static void scramble(byte[] b) { for (int i = 0; i < b.length; i++) b[i] ^= W[i & 4095]; }
+    /** Each direction scrambles from its own place in W (down: 2048 on), so that a frame, or its echo, is never read as one from the other side. */
+    public static int scrambleStart(Channel c) { return c.id == SD || c.id == FD ? 2048 : 0; }
+    public static void scramble(byte[] b, Channel c) { int o = scrambleStart(c); for (int i = 0; i < b.length; i++) b[i] ^= W[(i + o) & 4095]; }
 }

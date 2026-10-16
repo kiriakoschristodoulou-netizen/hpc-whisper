@@ -20,8 +20,7 @@ public class AboutActivity extends ToolActivity {
 
         LinearLayout h = ui.card("On the handheld");
         ui.text(h, "Run WhisperTools.exe from the Whisper-Tools download. It needs an ARM processor and Windows CE 3.0 or "
-                + "later. Older handheld programs (HPC Whisper 1) still work with the keyboard; files and the remote need "
-                + "version 3.", 14, t().ink, false);
+                + "later. Keep both programs at the same version.", 14, t().ink, false);
 
         LinearLayout i = ui.card("iPhone");
         ui.text(i, "Apple does not let keyboards use the microphone, so an iPhone keyboard is impossible. On an iPhone (or "

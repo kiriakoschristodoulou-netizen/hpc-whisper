@@ -2,19 +2,38 @@ program cost;
 { What listening costs the Jornada's processor, counted in ARM instructions (ARMv4 code, as for the
   device) under an emulator: run as  cost MODE TENTHS-OF-A-SECOND TONE  and count the instructions; the difference
   between modes is each part's cost. Mode 0: making the test sound only; 1: + the rate converter;
-  2: + the silent receiver; 3: + the fast receiver; 9: the probe's integer step, 1,000,000 times
+  2: + the silent receiver; 3: + the fast receiver; 6 minus 16: making a text frame;
+  7 minus 17: the pairing analysis; 9: the probe's integer step, 1,000,000 times
   (the device did 6,556,291 a second: this calibrates instructions a second). }
 {$mode objfpc}{$H+}
-uses w3core, w3dsp, w3rx;
+uses w3core, w3dsp, w3rx, w3tx, wpair;
 var re, im: TCpx;
     x, y: array of SmallInt; rs: TResampler; r: TRx; i, n, k, mode, secs, code: Integer;
     a: array[0..255] of LongInt; s: LongInt; seed: LongWord; tone: Integer;
+    m: TBitMap; msg: array[0..39] of Byte; fr: TSamples; pat: TSmallArr; pr: TPairResult;
 function Rnd: Integer; begin seed := seed * 1103515245 + 12345; Result := Integer((seed shr 16) and 2047) - 1024; end;
 begin
   Val(ParamStr(1), mode, code); Val(ParamStr(2), secs, code); Val(ParamStr(3), tone, code);
   if mode = 5 then
   begin
     for k := 0 to 99 do begin for i := 0 to 511 do begin re[i] := (i * 37) and 1023; im[i] := 0; end; Fft(re, im, -1, True); end;
+    Exit;
+  end;
+  { 6: making one text frame of 40 bytes (silent, at 44,100); 7: the pairing analysis of 4.2 s }
+  if (mode = 6) or (mode = 16) then
+  begin
+    for i := 0 to 39 do msg[i] := i * 7;
+    StdMap(CH_SU, m);
+    if mode = 6 then fr := MakeFrame(CH_SU, m, 1, msg, 40, 0);
+    Exit;
+  end;
+  if (mode = 7) or (mode = 17) then
+  begin
+    pat := PairPattern(44100);
+    SetLength(x, 44100 * 42 div 10);
+    for i := 0 to High(x) do x[i] := 0;
+    for i := 0 to High(pat) do x[i + 30000] := pat[i] div 8;
+    if mode = 7 then PairAnalyze(x, Length(x), 44100, pr);
     Exit;
   end;
   if mode = 9 then

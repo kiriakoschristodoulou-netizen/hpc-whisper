@@ -350,7 +350,10 @@ begin
       begin
         if MkRun = 0 then MkRunPos := firstPos + i - IN_RATE div 100;
         Inc(MkRun);
-        if MkRun = 15 then begin PairMarkPos := MkRunPos; PairMarkAt := GetTickCount; Notify; end;
+        { a test sound has two markers and a 2 kHz step: only its first counts (the others moved the
+          reading 2.7 s late, so a test sound was never read: device test, 16 October 2026) }
+        if (MkRun = 15) and ((PairMarkAt = 0) or (LongInt(GetTickCount - PairMarkAt) > 4500)) then
+        begin PairMarkPos := MkRunPos; PairMarkAt := GetTickCount; Notify; end;
       end
       else
       begin

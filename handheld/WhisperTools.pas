@@ -1,5 +1,5 @@
 program WhisperTools;
-{ Whisper Tools 3.3 (formerly HPC Whisper), for Windows CE handheld PCs (made on an HP Jornada 720).
+{ Whisper Tools 3.4, for Windows CE handheld PCs (made on an HP Jornada 720).
 
   Type here and the text goes into any app on your phone, with Tab, the
   arrows, Ctrl+C and the other keys; the phone confirms what has arrived.
@@ -22,7 +22,7 @@ program WhisperTools;
 uses Windows, w3core, w3dsp, w3tx, w3rx, waudio, wtext, wfile, wscreen, wwav, wimg, winf, wmodem, wpair;
 
 const
-  VERSION = '3.3';
+  VERSION = '3.4';
   CREATOR = 'Kyriakos Christodoulou';
   CLSNAME: UnicodeString = 'WhisperTools';
   APPNAME: UnicodeString = 'Whisper Tools';
@@ -1225,6 +1225,7 @@ end;
 procedure StartPair(answering: Boolean);
 var x: TSmallArr; i: Integer; y: TSamples;
 begin
+  if (not answering) and ((PairState = 1) or (PairState = 2)) then Exit;   { already pairing: one press is enough }
   PairState := 1; PairPlayed := False; PairReported := False;
   if not answering then begin HaveMine := False; HaveTheirs := False; end;
   PairNote := 'Playing the test sound (beeps), then listening for the phone''s...';
@@ -1271,7 +1272,7 @@ begin
     begin
       HaveMine := True;
       { the phone's silent band too weak here: it will answer on the fast channel, so that one stays on }
-      FastAlways := PairBand10(PairMine, 19400, 20800) < 120;
+      FastAlways := PairBand10(PairMine, 20000, 21200) < 120;
       { the time between the markers is this microphone's real rate (the phone's clock is good) }
       if (PairMine.scale10k > 9600) and (PairMine.scale10k < 10300) then InRate100 := Int64(IN_RATE) * PairMine.scale10k div 100;
       SaveCfg;
@@ -1308,6 +1309,8 @@ end;
 { ---------- the timer: hearing, answering, sending ---------- }
 
 var PhoneHeardSD: LongWord = 0;
+const LISTEN_MS = 900;           { listening after each text frame of ours, for the phone's answer }
+var WaitAnswer: Boolean = False;  { the last turn held a text frame: the phone will confirm it }
 
 procedure Pump;
 var g: TGotMsg; t: TTrainResult; now: LongWord; p: array[0..127] of Byte; n, typ, i: Integer; fp: TByteArr; cs: TSamples;
@@ -1346,6 +1349,14 @@ begin
   if (PairState = 1) or (PairState = 2) then begin if changed then InvalidateRect(hMain, nil, False); Exit; end;
   { classic tones }
   if Classic and ClassicSamples(cs) then begin AudioSend(cs); InvalidateRect(hMain, nil, False); Exit; end;
+  { after each frame the phone may answer: the microphone stays open for it (docs/FORMAT3.md, section 5).
+    The window closes early once the phone's answer has arrived. Our own answers do not wait. }
+  if WaitAnswer and ((LongInt(now - LastTurnAt) >= LISTEN_MS) or (LongInt(PhoneHeardSD - LastTurnAt) > 0)) then WaitAnswer := False;
+  if (AnswerN = 0) and WaitAnswer then
+  begin
+    if changed then InvalidateRect(hMain, nil, False);
+    Exit;
+  end;
   { answers first, once the phone has been quiet on the silent channel for a moment }
   if (AnswerN > 0) and (now - PhoneHeardSD >= 150) then
   begin
@@ -1358,7 +1369,7 @@ begin
   if not Classic then
   begin
     n := TsNext(Ts, now, p);
-    if n > 0 then begin SendMsg(SilentCh, T_TEXT, p, n); InvalidateRect(hMain, nil, False); Exit; end;
+    if n > 0 then begin SendMsg(SilentCh, T_TEXT, p, n); WaitAnswer := True; InvalidateRect(hMain, nil, False); Exit; end;
   end;
   if (NOut > 0) and not Playing then
   begin
@@ -1686,13 +1697,14 @@ begin
     if Overruns > 0 then s := s + ', fell behind ' + IU(Overruns) + ' times';
     Line('Microphone', s, COL_TEXT);
   end;
-  if PhoneHeard = 0 then Line('The phone', 'no frame heard yet', COL_GREY)
+  if PhoneHeard = 0 then Line('The phone', 'no frame heard yet; ' + IU(FramesOut) + ' sent, ' + IU(FramesBad) + ' not readable',
+    COL_GREY)
   else Line('The phone', 'heard ' + IU((GetTickCount - PhoneHeard) div 1000) + ' s ago; frames ' + IU(FramesOut) + ' sent, ' +
     IU(FramesIn) + ' heard, ' + IU(FramesBad) + ' not readable', COL_GOOD);
   if HaveMine then
   begin
-    if PairBand10(PairMine, 19400, 20800) >= 120 then col := COL_GOOD else col := COL_FAIL;
-    Line('Hears the phone', 'silent ' + DbText(PairBand10(PairMine, 19400, 20800)) + ', fast ' +
+    if PairBand10(PairMine, 20000, 21200) >= 120 then col := COL_GOOD else col := COL_FAIL;
+    Line('Hears the phone', 'silent ' + DbText(PairBand10(PairMine, 20000, 21200)) + ', fast ' +
       DbText(PairBand10(PairMine, 500, 12000)) + ' (1-12 kHz)' + ', mic at ' + IU(Int64(IN_RATE) * PairMine.scale10k div 10000), col);
   end
   else Line('Hears the phone', 'not measured: press Pair', COL_GREY);
@@ -1738,8 +1750,8 @@ end;
 function SettingValue(i: Integer): UnicodeString;
 begin
   case i of
-    0: if Classic then Result := 'Classic (version 1 and 2 phone apps, the receiver page): text only'
-       else Result := 'Format 3: silent, all keys, the phone confirms';
+    0: if Classic then Result := 'Classic (for the receiver page, e.g. on an iPhone): text only'
+       else Result := 'Standard: silent, all keys, the phone confirms';
     1: if WideSilent then Result := 'Wide, 18.2-21.2 kHz: twice as fast, some people hear it'
        else Result := 'Narrow, 20.0-21.2 kHz: inaudible';
     2: if FastFiles then Result := 'Fast: a soft hiss while it goes, about 7-12 kbit/s' else Result := 'Silent: slow (a 10 KB file takes 1-2 minutes)';

@@ -39,6 +39,8 @@ public final class Rx {
     // state
     private static final int IDLE = 0, SEEK = 1, DECODE = 2;
     private int state = IDLE;
+    /** A frame is being read now (its sync was found): the other side is still talking. */
+    public boolean busy() { return state == DECODE; }
     private long scan = 600, trig, sym0;
     private int s, hsym, psym, adjust, moved;
     private double tau;
@@ -166,7 +168,7 @@ public final class Rx {
                 s++;
                 if (s == 2 + hsym) {
                     byte[] h = bits.bytes(Codec.HEADER + Codec.HEADER_CHECK);
-                    Channel.scramble(h);
+                    Channel.scramble(h, ch);
                     int[] hd = Codec.readHeader(h);
                     if (DEBUG) System.err.printf("header snr %.1f dB%n", 10 * Math.log10(errN / Math.max(1e-9, errSum)));
                     if (hd == null) { if (DEBUG) System.err.printf("header snr %.1f dB over %d symbols, %d carriers%n", 10 * Math.log10(errN / Math.max(1e-9, errSum)), hsym, errN); fail("header"); return; }
@@ -202,7 +204,7 @@ public final class Rx {
         }
         int[] fixed = new int[1];
         byte[] coded = bits.bytes(Codec.codedLength(len));
-        Channel.scramble(coded);
+        Channel.scramble(coded, ch);
         byte[] msg = Codec.decode(coded, len, fixed);
         if (msg == null) {
             if (DEBUG) System.err.printf("payload failed: snr %.1f dB, adjust %d, symbols %d%n", 10 * Math.log10(errN / Math.max(1e-9, errSum)), adjust, psym);

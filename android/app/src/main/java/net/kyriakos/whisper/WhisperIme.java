@@ -23,7 +23,7 @@ import android.widget.TextView;
  * and keys such as Tab, the arrows, Esc and Ctrl+C.
  */
 public class WhisperIme extends InputMethodService implements Link.Client {
-    private final Writer writer = new Writer();
+    private final Writer writer = new Writer(Link.get().text.mirror);
     private final Handler handler = new Handler(Looper.getMainLooper());
     private TextView status, detail;
     private MeterView meter;
@@ -120,7 +120,7 @@ public class WhisperIme extends InputMethodService implements Link.Client {
     // ---------- Link.Client ----------
 
     @Override public void onFrame(Receiver.Frame f) {
-        writer.frame(f, getCurrentInputConnection(), editor, System.currentTimeMillis());
+        writer.frame(getCurrentInputConnection(), editor, System.currentTimeMillis());
         Recent.add(this, writer.mirror);
         heard = "Hearing the handheld";
         setStatus(heard, Link.get().handheldAnswers ? "It hears this phone too: what arrived is confirmed" : "");

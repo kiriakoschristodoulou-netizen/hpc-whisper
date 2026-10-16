@@ -400,7 +400,7 @@ begin
   end;
   cl := CodedLength(r.len);
   for i := 0 to cl - 1 do coded[i] := r.bitsBuf[i];
-  Scramble(coded, cl);
+  Scramble(coded, cl, r.ch);
   m := @r.q[r.qHead];
   if not PayloadDecode(coded, r.len, m^.data, fixed) then
   begin
@@ -505,7 +505,7 @@ begin
       if r.s = 2 + r.hsym then
       begin
         for i := 0 to HDR_CODED - 1 do h[i] := r.bitsBuf[i];
-        Scramble(h, HDR_CODED);
+        Scramble(h, HDR_CODED, r.ch);
         if not HeaderDecode(h, r.typ, r.len, r.mapNo) then begin Fail(r, 'header'); Exit; end;
         if not r.haveMap[r.mapNo] then begin Fail(r, 'map'); Exit; end;
         r.cur := r.maps[r.mapNo];
