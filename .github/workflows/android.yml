@@ -53,7 +53,7 @@ jobs:
           java -cp cls TurnTest
           java -cp cls LevelTest
           java -cp cls RateTest linux/w3tool
-          java -cp cls MisTest linux/w3tool
+          java -cp cls MisTest linux/w3tool 43200
           java -cp cls AfcTest linux/w3tool 3
           ./linux/pairtool turn turn.wav && java -cp cls LadderTest turn.wav
           java -cp cls AudibleTest linux/w3tool
