@@ -30,7 +30,9 @@ public final class Channel {
         for (int i = 0; i < n; i++) b[i] = from + i * step;
         if (silent) { p[0] = true; p[n - 1] = true; }
         else { for (int i = 0; i < n; i += 10) p[i] = true; p[n - 1] = true; }
-        return new Channel(id, b, p, silent ? 2 : 1, silent, silent ? 0.5f : 0.125f);
+        // 1 bit a carrier everywhere by default: the silent channels arrived at only 7-10 dB from a hard-driven speaker
+        // (device test, 17 October 2026), too little for 2; a link check can still give a clean channel more
+        return new Channel(id, b, p, 1, silent, silent ? 0.5f : 0.125f);
     }
 
     private static final Channel[] ALL = {

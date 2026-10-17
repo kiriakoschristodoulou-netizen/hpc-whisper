@@ -6,6 +6,7 @@ import android.os.Handler;
 import android.os.Looper;
 
 import net.kyriakos.whisper.w3.Channel;
+import net.kyriakos.whisper.w3.Ladder;
 import net.kyriakos.whisper.w3.LevelCheck;
 import net.kyriakos.whisper.w3.Pair;
 
@@ -37,6 +38,10 @@ public final class PairCheck {
     public int state = IDLE;
     public Pair.Result mine, theirs;            // how this phone heard the handheld; how the handheld heard this phone
     public LevelCheck.Result level;             // the last loudness check
+    public Ladder.Result ladder;                // the handheld's loudness ladder, as heard here
+    /** The last test sound heard (what was analysed), to share when it was not understood. */
+    public volatile float[] lastHeard; public volatile int lastHeardRate;
+    private boolean ladderDone;
     public String note = "";
     /** What happened, step by step, for the Pair card. */
     public final List<String> steps = new ArrayList<>();
@@ -133,13 +138,13 @@ public final class PairCheck {
                 }
                 changed();
             }
-            if (state == LISTENING && now > deadline) {
+            if (state == LISTENING && now > deadline && mine == null) {
                 state = DONE;
                 note = "The handheld's test sound was not heard. Is Whisper Tools running on it, within a metre?";
                 step("No test sound from the handheld in 15 s");
                 changed();
             }
-            if (mine != null && played && !reported) {
+            if (mine != null && played && ladderDone && !reported) {
                 reported = true;
                 Link.get().send(Channel.FD, Pair.REPORT, Pair.report(mine));
                 step("Sent the handheld how this phone heard it");
@@ -153,7 +158,7 @@ public final class PairCheck {
     /** The listener heard the first marker of a test sound (each test sound has two, and a 2 kHz step). */
     public void onMarker(long pos) {
         long now = System.currentTimeMillis();
-        if (now - lastMarkerAt < 4500) return;                  // the rest of the same test sound
+        if (now - lastMarkerAt < 8000) return;                  // the rest of the same test sound (and its ladder)
         if (state == LEVEL || state == PLAYING) return;         // our own sound (the microphone is muted anyway)
         lastMarkerAt = now;
         step("Heard the start of a test sound");
@@ -167,14 +172,31 @@ public final class PairCheck {
         if (rate <= 0) return;
         float[] x = new float[rate * 42 / 10];
         int n = l.ringCopy(pos - rate * 7L / 10, x, x.length);
+        lastHeard = java.util.Arrays.copyOf(x, n); lastHeardRate = rate;
         Pair.Result r = Pair.analyze(x, n, rate);
-        if (!r.found) { step("It was not a whole test sound (or too faint to measure)"); changed(); return; }
+        if (!r.found) { step("It was not a whole test sound: " + r.why + ". (Share it with the button below.)"); changed(); return; }
         mine = r; lastMineAt = System.currentTimeMillis();
-        step("Measured the handheld's test sound");
+        ladderDone = false;
+        step("Measured the handheld's test sound; now its loudness steps...");
+        // the handheld's loudness ladder follows its test sound: read it once it has ended, then answer
+        final long a = pos - rate * 7L / 10 + r.aAt;                   // marker A, in the ring
+        main.postDelayed(() -> readLadder(a, r.scale10k), 3700);
+        changed();
+    }
+
+    private void readLadder(long a, int scale10k) {
+        Listener l = Link.get().listener;
+        int rate = l.rate;
+        long from = a + (long) (Pair.TOTAL_MS - Pair.A_MS - Ladder.BEFORE_END_MS) * rate / 1000 * scale10k / 10000;
+        float[] x = new float[rate * 42 / 10];
+        int n = l.ringCopy(from, x, x.length);
+        ladder = Ladder.read(x, n, rate);
+        if (mine != null) { mine.ladder = ladder.found ? ladder.choice : -1; mine.ladderQ = ladder.found ? (int) Math.round(ladder.qDb[ladder.choice]) : 0; }
+        if (ladder.found) step(String.format(java.util.Locale.US, "The handheld's loudness: step %d of %d (%.0f dB clean)", ladder.choice + 1, Ladder.STEPS, ladder.qDb[ladder.choice]));
+        else step("The handheld's loudness steps were not read: " + ladder.why);
+        ladderDone = true;
         if (state == IDLE || state == DONE) {
-            // the handheld started: our turn (its loudness check is skipped, to answer in time)
-            steps.clear();
-            step("The handheld started pairing; measured its test sound");
+            // the handheld started: our turn now that its sound has ended (this phone's loudness check is skipped, to answer in time)
             theirs = null; reported = false;
             playPattern("Heard the handheld's test sound; now playing this phone's...");
         } else if (state == LISTENING) state = DONE;

@@ -33,7 +33,7 @@ public class TurnTest {
     /** One run; returns {answers sent, answers heard, phone talking over the handheld}. */
     static int[] run(boolean old, long seed) {
         Random rnd = new Random(seed);
-        int listen = old ? 0 : 1100;                 // the handheld's listening window after a text frame
+        int listen = old ? 0 : 1500;                 // the handheld's listening window after a text frame
         // phone: from the answer to its sound (3.3 also waited 450 ms of quiet, not 200: the 250 more are added here)
         // 3.5 keeps the buffer full again (about 250 ms) and shortens its wait by the delay it measures
         int phoneDelay = (old ? 300 + 250 : 250) + EXTRA;
@@ -43,7 +43,7 @@ public class TurnTest {
         // typing: bursts of keys, 5 a second, with pauses
         List<Integer> keys = new ArrayList<>();
         int t = 500;
-        while (t < 25000) { int burst = 3 + rnd.nextInt(15); for (int i = 0; i < burst; i++) { keys.add(t); t += 120 + rnd.nextInt(160); } t += 500 + rnd.nextInt(2500); }
+        while (t < 21000) { int burst = 3 + rnd.nextInt(15); for (int i = 0; i < burst; i++) { keys.add(t); t += 120 + rnd.nextInt(160); } t += 500 + rnd.nextInt(2500); }
         int typed = 0, sentL = 0, acked = 0;
         long hhTalkFrom = -1, hhTalkTo = -1;        // the handheld's current turn (speaker on, microphone closed)
         long micOpenAt = 0;

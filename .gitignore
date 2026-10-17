@@ -19,3 +19,5 @@ android/app/build/
 *.ppu
 tests/w3/clsw/
 tests/arm/u/
+tests/w3/ua/
+tests/w3/turn.wav

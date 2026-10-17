@@ -51,7 +51,8 @@ var
   { set before AudioStart }
   NotifyWnd: HWND = 0;
   NotifyMsg: UINT = 0;
-  InRate100: Int64 = 4323000;          { the microphone's real rate x 100: a first guess, then measured }
+  InRate100: Int64 = 0;                { the microphone's real rate x 100 (0 = not known: the rate it claims) }
+  RateSource: Integer = 0;             { 0 = what it claims, 1 = measured, 2 = calibrated by Pair (then saved) }
   ListenFast: Boolean = False;         { also listen on the fast down channel (files, remote, link check) }
   FullDuplex: Boolean = False;         { keep the microphone open while playing (sound chips that can) }
   { state, for the screen }
@@ -76,6 +77,8 @@ var
 procedure AudioResolve;
 procedure AudioStart;
 procedure AudioStop;
+{ the microphone's rate (x 100) measured by Pair against the phone's clock }
+procedure AudioCalibrate(r100: Int64);
 { queue a frame (44,100 samples/s); False when the queue is full }
 function AudioSend(const x: TSamplesArr): Boolean;
 function AudioQueued: Integer;                       { frames waiting or sounding; 0 = quiet }
@@ -440,20 +443,29 @@ end;
 
 { ---------- listening ---------- }
 
+{ a measurement of the microphone's rate (x 100). The first ones replace the rate the handheld claims; once
+  the rate is known (measured or calibrated by Pair), a measurement more than 1 % away is only shown (RateOdd),
+  and closer ones are smoothed in. }
 procedure SetRate(r100: Int64);
 begin
-  if Abs(r100 - LastSet) * 1000 > LastSet then
-  begin
-    InRate100 := r100; LastSet := r100; RsSetRates(Rs, InRate100, Int64(MRATE) * 100);
-  end
-  else if Abs(r100 - LastSet) * 10000 > LastSet then
-  begin
-    InRate100 := (InRate100 * 3 + r100) div 4; LastSet := InRate100; RsSetRates(Rs, InRate100, Int64(MRATE) * 100);
-  end;
+  if (RateSource > 0) and (Abs(r100 - InRate100) * 100 > InRate100) then begin RateOdd := r100; Exit; end;
+  RateOdd := 0;
+  if RateSource = 0 then begin InRate100 := r100; RateSource := 1; end
+  else if Abs(r100 - InRate100) * 10000 > InRate100 then InRate100 := (InRate100 * 3 + r100) div 4
+  else Exit;
+  LastSet := InRate100; RsSetRates(Rs, InRate100, Int64(MRATE) * 100);
+end;
+
+{ Pair measured the rate against the phone's clock: it wins, whatever was measured }
+procedure AudioCalibrate(r100: Int64);
+begin
+  InRate100 := r100; RateSource := 2; RateOdd := 0;
+  RateSamples := 0; RateMs := 0;                    { measurements start again from here }
+  LastSet := r100; RsSetRates(Rs, InRate100, Int64(MRATE) * 100);
 end;
 
 var
-  SessT0: LongWord; SessCount: Int64; SessOn: Boolean;
+  SessT0, SessLast: LongWord; SessCount: Int64; SessOn: Boolean;
   PeakAt: LongWord; Pk: Integer;
   Conv: array[0..IN_N * 2] of SmallInt;
 
@@ -470,25 +482,27 @@ begin
   behind := True;
   for i := 1 to IN_NBUF - 1 do if (InHdr[(k + i) mod IN_NBUF].flags and 1) = 0 then behind := False;
   if behind then Inc(Overruns);
-  { the rate: samples against the clock, from 1 s into each listening turn, over all of them }
+  { the rate: samples against the clock, from half a second into each listening turn, over all of them.
+    Only whole buffers count, each at the moment it arrived: the samples counted after the first buffer
+    arrived, over the time to the last one (counting to the moment the microphone closed instead left out
+    the part-filled last buffer, and made every turn look slow: 43,064 for about 43,230). }
   if not SessOn then
   begin
     SessCount := SessCount + n;
-    if SessCount >= IN_RATE then begin SessOn := True; SessT0 := now; SessCount := 0; end;
+    if SessCount >= IN_RATE div 2 then begin SessOn := True; SessT0 := now; SessLast := now; SessCount := 0; end;
   end
   else if behind then begin SessOn := False; SessCount := 0; end
   else
   begin
-    SessCount := SessCount + n;
+    SessCount := SessCount + n; SessLast := now;
     ms := now - SessT0;
-    if ms >= 2000 then
+    if (ms >= 1000) and (RateMs + ms >= 8000) then
     begin
       r100 := (RateSamples + SessCount) * 100000 div (RateMs + ms);
-      if RateMs + ms >= 8000 then
-      begin
-        if (r100 >= 4200000) and (r100 <= 4550000) then begin SetRate(r100); RateMeasured := True; end
-        else RateOdd := r100;
-      end;
+      { what the sound card claims, give or take 5 %: anything else is a broken measurement }
+      if (r100 * 20 >= Int64(IN_RATE) * 100 * 19) and (r100 * 20 <= Int64(IN_RATE) * 100 * 21) then
+      begin SetRate(r100); RateMeasured := True; end
+      else RateOdd := r100;
     end;
   end;
   { loudness for the screen }
@@ -524,8 +538,8 @@ var ms: Int64;
 begin
   if SessOn then
   begin
-    ms := GetTickCount - SessT0;
-    if ms >= 2000 then begin RateSamples := RateSamples + SessCount; RateMs := RateMs + ms; end;
+    ms := SessLast - SessT0;
+    if ms >= 1000 then begin RateSamples := RateSamples + SessCount; RateMs := RateMs + ms; end;
   end;
   SessOn := False; SessCount := 0;
 end;
@@ -654,6 +668,7 @@ begin
   if not InitDone then begin InitializeCriticalSection(Lock); InitDone := True; end;
   Quit := False;
   RxInit(RxSD, CH_SD); RxInit(RxFD, CH_FD);
+  if InRate100 <= 0 then InRate100 := Int64(IN_RATE) * 100;     { not known yet: what it claims }
   RsInit(Rs, InRate100, Int64(MRATE) * 100, True);
   LastSet := InRate100;
   { the lead-in: a quiet 21.7 kHz tone, faded in and out (inaudible; it only wakes the sound path) }

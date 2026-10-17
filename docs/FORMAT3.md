@@ -16,8 +16,9 @@ All sound is made and read at a **modem rate of 51,200 samples per second**,
 whatever rate the device itself uses: a sender makes its symbols at 51,200
 and converts them to its own rate; a receiver converts what it hears to
 51,200. The conversion uses the device's **real** rate, measured, not the
-rate it claims: the HP Jornada 720 says 44,100 when recording but delivers
-about 43,230 to 43,310 samples per second (1.8 % fewer).
+rate it claims: a handheld may claim 44,100 when recording and deliver a
+little less (the HP Jornada 720 tested delivered 1.8 % fewer). Each device's
+rate is its own, so it is never assumed: section 7 says how it is found.
 
 - **Symbol**: 512 samples (10 ms) plus a cyclic prefix of 128 samples
   (2.5 ms), 640 samples (12.5 ms) in all. Carrier *b* is at *b* × 100 Hz.
@@ -33,9 +34,9 @@ about 43,230 to 43,310 samples per second (1.8 % fewer).
 
 | Channel | Direction | Carriers (bins) | Count | Pilots (indices) | Default bits |
 | --- | --- | --- | --- | --- | --- |
-| SU narrow (default) | handheld → phone | even bins 200–212 (20.0–21.2 kHz) | 7 | 0, 6 | 2 |
-| SU wide | handheld → phone | even bins 182–212 (18.2–21.2 kHz) | 16 | 0, 15 | 2 |
-| SD | phone → handheld | even bins 200–212 (20.0–21.2 kHz) | 7 | 0, 6 | 2 |
+| SU narrow (default) | handheld → phone | even bins 200–212 (20.0–21.2 kHz) | 7 | 0, 6 | 1 |
+| SU wide | handheld → phone | even bins 182–212 (18.2–21.2 kHz) | 16 | 0, 15 | 1 |
+| SD | phone → handheld | even bins 200–212 (20.0–21.2 kHz) | 7 | 0, 6 | 1 |
 | FU | handheld → phone | bins 10–189 (1.0–18.9 kHz) | 180 | every 10th, and the last | 1 |
 | FD | phone → handheld | bins 5–119 (0.5–11.9 kHz) | 115 | every 10th, and the last | 1 |
 
@@ -76,7 +77,8 @@ and are never clipped: clipping a sound near 20 kHz makes harmonics that fold
 back to 6–12 kHz, where they are heard (device test, 16 October 2026). Up to
 3 kHz below its band, a silent frame stays at least 55 dB under its own band,
 as sent at the device's rate (`tests/w3/AudibleTest`, both programs). Defaults:
-29,000 of 32,767 on the handheld; on the phone the level its loudness check
+on the handheld the step its loudness ladder chose (section 7), 14,500 of
+32,767 until then; on the phone the level its loudness check
 chose (section 7), 0.45 until then.
 
 **Fast channels** (a soft hiss by design) are scaled so that their RMS level
@@ -241,7 +243,7 @@ SU and SD share a band, and a device hears its own sound loudly. So:
   phone's sound. The phone keeps
   listening while it plays on FD (another band), so taps and answers from
   the handheld reach it during a file or the remote's screen.
-- After each TEXT frame the handheld listens for 1.1 s (from when its
+- After each TEXT frame the handheld listens for 1.5 s (from when its
   microphone is open again) before it sends anything else but an answer;
   the window ends early when the phone's answer arrives.
 - The phone answers (TEXT_ACK, FILE_NEED, MAP) so that its answer sounds
@@ -302,22 +304,21 @@ no frame gets through. Either side starts it (Pair on its Link screen).
 | From (ms) | Length | Sound |
 | --- | --- | --- |
 | 0 | 150 | lead-in, 21.7 kHz, 1,000 |
-| 150 | 250 | marker A, 2 kHz, 16,000 |
+| 150 | 250 | marker A, 2 kHz, 9,000 |
 | 400 | 100 | silence |
-| 500 | 32 × 70 | steps, 11,000 each: 500, 1,000, 1,500, 2,000, 3,000 … 17,000 (every 1,000), 17,500, 18,000, 18,500, 19,000, 19,400, 19,800, 20,200, 20,400, 20,600, 20,800, 21,000, 21,200, 21,500 Hz |
+| 500 | 32 × 70 | steps, 6,000 each: 500, 1,000, 1,500, 2,000, 3,000 … 17,000 (every 1,000), 17,500, 18,000, 18,500, 19,000, 19,400, 19,800, 20,200, 20,400, 20,600, 20,800, 21,000, 21,200, 21,500 Hz |
 | 2,740 | 100 | silence |
-| 2,840 | 250 | marker B, 2 kHz, 16,000 |
+| 2,840 | 250 | marker B, 2 kHz, 9,000 |
 | 3,090 | 100 | silence |
 
 Every tone fades in and out over 5 ms.
 
 **Hearing it.** The listener watches 2 kHz in 10 ms blocks; 150 ms above ten
-times the background is marker A. For 4.5 s after that it takes no other
+times the background is marker A. For 4.5 s after that (the phone: 8 s, see below) it takes no other
 marker (marker B and the 2 kHz step would otherwise look like new starts). 3.4 s later it reads its recording from
 0.7 s before A, finds both markers exactly (5 ms Goertzel blocks, runs of at
 least 120 ms above a quarter of the peak), and takes *scale* = (B − A) / 2.69 s:
-the ratio of the listener's real sample rate to the rate it believes (the
-handheld sets its microphone rate from it). Each step is measured over its
+the ratio of the listener's real sample rate to the rate it believes. Each step is measured over its
 middle 50 ms at f / scale and compared with the same frequency in the
 background just before the sound: the signal-to-noise ratio in dB.
 
@@ -336,7 +337,8 @@ measured the other and played, it sends PAIR_REPORT.
 
 **PAIR_REPORT** (0x34): version (1) = 1, steps (1) = 32, then 32 bytes of
 dB + 20 (0 to 255), scale × 10,000 (2), the peak in % of full scale (1),
-clipped (1, 0 or 1).
+clipped (1, 0 or 1), the loudness step chosen + 1 (1, 0 = none), how clean
+that step arrived in dB + 20 (1): 40 bytes in all.
 
 **Decisions.**
 
@@ -349,3 +351,30 @@ clipped (1, 0 or 1).
   below 15 dB, while 1–12 kHz is at least 15 dB: it types on FU.
 
 The decisions are kept until the next pairing.
+
+**The loudness ladder (the handheld, after its test sound).** 150 ms after
+its test sound the handheld plays a TRAIN frame on SU narrow at each of the
+peaks 29,000, 20,500, 14,500, 10,250, 7,250 and 5,100 (3 dB apart), with
+150 ms between them; its whole turn is 6.65 s. It cannot judge them itself
+(its microphone is closed while it plays). The phone reads the recording from
+0.3 s before the end of the test sound, finds the six bursts in the silent
+band, and lets its own receiver read each TRAIN frame: the average SNR of the
+data carriers, which counts the room's noise and the speaker's distortion
+alike. From the quietest step it read, it goes one step louder only while
+that step reads at least 2.5 dB better (less means the speaker already bends),
+and stops at 22 dB; then, while the chosen step raises the audible range
+(1–17 kHz) by 3 dB or more over the room, it takes the next quieter one. The
+choice goes back in PAIR_REPORT; the handheld keeps it as its silent
+loudness, also after it is closed. A phone that starts pairing waits until it
+has read the handheld's ladder before it reports. (`tests/w3/LadderTest`.)
+
+**The handheld's microphone rate.** Until it is known, the handheld uses the
+rate its sound card claims. While listening it measures the rate from whole
+buffers delivered (a stretch of at least 8 s; a result more than 5 % from the
+claim is ignored). Pairing measures it exactly (*scale*, between 0.95 and
+1.05). The rate found is kept, also after the program is closed; once known, a
+later measurement that differs by more than 1 % is shown on the Link screen
+but not used.
+
+**Markers on the phone.** For 8 s after marker A the phone takes no other
+marker (the handheld's ladder would otherwise look like a new start).

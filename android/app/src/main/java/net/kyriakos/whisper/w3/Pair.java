@@ -14,12 +14,14 @@ public final class Pair {
     public static final int LEAD_MS = 150, MARK_MS = 250, GAP_MS = 100, STEP_MS = 70, TAIL_MS = 100, MARK_HZ = 2000, LEAD_HZ = 21700;
     public static final int A_MS = LEAD_MS, STEPS_MS = A_MS + MARK_MS + GAP_MS, B_MS = STEPS_MS + N * STEP_MS + GAP_MS,
             AB_MS = B_MS - A_MS, TOTAL_MS = B_MS + MARK_MS + TAIL_MS;
-    public static final int REPORT = 0x34, REPORT_LEN = 38;
+    public static final int REPORT = 0x34, REPORT_LEN = 40;   // 38 measurements, the ladder step to use + 1 (0 = none), its quality
 
     public static final class Result {
         public boolean found, clipped;
         public final int[] snr10 = new int[N];   // tenths of a dB above the background
         public int scale10k, peak, aAt;
+        public int ladder = -1, ladderQ;          // the loudness the other side should use (its ladder step), and how clean it was
+        public String why = "";                   // why it was not found
         public int band10(int loHz, int hiHz) {
             int s = 0, k = 0;
             for (int i = 0; i < N; i++) if (HZ[i] >= loHz && HZ[i] <= hiHz) { s += snr10[i]; k++; }
@@ -31,9 +33,10 @@ public final class Pair {
     public static float[] pattern(int rate) {
         float[] x = new float[(int) ((long) TOTAL_MS * rate / 1000)];
         tone(x, rate, 0, LEAD_MS, LEAD_HZ, 1000 / 32768f);
-        tone(x, rate, A_MS, MARK_MS, MARK_HZ, 16000 / 32768f);
-        for (int k = 0; k < N; k++) tone(x, rate, STEPS_MS + k * STEP_MS, STEP_MS, HZ[k], 11000 / 32768f);
-        tone(x, rate, B_MS, MARK_MS, MARK_HZ, 16000 / 32768f);
+        // quieter than at first (16,000 and 11,000): played loud, a handheld's amplifier gave up after the first marker
+        tone(x, rate, A_MS, MARK_MS, MARK_HZ, 9000 / 32768f);
+        for (int k = 0; k < N; k++) tone(x, rate, STEPS_MS + k * STEP_MS, STEP_MS, HZ[k], 6000 / 32768f);
+        tone(x, rate, B_MS, MARK_MS, MARK_HZ, 9000 / 32768f);
         return x;
     }
 
@@ -76,11 +79,11 @@ public final class Pair {
     public static Result analyze(float[] x, int n, int rate) {
         Result r = new Result();
         int a = findMarker(x, n, rate, 0);
-        if (a < 0) return r;
+        if (a < 0) { r.why = "its first beep was not found"; return r; }
         int b = findMarker(x, n, rate, a + (int) ((long) (AB_MS - 300) * rate / 1000));
-        if (b < 0) return r;
+        if (b < 0) { r.why = "its second beep was not found (the sound stopped, or was too faint)"; return r; }
         double s = (b - a) * 1000.0 / ((double) AB_MS * rate);
-        if (s < 0.95 || s > 1.05) return r;
+        if (s < 0.95 || s > 1.05) { r.why = String.format(java.util.Locale.US, "its two beeps were %.2f s apart, not 2.69", (b - a) / (double) rate); return r; }
         r.scale10k = (int) Math.round(s * 10000); r.aAt = a;
         int bg1 = a - (LEAD_MS + 40) * rate / 1000, bg0 = Math.max(0, bg1 - 300 * rate / 1000);
         int half = 25 * rate / 1000;
@@ -103,6 +106,7 @@ public final class Pair {
         b[0] = 1; b[1] = (byte) N;
         for (int i = 0; i < N; i++) b[2 + i] = (byte) Math.max(0, Math.min(255, Math.round(r.snr10[i] / 10f) + 20));
         b[34] = (byte) (r.scale10k >> 8); b[35] = (byte) r.scale10k; b[36] = (byte) r.peak; b[37] = (byte) (r.clipped ? 1 : 0);
+        b[38] = (byte) (r.ladder + 1); b[39] = (byte) Math.max(0, Math.min(255, r.ladderQ));
         return b;
     }
 
@@ -112,6 +116,7 @@ public final class Pair {
         for (int i = 0; i < N; i++) r.snr10[i] = ((b[2 + i] & 255) - 20) * 10;
         r.scale10k = (b[34] & 255) << 8 | (b[35] & 255);
         r.peak = b[36] & 255; r.clipped = (b[37] & 1) != 0; r.found = true;
+        r.ladder = (b[38] & 255) - 1; r.ladderQ = b[39] & 255;
         return r;
     }
 }

@@ -93,7 +93,9 @@ begin
     while i < n do begin Chans[id].pilot[i] := True; Inc(i, 10); end;
     Chans[id].pilot[n - 1] := True;
   end;
-  if isSilent then Chans[id].defBits := 2 else Chans[id].defBits := 1;
+  { 1 bit a carrier everywhere by default: the silent channels arrived at only 7-10 dB from a hard-driven
+    speaker (device test, 17 October 2026), too little for 2; a link check can still give a clean channel more }
+  Chans[id].defBits := 1;
   Chans[id].syncStep := 2 * step;
   { silent: strong, the speakers are weak above 20 kHz (Jornada 720 test, 15 October); fast: a quarter }
   if isSilent then Chans[id].level := 29000 else Chans[id].level := 8192;

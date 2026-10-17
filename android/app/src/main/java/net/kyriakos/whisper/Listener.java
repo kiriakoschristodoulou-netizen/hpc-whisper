@@ -167,7 +167,8 @@ public final class Listener {
                 });
             }
         }
-        ring = new float[rate * 6]; ringPos = 0; mkS1 = mkS2 = mkBg = 0; mkN = mkRun = 0;
+        ring = new float[rate * 9];                 // 9 s: the handheld's test sound and its loudness ladder
+        ringPos = 0; mkS1 = mkS2 = mkBg = 0; mkN = mkRun = 0;
         mkCoef = 2 * Math.cos(2 * Math.PI * 2000 / rate);
         thread = new Thread(() -> loop(rec, ch, cb), "whisper-listen");
         thread.setPriority(Thread.MAX_PRIORITY);

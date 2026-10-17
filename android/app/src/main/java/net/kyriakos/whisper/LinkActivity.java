@@ -57,6 +57,7 @@ public class LinkActivity extends ToolActivity implements PairCheck.Watcher {
         pairText = ui.text(pc, "", 14, t().ink, false);
         pairText.setPadding(0, ui.dp(6), 0, 0);
         ui.button(pc, "Pair", true, v -> pair());
+        ui.button(pc, "Share the last test sound heard", false, v -> shareTestSound());
 
         LinearLayout chk = ui.card("Link check");
         ui.body(chk, "Measures the fast channels, which carry files and the remote, in both directions: a soft hiss from "
@@ -104,6 +105,29 @@ public class LinkActivity extends ToolActivity implements PairCheck.Watcher {
 
     @Override public void onPair() { runOnUiThread(this::showPair); }
 
+    /** The last test sound this phone heard (what it analysed), as a WAV to send, for when it was not understood. */
+    private void shareTestSound() {
+        PairCheck p = PairCheck.get();
+        float[] x = p.lastHeard;
+        if (x == null || x.length == 0) { pairText.setText("No test sound heard yet."); return; }
+        short[] pcm = new short[x.length];
+        for (int i = 0; i < x.length; i++) pcm[i] = (short) Math.max(-32767, Math.min(32767, Math.round(x[i] * 32767)));
+        try {
+            File f = new File(getCacheDir(), "whisper-tools-test-sound.wav");
+            writeWav(f, pcm, p.lastHeardRate);
+            saveToDownloads(f);
+            Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".files", f);
+            Intent i = new Intent(Intent.ACTION_SEND);
+            i.setType("application/octet-stream");
+            i.putExtra(Intent.EXTRA_STREAM, uri);
+            i.putExtra(Intent.EXTRA_SUBJECT, "Whisper Tools test sound");
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(Intent.createChooser(i, "Send the test sound"));
+        } catch (Exception e) {
+            pairText.setText("The test sound could not be saved: " + e.getMessage());
+        }
+    }
+
     private void showPair() {
         PairCheck p = PairCheck.get();
         StringBuilder s = new StringBuilder(p.note);
@@ -114,6 +138,11 @@ public class LinkActivity extends ToolActivity implements PairCheck.Watcher {
                 ? "\nDecided: the silent band does not reach the handheld, so this phone answers on the fast channel (audible hiss)."
                 : "\nDecided: this phone answers on the silent channel.");
         s.append(String.format(Locale.US, "\nThis phone's silent sound: %d %% of full loudness", Math.round(Link.get().silentLevel * 100)));
+        if (p.ladder != null && p.ladder.found) {
+            s.append("\nThe handheld's loudness steps, as heard here (dB clean):");
+            for (int i = 0; i < p.ladder.qDb.length; i++) s.append(i == 0 ? " " : ", ").append(p.ladder.qDb[i] < -90 ? "-" : String.valueOf(Math.round(p.ladder.qDb[i])));
+            s.append(String.format(Locale.US, "; it will use step %d", p.ladder.choice + 1));
+        }
         if (!p.steps.isEmpty()) {
             s.append("\n\nSteps:");
             for (String st : p.steps) s.append("\n").append(st);

@@ -22,7 +22,11 @@ const
   PAIR_AB_MS = PAIR_B_MS - PAIR_A_MS;                                          { 2,690 ms }
   PAIR_TOTAL_MS = PAIR_B_MS + PAIR_MARK_MS + PAIR_TAIL_MS;                     { 3,190 ms }
   PAIR_REPORT = $34;
-  PAIR_REPORT_LEN = 38;
+  PAIR_REPORT_LEN = 40;          { 38 measurements, then the loudness the sender should use: ladder step + 1 (0 = none), its quality }
+  { the loudness ladder after the handheld's test sound: its silent channel at falling peaks, each as a TRAIN frame }
+  LADDER_N = 6;
+  LADDER_GAP_MS = 150;
+  PAIR_LADDER: array[0..LADDER_N - 1] of Integer = (29000, 20500, 14500, 10250, 7250, 5100);   { about 3 dB apart }
 
 type
   TPairResult = record
@@ -32,6 +36,8 @@ type
     peak: Integer;                            { loudest sample, % of full scale }
     clipped: Boolean;
     aAt: Integer;                             { where marker A starts, in samples }
+    ladder: Integer;                          { the loudness ladder step the other side should use, -1 = none }
+    ladderQ: Integer;                         { how clean it arrived (dB) }
   end;
   TSmallArr = array of SmallInt;
 
@@ -41,12 +47,14 @@ function PairPattern(rate: Integer): TSmallArr;
 function PairAnalyze(const x: array of SmallInt; n, rate: Integer; var res: TPairResult): Boolean;
 function PairReportMake(const res: TPairResult; var b: array of Byte): Integer;
 function PairReportRead(const b: array of Byte; n: Integer; var res: TPairResult): Boolean;
+{ the loudness ladder at 44,100 samples/s: for each peak, a TRAIN frame of the silent channel ch, then a gap }
+function PairLadder(ch: Integer; const peaks: array of Integer): TSmallArr;
 { the average of the tones from loHz to hiHz, tenths of a dB }
 function PairBand10(const res: TPairResult; loHz, hiHz: Integer): Integer;
 
 implementation
 
-uses w3dsp;
+uses w3dsp, w3core, w3tx;
 
 const Q = 16384;
 
@@ -87,9 +95,10 @@ begin
   SetLength(Result, n);
   for i := 0 to n - 1 do Result[i] := 0;
   Tone(0, PAIR_LEAD_MS, LEAD_HZ, 1000);                  { keeps the sound path awake, inaudible }
-  Tone(PAIR_A_MS, PAIR_MARK_MS, PAIR_MARK_HZ, 16000);
-  for k := 0 to PAIR_N - 1 do Tone(PAIR_STEPS_MS + k * PAIR_STEP_MS, PAIR_STEP_MS, PAIR_HZ[k], 11000);
-  Tone(PAIR_B_MS, PAIR_MARK_MS, PAIR_MARK_HZ, 16000);
+  { quieter than at first (16,000 and 11,000): played loud, a handheld's amplifier gave up after the first marker }
+  Tone(PAIR_A_MS, PAIR_MARK_MS, PAIR_MARK_HZ, 9000);
+  for k := 0 to PAIR_N - 1 do Tone(PAIR_STEPS_MS + k * PAIR_STEP_MS, PAIR_STEP_MS, PAIR_HZ[k], 6000);
+  Tone(PAIR_B_MS, PAIR_MARK_MS, PAIR_MARK_HZ, 9000);
 end;
 
 { the power of one frequency over x[a..b), Goertzel; hz may be fractional (x 100) }
@@ -157,6 +166,7 @@ function PairAnalyze(const x: array of SmallInt; n, rate: Integer; var res: TPai
 var a, b, dummy, i, c, half, bg0, bg1, pk: Integer; s10k: Int64; ps, pn: Int64; hz100: Int64; db: Integer;
 begin
   FillChar(res, SizeOf(res), 0);
+  res.ladder := -1;
   Result := False;
   if not FindMarker(x, n, rate, 0, a, dummy) then Exit;
   if not FindMarker(x, n, rate, a + Int64(PAIR_AB_MS - 300) * rate div 1000, b, dummy) then Exit;
@@ -189,6 +199,24 @@ begin
   Result := True;
 end;
 
+function PairLadder(ch: Integer; const peaks: array of Integer): TSmallArr;
+var t: TSamples; i, k, n, at, gap, top: Integer;
+begin
+  t := MakeTrain(ch, 29000);                                 { made once, then scaled: making it costs time }
+  top := 1;
+  for i := 0 to High(t) do if Abs(t[i]) > top then top := Abs(t[i]);
+  gap := LADDER_GAP_MS * 44100 div 1000;
+  n := Length(peaks) * (Length(t) + gap);
+  SetLength(Result, n);
+  for i := 0 to n - 1 do Result[i] := 0;
+  at := 0;
+  for k := 0 to High(peaks) do
+  begin
+    for i := 0 to High(t) do Result[at + i] := Int64(t[i]) * peaks[k] div top;
+    Inc(at, Length(t) + gap);
+  end;
+end;
+
 function PairBand10(const res: TPairResult; loHz, hiHz: Integer): Integer;
 var i, s, k: Integer;
 begin
@@ -210,6 +238,8 @@ begin
   end;
   b[34] := (res.scale10k shr 8) and 255; b[35] := res.scale10k and 255;
   b[36] := res.peak; b[37] := Ord(res.clipped);
+  if res.ladder >= 0 then b[38] := res.ladder + 1 else b[38] := 0;
+  if res.ladderQ < 0 then b[39] := 0 else if res.ladderQ > 255 then b[39] := 255 else b[39] := res.ladderQ;
   Result := PAIR_REPORT_LEN;
 end;
 
@@ -222,6 +252,7 @@ begin
   for i := 0 to PAIR_N - 1 do res.snr10[i] := (b[2 + i] - 20) * 10;
   res.scale10k := (b[34] shl 8) or b[35];
   res.peak := b[36]; res.clipped := (b[37] and 1) <> 0;
+  res.ladder := b[38] - 1; res.ladderQ := b[39];
   res.found := True;
   Result := True;
 end;

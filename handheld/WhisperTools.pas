@@ -1,5 +1,5 @@
 program WhisperTools;
-{ Whisper Tools 3.5, for Windows CE handheld PCs (made on an HP Jornada 720).
+{ Whisper Tools 3.6, for Windows CE handheld PCs (made on an HP Jornada 720).
 
   Type here and the text goes into any app on your phone, with Tab, the
   arrows, Ctrl+C and the other keys; the phone confirms what has arrived.
@@ -22,7 +22,7 @@ program WhisperTools;
 uses Windows, w3core, w3dsp, w3tx, w3rx, waudio, wtext, wfile, wscreen, wwav, wimg, winf, wmodem, wpair;
 
 const
-  VERSION = '3.5';
+  VERSION = '3.6';
   CREATOR = 'Kyriakos Christodoulou';
   CLSNAME: UnicodeString = 'WhisperTools';
   APPNAME: UnicodeString = 'Whisper Tools';
@@ -392,8 +392,12 @@ begin
   CfgPath := ProgDir + CFGNAME;
 end;
 
+{ the loudness of the silent channel (peak, of 32767): chosen by Pair, from what the phone heard (LevelSource 1),
+  or a moderate one until then. The speaker distorts when driven hard, and its amplifier may give up. }
+var SilentPeak: Integer = 14500; LevelSource: Integer = 0;
+
 procedure LoadCfg;
-var h: THandle; b: array[0..15] of Byte; got: DWORD;
+var h: THandle; b: array[0..15] of Byte; got: DWORD; r: LongWord;
 begin
   h := CreateFileW(PWideChar(CfgPath), GENERIC_READ, FILE_SHARE_READ, nil, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
   if h = INVALID_HANDLE_VALUE then Exit;
@@ -414,6 +418,14 @@ begin
       if ReadFile(h, {$ifdef wince}@b{$else}b{$endif}, 3, {$ifdef wince}@got{$else}got{$endif}, nil) and (got = 3) and (b[0] = $34) then
       begin
         TypingOnFast := b[1] <> 0; FastAlways := b[2] <> 0;
+        got := 0;
+        if ReadFile(h, {$ifdef wince}@b{$else}b{$endif}, 8, {$ifdef wince}@got{$else}got{$endif}, nil) and (got = 8) and (b[0] = $36) then
+        begin
+          r := b[1] or (LongWord(b[2]) shl 8) or (LongWord(b[3]) shl 16) or (LongWord(b[4]) shl 24);
+          if (r > 0) and (b[5] in [1, 2]) and (Int64(r) * 20 >= Int64(IN_RATE) * 100 * 19) and (Int64(r) * 20 <= Int64(IN_RATE) * 100 * 21) then
+          begin InRate100 := r; RateSource := b[5]; end;
+          if (b[6] >= 20) and (b[6] <= 230) and (b[7] = 1) then begin SilentPeak := b[6] * 128; LevelSource := 1; end;
+        end;
       end;
     end;
   end;
@@ -421,15 +433,19 @@ begin
 end;
 
 procedure SaveCfg;
-var h: THandle; b: array[0..12] of Byte; got: DWORD;
+var h: THandle; b: array[0..20] of Byte; got: DWORD; r: LongWord;
 begin
   h := CreateFileW(PWideChar(CfgPath), GENERIC_WRITE, 0, nil, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
   if h = INVALID_HANDLE_VALUE then Exit;
   b[0] := $57; b[1] := Band; b[2] := Speed; b[3] := Volume;
   b[4] := $33; b[5] := Ord(Classic); b[6] := Ord(WideSilent); b[7] := Ord(FastFiles); b[8] := FastLevel; b[9] := Ord(OnCard);
   b[10] := $34; b[11] := Ord(TypingOnFast); b[12] := Ord(FastAlways);
+  { this handheld's own measurements: the microphone's rate (x 100) and the silent loudness }
+  if RateSource > 0 then r := LongWord(InRate100) else r := 0;
+  b[13] := $36; b[14] := r and 255; b[15] := (r shr 8) and 255; b[16] := (r shr 16) and 255; b[17] := r shr 24;
+  b[18] := RateSource; b[19] := SilentPeak div 128; b[20] := LevelSource;
   got := 0;
-  WriteFile(h, {$ifdef wince}@b{$else}b{$endif}, 13, {$ifdef wince}@got{$else}got{$endif}, nil);
+  WriteFile(h, {$ifdef wince}@b{$else}b{$endif}, 21, {$ifdef wince}@got{$else}got{$endif}, nil);
   CloseHandle(h);
 end;
 
@@ -585,7 +601,7 @@ begin
     if HaveFuMap then m := FuMap else StdMap(ch, m);
     lvl := FastLevelQ15;
   end
-  else begin StdMap(ch, m); lvl := 0; end;
+  else begin StdMap(ch, m); lvl := SilentPeak; end;
   if typ = T_TRAIN then x := MakeTrain(ch, lvl)
   else x := MakeFrame(ch, m, typ, p, n, lvl);
   Result := AudioSend(x);
@@ -916,6 +932,9 @@ begin
         HaveTheirs := True;
         { the phone tells how it hears this handheld: typing stays silent only if the silent band gets through }
         TypingOnFast := (PairBand10(PairTheirs, 20200, 21200) < 150) and (PairBand10(PairTheirs, 1000, 12000) >= 150);
+        { and which loudness of the ladder came through cleanest }
+        if (PairTheirs.ladder >= 0) and (PairTheirs.ladder <= High(PAIR_LADDER)) then
+        begin SilentPeak := PAIR_LADDER[PairTheirs.ladder]; LevelSource := 1; end;
         SaveCfg;
       end;
     T_FILE_OFFER: OnOffer(g.msg.data, n);
@@ -1223,7 +1242,7 @@ end;
 { ---------- the pairing check (docs/FORMAT3.md, section 7) ---------- }
 
 procedure StartPair(answering: Boolean);
-var x: TSmallArr; i: Integer; y: TSamples;
+var x, z: TSmallArr; i: Integer; y: TSamples;
 begin
   if (not answering) and ((PairState = 1) or (PairState = 2)) then Exit;   { already pairing: one press is enough }
   PairState := 1; PairPlayed := False; PairReported := False;
@@ -1231,8 +1250,11 @@ begin
   PairNote := 'Playing the test sound (beeps), then listening for the phone''s...';
   FastUntil := GetTickCount + 40000;
   x := PairPattern(OUT_RATE);
-  SetLength(y, Length(x));
+  { then the loudness ladder: the phone hears which loudness comes through cleanest, and says so in its report }
+  z := PairLadder(CH_SU, PAIR_LADDER);
+  SetLength(y, Length(x) + Length(z));
   for i := 0 to High(x) do y[i] := x[i];
+  for i := 0 to High(z) do y[Length(x) + i] := z[i];
   AudioSend(y);
 end;
 
@@ -1274,7 +1296,7 @@ begin
       { the phone's silent band too weak here: it will answer on the fast channel, so that one stays on }
       FastAlways := PairBand10(PairMine, 20000, 21200) < 120;
       { the time between the markers is this microphone's real rate (the phone's clock is good) }
-      if (PairMine.scale10k > 9600) and (PairMine.scale10k < 10300) then InRate100 := Int64(IN_RATE) * PairMine.scale10k div 100;
+      if (PairMine.scale10k > 9500) and (PairMine.scale10k < 10500) then AudioCalibrate(Int64(IN_RATE) * PairMine.scale10k div 100);
       SaveCfg;
       if (PairState = 0) or (PairState = 3) then
       begin
@@ -1309,7 +1331,7 @@ end;
 { ---------- the timer: hearing, answering, sending ---------- }
 
 var PhoneHeardSD: LongWord = 0;
-const LISTEN_MS = 1100;          { listening after each text frame of ours, for the phone's answer (it may take ~0.6 s to sound) }
+const LISTEN_MS = 1500;          { listening after each text frame of ours, for the phone's answer (it may take ~0.6 s to sound, and as long to play) }
 var WaitAnswer: Boolean = False;  { the last turn held a text frame: the phone will confirm it }
 
 procedure Pump;
@@ -1691,8 +1713,13 @@ begin
   if InErr <> '' then Line('Microphone', InErr, COL_FAIL)
   else
   begin
-    s := 'really ' + IU(InRate100 div 100) + ' samples/s';
-    if not RateMeasured and not HaveMine then s := s + ' (a guess until measured)';
+    s := IU(InRate100 div 100) + ' samples/s';
+    case RateSource of
+      0: s := s + ' (what it claims, until measured)';
+      1: s := s + ' (measured)';
+      2: s := s + ' (calibrated by Pair)';
+    end;
+    if RateOdd <> 0 then s := s + '; an odd reading of ' + IU(RateOdd div 100) + ' was not used';
     s := s + ', loudest ' + IU(InPeak * 100 div 32768) + '%';
     if Overruns > 0 then s := s + ', fell behind ' + IU(Overruns) + ' times';
     Line('Microphone', s, COL_TEXT);
@@ -1718,6 +1745,9 @@ begin
   if TypingOnFast then s := 'on the fast channel (a soft hiss): the silent band does not reach the phone'
   else s := 'silent, ' + KHz(100 * Chans[SilentCh].bins[0]) + '-' + KHz(100 * Chans[SilentCh].bins[Chans[SilentCh].n - 1]) + ' kHz';
   Line('Typing goes', s, COL_TEXT);
+  if LevelSource = 1 then s := IU(SilentPeak * 100 div 32767) + '% (chosen by Pair)'
+  else s := IU(SilentPeak * 100 div 32767) + '% (until Pair chooses)';
+  Line('Silent loudness', s, COL_TEXT);
   s := '';
   if FuSpeed <> '' then s := 'to the phone ' + FuSpeed + '  ';
   if FdSpeed <> '' then s := s + 'from it ' + FdSpeed;

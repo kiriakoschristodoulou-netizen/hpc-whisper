@@ -1,4 +1,4 @@
-Whisper Tools 3.5
+Whisper Tools 3.6
 by Kyriakos Christodoulou
 
 Type on a Windows CE handheld PC and the text goes straight into any app
@@ -73,7 +73,10 @@ THE PROGRAM'S OWN SHORTCUTS (on Alt, so every Ctrl key reaches the phone)
 
 SOUND
   First time: on the Link screen press Test speaker (you should hear a
-  beep), then press Pair on the phone, in a quiet room. Typing and the
+  beep), then press Pair on the phone, in a quiet room. Pairing measures
+  this handheld's microphone and finds how loud it should play; both are
+  kept (the Link screen shows them). Pair again in a new place, or if
+  typing stops getting through. Typing and the
   answers are silent (above 20 kHz). Files and the remote's screen use
   the fast channels: a soft hiss while they move, quiet otherwise. Keep
   the phone within about a metre and its media volume at about half.
