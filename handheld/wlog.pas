@@ -1,7 +1,7 @@
 unit wlog;
 { Whisper Tools: the handheld's diagnostics log. Every event of the link is written as one line, with
   the time since the program started (seconds.milliseconds), into "Whisper Tools log.txt" next to the
-  program. Lines collect in memory and go to the file every two seconds, from whichever thread gets
+  program. Lines collect in memory and go to the file every second, from whichever thread gets
   there first (the sound thread too, so a frozen screen still leaves its last seconds in the file).
   The file is kept across starts (a soft reboot loses only the last moments); past 3 MB it starts
   again. }
@@ -12,7 +12,7 @@ uses Windows;
 
 procedure LogStart(const path: UnicodeString; const version: AnsiString);
 procedure Log(const s: AnsiString);
-{ writes what has collected, if two seconds have passed (or now, if force) }
+{ writes what has collected, if a second has passed (or now, if force) }
 procedure LogTick(force: Boolean);
 function LI(i: Int64): AnsiString;
 function LHex(i: Integer): AnsiString;
@@ -162,7 +162,7 @@ var n: Integer; now: LongWord;
 begin
   if not LogOn then Exit;
   now := GetTickCount;
-  if (not force) and (now - LastFlush < 2000) then Exit;
+  if (not force) and (now - LastFlush < 1000) then Exit;
   { one writer at a time; a thread that finds the other writing goes on }
   if not TryEnterCriticalSection(FlushLk) then Exit;
   LastFlush := now;

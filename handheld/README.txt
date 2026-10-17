@@ -1,4 +1,4 @@
-Whisper Tools 3.7
+Whisper Tools 3.8
 by Kyriakos Christodoulou
 
 Type on a Windows CE handheld PC and the text goes straight into any app
@@ -55,7 +55,9 @@ THE HOME SCREEN
               the silent channel (narrow 20.0-21.2 kHz,
               inaudible; or wide 18.2-21.2 kHz, twice as fast, some people
               hear it), files fast or silent, loudness of the fast channel,
-              where received files go, and the Classic band, speed, volume.
+              where received files go, the speaker's rate (the sound chip's
+              own, measured, or 44,100 converted by Windows), and the
+              Classic band, speed, volume.
   6 Exit
 
 KEYS THAT GO TO THE PHONE
@@ -76,7 +78,10 @@ SOUND
   beep), then press Pair on the phone, in a quiet room. Pairing measures
   this handheld's microphone and finds how loud it should play; both are
   kept (the Link screen shows them). Pair again in a new place, or if
-  typing stops getting through. Typing and the
+  typing stops getting through. Once its microphone has been measured
+  (Pair, or a minute of listening) the handheld plays at its sound chip's
+  own rate, which carries the silent channel far better. While a file
+  comes from the phone, the bottom line says how many pieces were heard. Typing and the
   answers are silent (above 20 kHz). Files and the remote's screen use
   the fast channels: a soft hiss while they move, quiet otherwise. Keep
   the phone within about a metre and its media volume at about half.

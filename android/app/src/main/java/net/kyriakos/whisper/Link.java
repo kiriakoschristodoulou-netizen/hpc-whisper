@@ -65,7 +65,7 @@ public final class Link {
         DiagLog.log("link starting (for " + c.getClass().getSimpleName() + ")");
         PairCheck.get().load(app);
         boolean ok = listener.start(app, cb);
-        if (ok) speakerOk = speaker.start(app);
+        if (ok) { raiseVolume(); speakerOk = speaker.start(app); }
         DiagLog.log("link " + (ok ? "started" : "could not start: the microphone did not open") + (ok && !speakerOk ? "; the speaker did not open" : "")
                 + "; silent loudness " + silentLevel + ", answers on fast " + answersOnFast);
         return ok;
@@ -78,6 +78,7 @@ public final class Link {
             main.removeCallbacks(ackCheck);
             listener.stop();
             speaker.stop();
+            restoreVolume();
         }
     }
 
@@ -119,6 +120,59 @@ public final class Link {
 
     private boolean waitingLogged;
 
+    // ---------- the phone's media volume ----------
+    // The handheld hears the phone only if its media volume is up: at least half while connected, and back to
+    // what it was afterwards (a phone left at a low volume could not be heard at all: 3.7 logs).
+    private int volumeBefore = -1, volumeSet = -1;
+
+    private void raiseVolume() {
+        try {
+            android.media.AudioManager am = (android.media.AudioManager) app.getSystemService(Context.AUDIO_SERVICE);
+            int max = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC), cur = am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC);
+            int want = (max + 1) / 2;
+            DiagLog.log("media volume " + cur + " of " + max);
+            if (cur < want) {
+                am.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, want, 0);
+                volumeBefore = cur; volumeSet = want;
+                DiagLog.log("media volume raised to " + want + " of " + max + " while connected");
+            }
+        } catch (Exception e) { DiagLog.log("media volume could not be set: " + e); }
+    }
+
+    private void restoreVolume() {
+        if (volumeBefore < 0) return;
+        try {
+            android.media.AudioManager am = (android.media.AudioManager) app.getSystemService(Context.AUDIO_SERVICE);
+            // only if it is still what this app set (the person may have changed it since)
+            if (am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC) == volumeSet) {
+                am.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, volumeBefore, 0);
+                DiagLog.log("media volume back to " + volumeBefore);
+            }
+        } catch (Exception e) { DiagLog.log("media volume could not be restored: " + e); }
+        volumeBefore = volumeSet = -1;
+    }
+
+    // ---------- answering loud enough ----------
+    // The handheld sends its text again when it did not hear the phone's confirmation. When it repeats text the
+    // phone had already confirmed, the confirmation was too quiet there: the silent channel gets 2 dB louder
+    // (at most once in 4 s, up to 0.6), and the level is kept for next time.
+    private int ackL = -1, ackKnown = -1, ackDoc = -1;
+    private long ackEnd = 0, lastRaise = 0;
+    static final float LEVEL_MAX = 0.6f;
+
+    private void checkRepeat(byte[] p, long now) {
+        if (p.length < 6) return;
+        int doc = p[0] & 255, L = ((p[2] & 255) << 8) | (p[3] & 255);
+        if (doc != ackDoc || L != ackL || ackKnown < L) return;
+        if (now < ackEnd + 300 || now - ackEnd > 8000 || now - lastRaise < 4000) return;
+        if (silentLevel >= LEVEL_MAX) { DiagLog.log("text: the handheld did not hear the confirmation, and the silent channel is already at its loudest"); return; }
+        float was = silentLevel;
+        silentLevel = Math.min(LEVEL_MAX, silentLevel * 1.26f);
+        lastRaise = now;
+        try { app.getSharedPreferences("pair", Context.MODE_PRIVATE).edit().putFloat("silentLevel", silentLevel).apply(); } catch (Exception ignored) { }
+        DiagLog.log(String.format(java.util.Locale.US, "text: the handheld sent again what was confirmed: it did not hear it; silent channel %.2f -> %.2f", was, silentLevel));
+    }
+
     private final Runnable ackCheck = new Runnable() {
         @Override public void run() {
             long now = System.currentTimeMillis();
@@ -130,7 +184,10 @@ public final class Link {
             text.quietMs = Math.max(30, 260 - speaker.delayMs());
             byte[] a = text.ackIfDue(now);
             if (a != null) DiagLog.log("text: answering after " + text.quietMs + " ms of quiet (sound delay " + speaker.delayMs() + " ms)");
-            if (a != null) send(Channel.SD, T_TEXT_ACK, a);
+            if (a != null && send(Channel.SD, T_TEXT_ACK, a)) {
+                ackDoc = a[0] & 255; ackKnown = ((a[1] & 255) << 8) | (a[2] & 255); ackL = ((a[3] & 255) << 8) | (a[4] & 255);
+                ackEnd = speaker.endMs();
+            }
             long next = text.nextCheck(System.currentTimeMillis());
             if (next >= 0) main.postDelayed(this, next);
         }
@@ -163,6 +220,7 @@ public final class Link {
             handheldAnswers = true;
             text.heard(now);
             if (type == T_TEXT) {
+                checkRepeat(p, now);
                 int before = text.mirror.L;
                 Receiver.Frame f = text.onText(p, now);
                 DiagLog.log("text: page " + before + " -> " + text.mirror.L + " bytes" + (f == null ? " (nothing new)" : ""));

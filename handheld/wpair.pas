@@ -205,7 +205,7 @@ begin
   t := MakeTrain(ch, 29000);                                 { made once, then scaled: making it costs time }
   top := 1;
   for i := 0 to High(t) do if Abs(t[i]) > top then top := Abs(t[i]);
-  gap := LADDER_GAP_MS * 44100 div 1000;
+  gap := LADDER_GAP_MS * TxRate div 1000;
   n := Length(peaks) * (Length(t) + gap);
   SetLength(Result, n);
   for i := 0 to n - 1 do Result[i] := 0;

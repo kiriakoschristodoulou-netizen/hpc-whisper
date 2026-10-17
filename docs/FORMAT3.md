@@ -20,6 +20,15 @@ rate it claims: a handheld may claim 44,100 when recording and deliver a
 little less (the HP Jornada 720 tested delivered 1.8 % fewer). Each device's
 rate is its own, so it is never assumed: section 7 says how it is found.
 
+The same goes for playing. A sound card may take 44,100 but run at another
+rate, and convert crudely: the HP Jornada 720's chip runs at about 43,200,
+and Windows CE turned 44,100 into that by dropping samples, which smears
+every carrier above 20 kHz (a frame that reads at 46 dB read at 16 dB at
+best). So a handheld whose rate is known makes its frames at that rate and
+opens its speaker with it, when the card takes it (asked first); otherwise,
+and until the rate is known, at 44,100. A rate a few hundredths of a percent
+off costs little (0.02 %: 32 dB; 0.1 %: 17 dB, as bad as the conversion).
+
 - **Symbol**: 512 samples (10 ms) plus a cyclic prefix of 128 samples
   (2.5 ms), 640 samples (12.5 ms) in all. Carrier *b* is at *b* × 100 Hz.
 - **Carriers** are switched on or off and phase-shifted per symbol. A carrier
@@ -101,6 +110,17 @@ scale by default (quarter loudness, test 2).
 4. **Payload**: the message bytes and a CRC-16, Reed–Solomon coded, sent
    with the map the header names.
 5. At least 25 ms of silence before the next frame.
+
+**Finding a frame.** A receiver watches how alike each stretch of sound is
+to the one a sync lag before it. When they are alike and louder than of late,
+it first looks at that stretch as S, cheaply: at least half the carriers S
+uses must hold a tenth of their average power, and on a fast channel the
+upper half of the band at least a hundredth of what the lower half holds (a
+voice repeats itself too, but not up there). Only then does it search
+carefully for S and R. Whatever it decides, it never goes back over where it
+was set off: after a failed frame it goes on from one lag past that point
+at least (going back made the same noise set it off a thousand times a
+second, which took all of a phone's processor).
 
 Fixed phases, in quarter turns: S on carrier *c* (counting all the
 channel's carriers from the lowest) `P[(7c) mod 256]`, R `P[(7c + 101) mod 256]`,
@@ -314,7 +334,8 @@ no frame gets through. Either side starts it (Pair on its Link screen).
 Every tone fades in and out over 5 ms.
 
 **Hearing it.** The listener watches 2 kHz in 10 ms blocks; 150 ms above ten
-times the background is marker A. For 4.5 s after that (the phone: 8 s, see below) it takes no other
+times the background, and a pure tone (four times what 1.6 and 2.4 kHz hold
+together: a key click or a voice fills those too), is marker A. For 4.5 s after that (the phone: 8 s, see below) it takes no other
 marker (marker B and the 2 kHz step would otherwise look like new starts). 3.4 s later it reads its recording from
 0.7 s before A, finds both markers exactly (5 ms Goertzel blocks, runs of at
 least 120 ms above a quarter of the peak), and takes *scale* = (B − A) / 2.69 s:
@@ -369,12 +390,23 @@ loudness, also after it is closed. A phone that starts pairing waits until it
 has read the handheld's ladder before it reports. (`tests/w3/LadderTest`.)
 
 **The handheld's microphone rate.** Until it is known, the handheld uses the
-rate its sound card claims. While listening it measures the rate from whole
-buffers delivered (a stretch of at least 8 s; a result more than 5 % from the
-claim is ignored). Pairing measures it exactly (*scale*, between 0.95 and
-1.05). The rate found is kept, also after the program is closed; once known, a
-later measurement that differs by more than 1 % is shown on the Link screen
-but not used.
+rate its sound card claims. While listening it counts the samples of whole
+buffers against the clock, over all its listening together (at least 8 s; a
+result more than 5 % from the claim is ignored). Only a buffer that has just
+arrived gives the time (none other waiting behind it): one taken late, after
+the processor was held up, made the microphone look 0.9 % fast. Pairing
+measures it too (*scale*, between 0.95 and 1.05). Once known, a reading more
+than 0.25 % away is shown on the Link screen but not used, unless it covers
+a minute of listening or more (then it is the best there is). The rate is
+kept, also after the program is closed. The speaker plays at it (section 1)
+once it is trusted: kept from before, from pairing, or measured over a
+minute.
+
+**The phone's answers.** While connected the phone keeps its media volume at
+half or more, and puts it back afterwards (unless it was changed meanwhile).
+When the handheld sends again text the phone had already confirmed, it did
+not hear the confirmation: the phone's silent channel gets 2 dB louder (at
+most once in 4 s, up to 0.6), and keeps that level.
 
 **Markers on the phone.** For 8 s after marker A the phone takes no other
 marker (the handheld's ladder would otherwise look like a new start).

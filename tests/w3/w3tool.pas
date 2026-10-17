@@ -1,6 +1,6 @@
 program w3tool;
 { The handheld's format 3 modem on Linux, for tests against the phone's.
-    w3tool tx CH TYPE payload.bin out.wav [51]    a frame (44,100/s, or 51,200 with "51")
+    w3tool tx CH TYPE payload.bin out.wav [51|RATE] a frame (44,100/s, 51,200 with "51", or at RATE)
     w3tool train CH out.wav                        a TRAIN frame (44,100/s)
     w3tool rx CH in.wav RATE100 [map.bin]          read frames; RATE100 = the true rate x 100
   Prints one line per message: "msg TYPE LEN SNR10 FIXED HEX", and "train SNR10..." }
@@ -88,7 +88,12 @@ begin
     StdMap(ch, m);
     if ParamCount >= 7 then begin mb := ReadFileBytes(ParamStr(7)); MapFromMsg(mb, Length(mb), m); end;
     if ParamStr(6) = '51' then begin x := MakeFrame51(ch, m, typ, pl, Length(pl), 0); WriteWav(ParamStr(5), x, 51200); end
-    else begin x := MakeFrame(ch, m, typ, pl, Length(pl), 0); WriteWav(ParamStr(5), x, 44100); end;
+    else
+    begin
+      { another number: frames made at that rate (the sound chip's own) }
+      if ParamStr(6) <> '' then begin Val(ParamStr(6), rate, code); if (code = 0) and (rate >= 8000) then TxRate := rate; end;   { "44": 44,100 }
+      x := MakeFrame(ch, m, typ, pl, Length(pl), 0); WriteWav(ParamStr(5), x, TxRate);
+    end;
   end
   else if cmd = 'train' then
   begin

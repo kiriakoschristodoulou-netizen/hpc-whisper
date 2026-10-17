@@ -1,6 +1,7 @@
 unit w3tx;
 { Format 3 frames made on the handheld: at the modem rate (51,200), then
-  converted to the sound card's 44,100. Whole numbers only. }
+  converted to the rate the sound card plays at (TxRate: 44,100, or the rate
+  the sound chip really runs at, when the card takes it). Whole numbers only. }
 {$mode objfpc}{$H+}
 interface
 
@@ -9,7 +10,11 @@ uses w3core, w3dsp;
 type
   TSamples = array of SmallInt;
 
-{ A frame at 44,100 samples/s. level: peak of 32767 (0 = the channel's default). }
+var
+  { the rate frames are made at: what the speaker is opened with }
+  TxRate: Integer = 44100;
+
+{ A frame at TxRate samples/s. level: peak of 32767 (0 = the channel's default). }
 function MakeFrame(ch: Integer; const map: TBitMap; typ: Integer; const msg: array of Byte; msgLen, level: Integer): TSamples;
 function MakeTrain(ch, level: Integer): TSamples;
 { the same at the modem rate (tests) }
@@ -198,9 +203,66 @@ begin
   end;
 end;
 
+{ 51,200 to any other rate (the sound chip's own, such as 43,203): the next sample out lies 51,200 / rate
+  samples on, kept as a whole number and a fraction of 2^32. The filter is taken at the nearest of 1,024
+  sub-steps, made once between the table's 256 (the timing then errs by at most 1/2048 of a sample: noise
+  58 dB down at 21 kHz), so each sample out costs what one at 44,100 does. }
+var
+  TxFine: array of SmallInt;                 { 1,024 rows of RSM_TAPS }
+
+procedure MakeTxFine;
+var f, k, p0, w, c0, c1: Integer;
+begin
+  SetLength(TxFine, 1024 * RSM_TAPS);
+  for f := 0 to 1023 do
+  begin
+    p0 := f shr 2; w := (f and 3) * 64;
+    for k := 0 to RSM_TAPS - 1 do
+    begin
+      c0 := RSM_DOWN[p0 * RSM_TAPS + k]; c1 := RSM_DOWN[(p0 + 1) * RSM_TAPS + k];
+      TxFine[f * RSM_TAPS + k] := c0 + ((c1 - c0) * w) div 256;
+    end;
+  end;
+end;
+
+function ToRate(const x: TSamples; rate: Integer): TSamples;
+var n, j, i, k, stepI: Integer; acc: LongInt; pad: TSamples; stepF, f: LongWord; cp: PSmallInt; nf: Int64;
+begin
+  if Length(TxFine) = 0 then MakeTxFine;
+  SetLength(pad, Length(x) + 2 * RSM_TAPS);
+  for i := 0 to High(pad) do pad[i] := 0;
+  for i := 0 to High(x) do pad[i + RSM_H - 1] := x[i];
+  n := Int64(Length(x) + RSM_TAPS div 2) * rate div MRATE;
+  SetLength(Result, n);
+  stepI := MRATE div rate;
+  stepF := LongWord((Int64(MRATE mod rate) shl 32) div rate);
+  i := 0; f := 0;
+  for j := 0 to n - 1 do
+  begin
+    { the nearest of 1,024 sub-steps (rounded; the last rounds up into the next sample's first) }
+    k := ((f shr 21) + 1) shr 1;
+    if k = 1024 then cp := @TxFine[0] else cp := @TxFine[k * RSM_TAPS];
+    acc := 0;
+    if k = 1024 then for k := 0 to RSM_TAPS - 1 do acc := acc + LongInt(pad[i + 1 + k]) * cp[k]
+    else for k := 0 to RSM_TAPS - 1 do acc := acc + LongInt(pad[i + k]) * cp[k];
+    acc := SarLongint(acc, 14);
+    if acc > 32767 then acc := 32767 else if acc < -32767 then acc := -32767;
+    Result[j] := acc;
+    nf := Int64(f) + stepF;
+    if nf >= Int64(1) shl 32 then Inc(i);
+    f := LongWord(nf and $FFFFFFFF);
+    Inc(i, stepI);
+  end;
+end;
+
+function ToTx(const x: TSamples): TSamples;
+begin
+  if TxRate = 44100 then Result := To44(x) else Result := ToRate(x, TxRate);
+end;
+
 function MakeFrame(ch: Integer; const map: TBitMap; typ: Integer; const msg: array of Byte; msgLen, level: Integer): TSamples;
 begin
-  Result := To44(Build(ch, map, typ, msg, msgLen, level));
+  Result := ToTx(Build(ch, map, typ, msg, msgLen, level));
 end;
 
 function MakeTrain(ch, level: Integer): TSamples;
@@ -208,7 +270,7 @@ var m: TBitMap; none: array[0..0] of Byte;
 begin
   StdMap(ch, m);
   none[0] := 0;
-  Result := To44(Build(ch, m, T_TRAIN, none, 0, level));
+  Result := ToTx(Build(ch, m, T_TRAIN, none, 0, level));
 end;
 
 end.

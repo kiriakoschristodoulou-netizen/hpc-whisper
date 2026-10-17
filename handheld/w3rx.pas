@@ -60,7 +60,7 @@ type
     frames, fails: Integer;
     lastFail: string;
     { for the diagnostics log: frames that seemed to start, that were found (S and R), headers read, the last one }
-    trigs, starts, hdrs, hdrTyp, hdrLen, hdrSym: Integer;
+    trigs, starts, hdrs, hdrTyp, hdrLen, hdrSym, gated: Integer;
   end;
   PRx = ^TRx;
 
@@ -265,13 +265,41 @@ begin
   Result := (off * 4096) div all;
 end;
 
+{ S at w: the carriers it uses (bins on its step) should all hold some of its power: at least half of them
+  a tenth of their average. On a fast channel, its upper half of the band should also hold at least a
+  hundredth of what the lower half holds (a voice or a hum holds far less up there). }
+function SLooksRight(var r: TRx; w: Int64): Boolean;
+var yre, yim: TCarr; c, n, cnt, on: Integer; p: array[0..MAXCAR - 1] of Int64; sum, lo, hi: Int64; Cn: TChannel;
+begin
+  Cn := Chans[r.ch];
+  SymFft(r, w, yre, yim);
+  sum := 0; n := 0; lo := 0; hi := 0;
+  for c := 0 to Cn.n - 1 do
+  begin
+    p[c] := -1;
+    if (Cn.bins[c] mod Cn.syncStep) <> 0 then Continue;
+    p[c] := Int64(yre[c]) * yre[c] + Int64(yim[c]) * yim[c];
+    sum := sum + p[c]; Inc(n);
+    if c < Cn.n div 2 then lo := lo + p[c] else hi := hi + p[c];
+  end;
+  if (n = 0) or (sum <= 0) then begin Result := False; Exit; end;
+  cnt := 0; on := 0;
+  for c := 0 to Cn.n - 1 do
+    if p[c] >= 0 then begin Inc(cnt); if p[c] * 10 * n >= sum then Inc(on); end;
+  Result := on * 2 >= cnt;
+  if Result and (not Cn.silent) then Result := hi * 100 >= lo;
+end;
+
 procedure Fail(var r: TRx; const why: string);
 begin
   Inc(r.fails);
   r.lastFail := why;
   {$ifdef RXDEBUG}WriteLn('fail ', why, ' sym0 ', r.sym0);{$endif}
   r.state := IDLE;
+  { on from the frame's start, but never back over where it was triggered: the same sound would start it
+    again and again (on the phone, a thousand times a second) }
   r.scan := r.sym0 + NSYM;
+  if r.scan < r.trig + r.lag then r.scan := r.trig + r.lag;
 end;
 
 procedure Symbol(var r: TRx; w: Int64);
@@ -459,6 +487,14 @@ begin
     dS := dS + r.lag div 2;
     w := dS + NSYM + NCP - RBACK;
     if w + NFFT + 2 * NSYM > r.t then Exit;            { wait for R (and some margin) }
+    { first a cheap look at S: does its sound lie on our carriers, spread over the band? A voice repeats
+      itself too (and fills the fast channel's lower half), a click fills everything; the careful search
+      below costs ten times as much. Not ours: on by two symbols. }
+    if not SLooksRight(r, dS + NCP - RBACK) then
+    begin
+      Inc(r.gated);
+      r.state := IDLE; r.scan := r.trig + 2 * NSYM; Exit;
+    end;
     SymFft(r, w, yre, yim);
     Slope(r, yre, yim, True, early8, coh);
     start := dS + (early8 + 128) div 256 - RBACK;
@@ -486,7 +522,7 @@ begin
     start := bestStart;
     SymFft(r, start + NSYM + NCP - RBACK, yre, yim);
     Slope(r, yre, yim, True, early8, coh);
-    if coh < 2048 then begin {$ifdef RXDEBUG}WriteLn('seek: coh ', coh, ' trig ', r.trig, ' start ', start);{$endif} r.state := IDLE; r.scan := r.trig + 64; Exit; end;
+    if coh < 2048 then begin {$ifdef RXDEBUG}WriteLn('seek: coh ', coh, ' trig ', r.trig, ' start ', start);{$endif} r.state := IDLE; r.scan := r.trig + r.lag; Exit; end;
     r.sym0 := start; r.prevRe := yre; r.prevIm := yim;
     r.s := 2; r.adjust := 0; r.tau8 := 0; r.moved := 0;
     hb := MapBits(r.std);

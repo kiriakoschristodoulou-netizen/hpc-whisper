@@ -53,7 +53,7 @@ public final class Rx {
     private BitWriter bits;
     private double errSum; private int errN;
     private float[][] trainErr;
-    public int frames, fails;
+    public int frames, fails, gated;
 
     public Rx(Channel ch, Sink sink) {
         this.ch = ch; this.sink = sink;
@@ -132,6 +132,9 @@ public final class Rx {
             // fine timing on R
             long w = dS + Channel.SYM + Channel.CP - BACK;
             if (!have(w, Channel.N + 2 * Channel.SYM)) return;      // wait for R (and some margin)
+            // first a cheap look at S: does its sound lie on our carriers, spread over the band? A voice repeats
+            // itself too, a click fills everything; the careful search below costs ten times as much
+            if (!sLooksRight(dS + Channel.CP - BACK)) { gated++; state = IDLE; scan = trig + 2L * Channel.SYM; return; }
             float[][] y = fft(w);
             double[] sl = slope(y, true);
             double tauR = sl[0];
@@ -155,7 +158,7 @@ public final class Rx {
             y = fft(start + Channel.SYM + Channel.CP - BACK);
             sl = slope(y, true);
             if (DEBUG) System.err.printf("trig %d dS %d mx %.2f tauR %.1f start %d coh %.2f%n", trig, dS, mx, tauR, start, sl[1]);
-            if (sl[1] < 0.5) { state = IDLE; scan = trig + 64; return; }     // not a frame of ours
+            if (sl[1] < 0.5) { state = IDLE; scan = trig + lag; return; }     // not a frame of ours
             sym0 = start; prevRe = y[0]; prevIm = y[1];
             s = 2; adjust = 0; tau = 0; moved = 0;
             hsym = (Codec.HEADER + Codec.HEADER_CHECK) * 8; hsym = (hsym + std.bitsPerSymbol() - 1) / std.bitsPerSymbol();
@@ -227,6 +230,27 @@ public final class Rx {
             if (ch.bins[c] % ch.syncStep() != 0) off += p;
         }
         return off / all;
+    }
+
+    /** S at w: at least half the carriers it uses hold a tenth of their average power; on a fast channel, the
+     *  upper half of the band holds at least a hundredth of what the lower half holds (the same test as the
+     *  handheld's). */
+    private boolean sLooksRight(long w) {
+        float[][] y = fft(w);
+        int n = ch.count(), step = ch.syncStep(), cnt = 0, on = 0;
+        double sum = 0, lo = 0, hi = 0;
+        double[] p = new double[n];
+        for (int c = 0; c < n; c++) {
+            p[c] = -1;
+            if (ch.bins[c] % step != 0) continue;
+            p[c] = (double) y[0][c] * y[0][c] + (double) y[1][c] * y[1][c];
+            sum += p[c]; cnt++;
+            if (c < n / 2) lo += p[c]; else hi += p[c];
+        }
+        if (cnt == 0 || sum <= 0) return false;
+        for (int c = 0; c < n; c++) if (p[c] >= 0 && p[c] * 10 * cnt >= sum) on++;
+        if (on * 2 < cnt) return false;
+        return ch.silent || hi * 100 >= lo;
     }
 
     private float[][] fft(long w) {

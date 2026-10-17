@@ -1,5 +1,5 @@
 program WhisperTools;
-{ Whisper Tools 3.7, for Windows CE handheld PCs (made on an HP Jornada 720).
+{ Whisper Tools 3.8, for Windows CE handheld PCs (made on an HP Jornada 720).
 
   Type here and the text goes into any app on your phone, with Tab, the
   arrows, Ctrl+C and the other keys; the phone confirms what has arrived.
@@ -22,7 +22,7 @@ program WhisperTools;
 uses Windows, w3core, w3dsp, w3tx, w3rx, waudio, wtext, wfile, wscreen, wwav, wimg, winf, wmodem, wpair, wlog;
 
 const
-  VERSION = '3.7';
+  VERSION = '3.8';
   CREATOR = 'Kyriakos Christodoulou';
   CLSNAME: UnicodeString = 'WhisperTools';
   APPNAME: UnicodeString = 'Whisper Tools';
@@ -422,9 +422,14 @@ begin
         if ReadFile(h, {$ifdef wince}@b{$else}b{$endif}, 8, {$ifdef wince}@got{$else}got{$endif}, nil) and (got = 8) and (b[0] = $36) then
         begin
           r := b[1] or (LongWord(b[2]) shl 8) or (LongWord(b[3]) shl 16) or (LongWord(b[4]) shl 24);
-          if (r > 0) and (b[5] in [1, 2]) and (Int64(r) * 20 >= Int64(IN_RATE) * 100 * 19) and (Int64(r) * 20 <= Int64(IN_RATE) * 100 * 21) then
-          begin InRate100 := r; RateSource := b[5]; end;
+          { 2 = calibrated by Pair, 3 = measured (since 3.8); 1 = measured by an older version, whose
+            measurement could be thrown off by a busy processor: not used }
+          if (r > 0) and (b[5] in [2, 3]) and (Int64(r) * 20 >= Int64(IN_RATE) * 100 * 19) and (Int64(r) * 20 <= Int64(IN_RATE) * 100 * 21) then
+          begin InRate100 := r; if b[5] = 3 then RateSource := 1 else RateSource := 2; end;
           if (b[6] >= 20) and (b[6] <= 230) and (b[7] = 1) then begin SilentPeak := b[6] * 128; LevelSource := 1; end;
+          got := 0;
+          if ReadFile(h, {$ifdef wince}@b{$else}b{$endif}, 2, {$ifdef wince}@got{$else}got{$endif}, nil) and (got = 2) and (b[0] = $38) then
+            SpeakerNative := b[1] = 0;
         end;
       end;
     end;
@@ -433,7 +438,7 @@ begin
 end;
 
 procedure SaveCfg;
-var h: THandle; b: array[0..20] of Byte; got: DWORD; r: LongWord;
+var h: THandle; b: array[0..22] of Byte; got: DWORD; r: LongWord;
 begin
   h := CreateFileW(PWideChar(CfgPath), GENERIC_WRITE, 0, nil, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
   if h = INVALID_HANDLE_VALUE then Exit;
@@ -443,9 +448,11 @@ begin
   { this handheld's own measurements: the microphone's rate (x 100) and the silent loudness }
   if RateSource > 0 then r := LongWord(InRate100) else r := 0;
   b[13] := $36; b[14] := r and 255; b[15] := (r shr 8) and 255; b[16] := (r shr 16) and 255; b[17] := r shr 24;
-  b[18] := RateSource; b[19] := SilentPeak div 128; b[20] := LevelSource;
+  if RateSource = 1 then b[18] := 3 else b[18] := RateSource;
+  b[19] := SilentPeak div 128; b[20] := LevelSource;
+  b[21] := $38; b[22] := Ord(not SpeakerNative);
   got := 0;
-  WriteFile(h, {$ifdef wince}@b{$else}b{$endif}, 21, {$ifdef wince}@got{$else}got{$endif}, nil);
+  WriteFile(h, {$ifdef wince}@b{$else}b{$endif}, 23, {$ifdef wince}@got{$else}got{$endif}, nil);
   CloseHandle(h);
 end;
 
@@ -605,7 +612,7 @@ begin
   if typ = T_TRAIN then x := MakeTrain(ch, lvl)
   else x := MakeFrame(ch, m, typ, p, n, lvl);
   Result := AudioSend(x);
-  if Result then Log('send ' + LChan(ch) + ' ' + LDescribe(typ, p, n) + ', loudness ' + LI(lvl) + ', ' + LI(Int64(Length(x)) * 1000 div OUT_RATE) + ' ms')
+  if Result then Log('send ' + LChan(ch) + ' ' + LDescribe(typ, p, n) + ', loudness ' + LI(lvl) + ', ' + LI(Int64(Length(x)) * 1000 div TxRate) + ' ms at ' + LI(TxRate) + '/s')
   else Log('send ' + LChan(ch) + ' ' + LType(typ) + ': NOT SENT, the queue is full');
 end;
 
@@ -728,7 +735,7 @@ begin
   Result := SnNext(ClassicSnd, GetTickCount, f);
   LeaveCriticalSection(ClassicLock);
   if not Result then Exit;
-  TmInit(tm, OUT_RATE);
+  TmInit(tm, TxRate);
   tm.band := Band; tm.speed := Speed; tm.volume := Volume;
   TmStart(tm, f);
   SetLength(x, 0); n := 0;
@@ -738,7 +745,7 @@ begin
     SetLength(x, n + Length(buf));
     for i := 0 to High(buf) do x[n + i] := buf[i];
     Inc(n, Length(buf));
-  until (not more) or (n > OUT_RATE * 5);
+  until (not more) or (n > TxRate * 5);
 end;
 
 { ---------- files: sending ---------- }
@@ -795,6 +802,7 @@ procedure FinishIncoming;
 var name, path: UnicodeString; d: PByte; n: LongWord; ok: Boolean;
 begin
   Incoming.active := False;
+  FilePieceAt := 0;
   Incoming.doneAt := GetTickCount;
   name := SafeName(FromUtf8(@Incoming.r.nameUtf8[0], Length(Incoming.r.nameUtf8)));
   MakeInFolder;
@@ -842,6 +850,7 @@ begin
   end;
   if not FrFromOffer(Incoming.r, p, n, GetTickCount, MAX_IN_FILE) then begin Log('file: offer not understood or too large'); Exit; end;
   Log('file: receiving a new one, ' + LI(Incoming.r.packets) + ' packets');
+  FilePieces := 0; FileLost := 0;
   Incoming.active := True;
   nm := SafeName(FromUtf8(@Incoming.r.nameUtf8[0], Length(Incoming.r.nameUtf8)));
   Incoming.t := NewTransfer(False, nm, Incoming.r.size);
@@ -1014,7 +1023,7 @@ begin
     FileNote := name + ': this kind of WAV cannot be played here (PCM and IMA ADPCM can).';
     SetLength(PlayData, 0); Exit;
   end;
-  PlayStep := Int64(PlayWav.rate) * 65536 div 44100;
+  PlayStep := Int64(PlayWav.rate) * 65536 div TxRate;
   PlayPos := 0; PlayBufN := 0; PlayBufI := 0;
   v := PlayNext; if v = -100000 then v := 0; PlayPrev := v;
   v := PlayNext; if v = -100000 then v := 0; PlayCur := v;
@@ -1260,7 +1269,7 @@ begin
   if not answering then begin HaveMine := False; HaveTheirs := False; end;
   PairNote := 'Playing the test sound (beeps), then listening for the phone''s...';
   FastUntil := GetTickCount + 40000;
-  x := PairPattern(OUT_RATE);
+  x := PairPattern(TxRate);
   { then the loudness ladder: the phone hears which loudness comes through cleanest, and says so in its report }
   z := PairLadder(CH_SU, PAIR_LADDER);
   SetLength(y, Length(x) + Length(z));
@@ -1272,14 +1281,14 @@ end;
 procedure TestSpeaker;
 var y: TSamples; i, n, g: Integer;
 begin
-  n := OUT_RATE;                                     { one second of 1.2 kHz, clearly audible (its overtones miss 2 kHz, the pairing marker) }
+  n := TxRate;                                       { one second of 1.2 kHz, clearly audible (its overtones miss 2 kHz, the pairing marker) }
   SetLength(y, n);
   for i := 0 to n - 1 do
   begin
     g := 12000;
     if i < 441 then g := g * i div 441;
     if n - 1 - i < 441 then g := g * (n - 1 - i) div 441;
-    y[i] := (g * SinI(Integer((Int64(1200) * i * 65536 div OUT_RATE) and $FFFF))) div 16384;
+    y[i] := (g * SinI(Integer((Int64(1200) * i * 65536 div TxRate) and $FFFF))) div 16384;
   end;
   AudioSend(y);
   SpeakerNote := 'A one-second beep now: if you hear nothing, the sound does not get out (check Volume in the Control Panel).';
@@ -1348,7 +1357,8 @@ var PhoneHeardSD: LongWord = 0;
 const LISTEN_MS = 1500;          { listening after each text frame of ours, for the phone's answer (it may take ~0.6 s to sound, and as long to play) }
 var WaitAnswer: Boolean = False;  { the last turn held a text frame: the phone will confirm it }
 
-var LastPump: LongWord = 0; LoggedScreen: Integer = -1; LastAlive: LongWord = 0;
+var RateChosenAt: LongWord = 0; ShownPieces: Integer = 0; ShownLost: Integer = 0;
+    LastPump: LongWord = 0; LoggedScreen: Integer = -1; LastAlive: LongWord = 0;
 
 procedure Pump;
 var g: TGotMsg; t: TTrainResult; now: LongWord; p: array[0..127] of Byte; n, typ, i: Integer; fp: TByteArr; cs: TSamples;
@@ -1367,6 +1377,8 @@ begin
       + ', lost ' + LI(FramesBad) + ', skipped buffers ' + LI(Overruns));
   end;
   LogTick(False);
+  if (FilePieces <> ShownPieces) or (FileLost <> ShownLost) then
+  begin ShownPieces := FilePieces; ShownLost := FileLost; changed := True; end;
   while AudioTake(g) do
   begin
     if g.ch = CH_SD then PhoneHeardSD := GetTickCount;
@@ -1396,6 +1408,8 @@ begin
     UnknownId := -1;
   end;
   if AudioQueued > 0 then begin if changed then InvalidateRect(hMain, nil, False); Exit; end;
+  { nothing queued: the moment to change the rate the speaker plays at, if it should }
+  if (not OutPlaying) and (now - RateChosenAt >= 5000) then begin RateChosenAt := now; AudioChooseRate; end;
   if (PairState = 1) or (PairState = 2) then begin if changed then InvalidateRect(hMain, nil, False); Exit; end;
   { classic tones }
   if Classic and ClassicSamples(cs) then begin AudioSend(cs); InvalidateRect(hMain, nil, False); Exit; end;
@@ -1739,7 +1753,7 @@ begin
   if OutErr <> '' then Line('Speaker', OutErr, COL_FAIL)
   else if Turns = 0 then Line('Speaker', 'has not played yet', COL_GREY)
   else Line('Speaker', IU(Turns) + ' times, last ' + IU((GetTickCount - LastTurnAt) div 1000) + ' s ago for ' +
-    IU(LastTurnMs) + ' ms, loudest ' + IU(LastTurnPeak) + '%', COL_TEXT);
+    IU(LastTurnMs) + ' ms, loudest ' + IU(LastTurnPeak) + '%; ' + OutRateNote, COL_TEXT);
   if InErr <> '' then Line('Microphone', InErr, COL_FAIL)
   else
   begin
@@ -1790,7 +1804,7 @@ begin
   Button(dc, LinkBtn(2), 'Check the link', 'K');
 end;
 
-const NSET = 8;
+const NSET = 9;
 
 function SettingName(i: Integer): UnicodeString;
 begin
@@ -1800,9 +1814,10 @@ begin
     2: Result := 'Files to the phone';
     3: Result := 'Fast loudness';
     4: Result := 'Received files';
-    5: Result := 'Classic band';
-    6: Result := 'Classic speed';
-    7: Result := 'Classic volume';
+    5: Result := 'Speaker rate';
+    6: Result := 'Classic band';
+    7: Result := 'Classic speed';
+    8: Result := 'Classic volume';
   else Result := '';
   end;
 end;
@@ -1817,9 +1832,11 @@ begin
     2: if FastFiles then Result := 'Fast: a soft hiss while it goes, about 7-12 kbit/s' else Result := 'Silent: slow (a 10 KB file takes 1-2 minutes)';
     3: case FastLevel of 0: Result := '1/8'; 2: Result := '1/2'; else Result := '1/4'; end;
     4: if OnCard then Result := '\Storage Card\Whisper Tools' else Result := '\My Documents\Whisper Tools';
-    5: Result := KHz(BAND_HZ[Band]) + '-' + KHz(BAND_HZ[Band] + 15 * STEP_HZ) + ' kHz';
-    6: Result := US(SPEED_NAME[Speed]);
-    7: Result := IU(Volume) + '%';
+    5: if SpeakerNative then Result := 'The sound chip''s own (measured), else 44,100'
+       else Result := '44,100, converted by Windows (lower quality)';
+    6: Result := KHz(BAND_HZ[Band]) + '-' + KHz(BAND_HZ[Band] + 15 * STEP_HZ) + ' kHz';
+    7: Result := US(SPEED_NAME[Speed]);
+    8: Result := IU(Volume) + '%';
   else Result := '';
   end;
 end;
@@ -1832,9 +1849,10 @@ begin
     2: FastFiles := not FastFiles;
     3: FastLevel := (FastLevel + 3 + dir) mod 3;
     4: OnCard := not OnCard;
-    5: Band := (Band + NBANDS + dir) mod NBANDS;
-    6: Speed := (Speed + NSPEEDS + dir) mod NSPEEDS;
-    7: begin Volume := Volume + 10 * dir; if Volume > 100 then Volume := 10; if Volume < 10 then Volume := 100; end;
+    5: SpeakerNative := not SpeakerNative;
+    6: Band := (Band + NBANDS + dir) mod NBANDS;
+    7: Speed := (Speed + NSPEEDS + dir) mod NSPEEDS;
+    8: begin Volume := Volume + 10 * dir; if Volume > 100 then Volume := 10; if Volume < 10 then Volume := 100; end;
   end;
   SaveCfg;
 end;
@@ -1845,7 +1863,7 @@ begin
   y := TITLE_H + 6;
   for i := 0 to NSET - 1 do
   begin
-    if (i >= 5) and not Classic then Break;
+    if (i >= 6) and not Classic then Break;
     if i = SetSel then FillR(dc, MkRect(6, y - 1, CW - 6, y + 16), COL_SEL);
     Txt(dc, SettingName(i), MkRect(12, y, 170, y + 16), fBold, COL_NAVY, DT_LEFT or DT_SINGLELINE);
     Txt(dc, SettingValue(i), MkRect(170, y, CW - 12, y + 16), fNorm, COL_TEXT, DT_LEFT or DT_SINGLELINE or DT_END_ELLIPSIS);
@@ -1875,7 +1893,15 @@ begin
   if Incoming.active then
   begin
     Result := 'Receiving ' + Trans[Incoming.t].name + ', ' + IU(Trans[Incoming.t].permille div 10) + '%';
+    if FileLost > 0 then Result := Result + ' (' + IU(FileLost) + ' pieces arrived damaged: asked for again)';
     col := COL_GOOD; Exit;
+  end;
+  { pieces of a file are heard, but its announcement was not read: say so, rather than nothing }
+  if (FilePieceAt <> 0) and (GetTickCount - FilePieceAt < 30000) then
+  begin
+    Result := 'A file is coming from the phone: ' + IU(FilePieces) + ' pieces heard, ' + IU(FileLost) + ' arrived damaged';
+    if FileLost * 2 > FilePieces then col := COL_FAIL else col := COL_GOOD;
+    Exit;
   end;
   if Classic then
   begin
@@ -2178,7 +2204,7 @@ begin
     SCR_SETTINGS:
       case vk of
         VK_UP_: if SetSel > 0 then Dec(SetSel);
-        VK_DOWN_: if (SetSel < NSET - 1) and (Classic or (SetSel < 4)) then Inc(SetSel);
+        VK_DOWN_: if (SetSel < NSET - 1) and (Classic or (SetSel < 5)) then Inc(SetSel);
         VK_LEFT_: ChangeSetting(SetSel, -1);
         VK_RIGHT_: ChangeSetting(SetSel, 1);
       end;
@@ -2306,7 +2332,7 @@ begin
     SCR_SETTINGS:
       begin
         i := (y - TITLE_H - 6) div 18;
-        if (i >= 0) and (i < NSET) and (Classic or (i < 5)) then begin if i = SetSel then ChangeSetting(i, 1); SetSel := i; end;
+        if (i >= 0) and (i < NSET) and (Classic or (i < 6)) then begin if i = SetSel then ChangeSetting(i, 1); SetSel := i; end;
       end;
     SCR_LINK:
       for i := 0 to 2 do

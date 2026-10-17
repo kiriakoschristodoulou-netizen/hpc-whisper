@@ -20,6 +20,7 @@ begin
     Exit;
   end;
   { 6: making one text frame of 40 bytes (silent, at 44,100); 7: the pairing analysis of 4.2 s }
+  if (mode = 26) then begin TxRate := 43203; mode := 6; end;           { 26: the same frame at the chip's own rate }
   if (mode = 6) or (mode = 16) then
   begin
     for i := 0 to 39 do msg[i] := i * 7;

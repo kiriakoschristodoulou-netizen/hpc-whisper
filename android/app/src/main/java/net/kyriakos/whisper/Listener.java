@@ -63,6 +63,7 @@ public final class Listener {
     private float[] ring = new float[1];
     private long ringPos = 0;
     private double mkS1, mkS2, mkCoef, mkBg; private int mkN, mkRun; private long mkRunPos;
+    private double mkL1, mkL2, mkH1, mkH2, mkCoefL, mkCoefH;           // 1.6 and 2.4 kHz: the marker must stand out from them
 
     /** The ring position of the newest sample. */
     public synchronized long ringNow() { return ringPos; }
@@ -83,11 +84,16 @@ public final class Listener {
             ring[(int) (ringPos % ring.length)] = v;
             // the pairing marker: 2 kHz, at least 150 ms clearly above the background, in 10 ms blocks
             double s0 = v + mkCoef * mkS1 - mkS2; mkS2 = mkS1; mkS1 = s0;
+            s0 = v + mkCoefL * mkL1 - mkL2; mkL2 = mkL1; mkL1 = s0;
+            s0 = v + mkCoefH * mkH1 - mkH2; mkH2 = mkH1; mkH1 = s0;
             if (++mkN >= blk) {
                 double p = (mkS1 * mkS1 + mkS2 * mkS2 - mkCoef * mkS1 * mkS2) / mkN + 1e-18;
-                mkS1 = mkS2 = 0; mkN = 0;
+                double pl = (mkL1 * mkL1 + mkL2 * mkL2 - mkCoefL * mkL1 * mkL2) / mkN;
+                double ph = (mkH1 * mkH1 + mkH2 * mkH2 - mkCoefH * mkH1 * mkH2) / mkN;
+                mkS1 = mkS2 = mkL1 = mkL2 = mkH1 = mkH2 = 0; mkN = 0;
                 if (mkBg == 0) mkBg = p;
-                if (p > mkBg * 10) {
+                // loud, and a pure tone (a key click or a voice fills 1.6 and 2.4 kHz too, and set it off: 3.7 logs)
+                if (p > mkBg * 10 && p > 4 * (pl + ph)) {
                     if (mkRun == 0) mkRunPos = ringPos - blk;
                     if (++mkRun == 15) { long at = mkRunPos; DiagLog.log("pair: a 2 kHz marker heard"); main.post(() -> cb.onPairMarker(at)); }
                 } else { mkRun = 0; mkBg += (p - mkBg) / 16; }
@@ -149,9 +155,11 @@ public final class Listener {
                 @Override public void onUnreadable(int bandHz, int ms) { main.post(cb::onUnreadable); }
             });
         }
-        rx3 = new Rx[ch][LISTEN.length];
-        rs3 = new Resampler[ch];
-        for (int c = 0; c < ch; c++) {
+        // format 3 on the first microphone only: both always read the same frames (3.7 logs), at twice the
+        // processor's time, and a phone that falls behind loses everything
+        rx3 = new Rx[1][LISTEN.length];
+        rs3 = new Resampler[1];
+        for (int c = 0; c < 1; c++) {
             rs3[c] = new Resampler(rate, Channel.RATE);
             for (int k = 0; k < LISTEN.length; k++) {
                 final int mic = c + 1;
@@ -170,7 +178,7 @@ public final class Listener {
                     }
                     // the fast receivers start on noise all the time: only the silent channels count
                     @Override public void onFail(Rx r, String why) {
-                        if (r.ch.silent) failsW3++;
+                        if (r.ch.silent && !why.equals("header")) failsW3++;      // a frame that began (its header read) and was lost
                         if (r.ch.silent || !why.equals("header")) DiagLog.log(DiagLog.chan(r.ch.id) + " (mic " + mic + ") frame lost: " + why);
                         else noiseStarts++;
                     }
@@ -184,6 +192,8 @@ public final class Listener {
         ring = new float[rate * 9];                 // 9 s: the handheld's test sound and its loudness ladder
         ringPos = 0; mkS1 = mkS2 = mkBg = 0; mkN = mkRun = 0;
         mkCoef = 2 * Math.cos(2 * Math.PI * 2000 / rate);
+        mkCoefL = 2 * Math.cos(2 * Math.PI * 1600 / rate); mkCoefH = 2 * Math.cos(2 * Math.PI * 2400 / rate);
+        mkL1 = mkL2 = mkH1 = mkH2 = 0;
         thread = new Thread(() -> loop(rec, ch, cb), "whisper-listen");
         thread.setPriority(Thread.MAX_PRIORITY);
         thread.start();
@@ -263,7 +273,12 @@ public final class Listener {
                 long nowN = System.nanoTime();
                 DiagLog.mic(buf, frames, ch, rate);
                 for (int i = 0; i < got; i++) { int v = Math.abs(buf[i]); if (v > stPeak) stPeak = v; }
-                if (lastRead != 0 && nowN - lastRead > 300_000_000L) DiagLog.log("microphone: nothing came for " + (nowN - lastRead) / 1_000_000 + " ms");
+                if (lastRead != 0 && nowN - lastRead > 300_000_000L) {
+                    DiagLog.log("microphone: nothing came for " + (nowN - lastRead) / 1_000_000 + " ms");
+                    // the phone was held up: sound may have been lost, which would make the microphone look slow
+                    // (37,000 for 48,000: 3.7 logs). The rate is measured again from here.
+                    t0 = 0; counted = 0;
+                }
                 lastRead = nowN;
                 stFrames += frames;
                 applyMutes(f, frames, ch, nowN);
@@ -276,14 +291,18 @@ public final class Listener {
                     double el = (nowN - t0) / 1e9;
                     if (el >= 10) {
                         double r = counted / el;
-                        if (Math.abs(r - inRate) / inRate > 0.0005) { inRate = r; for (Resampler q : rs3) q.setRates(inRate, Channel.RATE); }
-                        measuredRate = r;
+                        // a phone's microphone runs within a fraction of a percent of its stated rate: a reading further
+                        // off is a measurement spoilt by a held-up phone, not the microphone
+                        if (Math.abs(r - rate) / rate < 0.005) {
+                            if (Math.abs(r - inRate) / inRate > 0.0005) { inRate = r; for (Resampler q : rs3) q.setRates(inRate, Channel.RATE); }
+                            measuredRate = r;
+                        } else { DiagLog.log(String.format(java.util.Locale.US, "microphone rate: a reading of %.0f not used", r)); t0 = 0; counted = 0; }
                         if (el > 60) { t0 = nowN; counted = 0; }
                     }
                 }
                 BitMap nm;
                 while ((nm = newMaps.poll()) != null) for (Rx[] row : rx3) for (Rx r : row) r.addMap(nm);
-                for (int c = 0; c < ch; c++) {
+                for (int c = 0; c < rs3.length; c++) {
                     if (mono.length < frames) mono = new float[frames];
                     for (int i = 0; i < frames; i++) mono[i] = f[i * ch + c];
                     if (conv.length < rs3[c].maxOut(frames)) conv = new float[rs3[c].maxOut(frames)];
