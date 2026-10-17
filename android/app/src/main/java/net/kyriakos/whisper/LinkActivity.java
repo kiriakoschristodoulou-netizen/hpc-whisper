@@ -21,16 +21,14 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Locale;
 
-/** The link: connect, what the phone hears, the link check with each channel's speed, and the diagnostics recording. */
+/** The link: connect, what the phone hears, the link check with each channel's speed, and the diagnostics. */
 public class LinkActivity extends ToolActivity implements PairCheck.Watcher {
-    private static final int RECORD_SECONDS = 30;
-    private TextView state, speeds, received, recState, pairText;
-    private Button connectBtn, recBtn;
+    private TextView state, speeds, received, diagState, pairText;
+    private Button connectBtn;
     private MeterView meter;
     private int unreadable;
     private Receiver.Frame lastFrame;
     private long lastClassic;
-    private boolean recording;
     private String fastUp = "", fastDown = "";
 
     @Override protected String title() { return "Link"; }
@@ -48,7 +46,7 @@ public class LinkActivity extends ToolActivity implements PairCheck.Watcher {
         received = ui.text(c, "", 15, t().ink, false);
         received.setTypeface(Typeface.MONOSPACE);
         received.setPadding(0, ui.dp(6), 0, 0);
-        connectBtn = ui.button(c, "Connect", true, v -> { if (LinkService.on()) { if (recording) finishRecording(false); disconnect(); } else connect(); });
+        connectBtn = ui.button(c, "Connect", true, v -> { if (LinkService.on()) disconnect(); else connect(); });
 
         LinearLayout pc = ui.card("Pair");
         ui.body(pc, "Run this once with each new phone or handheld, in a quiet room. Started here, the phone first finds how "
@@ -67,10 +65,13 @@ public class LinkActivity extends ToolActivity implements PairCheck.Watcher {
         ui.button(chk, "Check the link", false, v -> checkLink());
 
         LinearLayout diag = ui.card("Diagnostics");
-        ui.body(diag, "If letters go missing, record what this phone hears while you type on the handheld, and send the "
-                + "recording to whoever is helping you. It is sound only, kept on this phone until you share it.");
-        recState = ui.text(diag, "", 14, t().ink, true);
-        recBtn = ui.button(diag, "Record " + RECORD_SECONDS + " seconds", false, v -> record());
+        ui.body(diag, "Everything the link does is written to a log on this phone while it is connected, and the last 30 "
+                + "seconds of what its microphone heard are kept. After a problem, share both in one file with whoever is "
+                + "helping you (send it as a file or document). The handheld keeps its own log: \"Whisper Tools log.txt\", "
+                + "next to WhisperTools.exe. Nothing leaves this phone unless you share it.");
+        diagState = ui.text(diag, "", 14, t().ink, true);
+        ui.button(diag, "Share diagnostics", true, v -> shareDiagnostics());
+        ui.button(diag, "Clear the log", false, v -> { DiagLog.clear(); diagState.setText("The log is cleared: it starts again from here."); });
     }
 
     @Override
@@ -115,7 +116,7 @@ public class LinkActivity extends ToolActivity implements PairCheck.Watcher {
         try {
             File f = new File(getCacheDir(), "whisper-tools-test-sound.wav");
             writeWav(f, pcm, p.lastHeardRate);
-            saveToDownloads(f);
+            saveToDownloads(f, "Whisper-Tools-test-sound-" + new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(new java.util.Date()) + ".wav", "audio/wav");
             Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".files", f);
             Intent i = new Intent(Intent.ACTION_SEND);
             i.setType("application/octet-stream");
@@ -195,61 +196,46 @@ public class LinkActivity extends ToolActivity implements PairCheck.Watcher {
     @Override public void onMessage(int ch, int type, byte[] p, float snr) { if (type == Link.T_MAP) refresh(); }
 
     @Override
-    protected void onPause() { if (recording) finishRecording(false); meter.clear(); super.onPause(); }
+    protected void onPause() { meter.clear(); super.onPause(); }
 
     // ---------- diagnostics ----------
-    private void record() {
-        if (recording) return;
-        if (!LinkService.on()) { if (connect()) handler.postDelayed(this::record, 1200); return; }
-        Listener listener = Link.get().listener;
-        if (!listener.isRunning()) { recState.setText("The microphone is not open"); return; }
-        listener.startTape(RECORD_SECONDS);
-        recording = true;
-        recBtn.setEnabled(false);
-        final long t0 = System.currentTimeMillis();
-        handler.post(new Runnable() {
-            @Override public void run() {
-                if (!recording) return;
-                long left = RECORD_SECONDS - (System.currentTimeMillis() - t0) / 1000;
-                recState.setText("Recording... type on the handheld (" + Math.max(0, left) + " s)");
-                if (listener.tapeFull()) finishRecording(true);
-                else handler.postDelayed(this, 250);
-            }
-        });
-    }
-
-    private void finishRecording(boolean share) {
-        recording = false;
-        recBtn.setEnabled(true);
-        Listener listener = Link.get().listener;
-        short[] pcm = listener.takeTape();
-        if (!share || pcm == null || pcm.length == 0) { recState.setText(""); return; }
+    private void shareDiagnostics() {
+        if (!DiagLog.on()) { diagState.setText("Nothing logged yet: connect first."); return; }
+        Link l = Link.get();
+        StringBuilder about = new StringBuilder();
+        about.append("Whisper Tools diagnostics, ").append(new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new java.util.Date())).append('\n');
+        about.append("Phone: ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL).append(", Android ").append(Build.VERSION.RELEASE).append('\n');
+        about.append("Microphone: ").append(l.listener.sourceName).append(", ").append(l.listener.channelsName).append(", ").append(l.listener.rate)
+             .append(String.format(Locale.US, " samples/s (measured %.0f)", l.listener.measuredRate)).append('\n');
+        about.append("Sound out: ").append(l.soundRoute()).append(", opened again ").append(l.soundReopened()).append(" times\n");
+        about.append("Silent loudness ").append(l.silentLevel).append(", answers on fast ").append(l.answersOnFast).append(", fast down measured ").append(l.fastDownTrained()).append('\n');
+        about.append("Frames from the handheld: ").append(l.listener.framesW3).append(" read, ").append(l.listener.failsW3).append(" not readable\n");
+        about.append("Link screen:\n").append(state.getText()).append('\n').append(speeds.getText()).append('\n');
+        about.append("Pair:\n").append(pairText.getText()).append('\n');
         try {
-            File f = new File(getCacheDir(), "whisper-tools-recording.wav");
-            writeWav(f, pcm, listener.rate);
-            String saved = saveToDownloads(f);
-            recState.setText("Recorded " + (pcm.length / Math.max(1, listener.rate)) + " s (" + listener.sourceName
-                    + " microphone)." + (saved != null ? " Saved in Downloads as " + saved + "." : "")
-                    + " Send it as a file or document: apps that send voice messages squeeze the sound and cut away the high tones that matter.");
+            String name = "Whisper-Tools-diagnostics-" + new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(new java.util.Date()) + ".zip";
+            File f = new File(getCacheDir(), name);
+            DiagLog.zip(f, about.toString());
+            String saved = saveToDownloads(f, name, "application/zip");
+            diagState.setText(saved != null ? "Saved in Downloads as " + saved + "." : "Ready to share.");
             Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".files", f);
             Intent i = new Intent(Intent.ACTION_SEND);
-            i.setType("application/octet-stream");
+            i.setType("application/zip");
             i.putExtra(Intent.EXTRA_STREAM, uri);
-            i.putExtra(Intent.EXTRA_SUBJECT, "Whisper Tools recording");
+            i.putExtra(Intent.EXTRA_SUBJECT, "Whisper Tools diagnostics");
             i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            startActivity(Intent.createChooser(i, "Send the recording"));
+            startActivity(Intent.createChooser(i, "Send the diagnostics"));
         } catch (Exception e) {
-            recState.setText("The recording could not be saved: " + e.getMessage());
+            diagState.setText("The diagnostics could not be saved: " + e.getMessage());
         }
     }
 
-    private String saveToDownloads(File f) {
+    private String saveToDownloads(File f, String name, String mime) {
         if (Build.VERSION.SDK_INT < 29) return null;
         try {
-            String name = "Whisper-Tools-recording-" + new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(new java.util.Date()) + ".wav";
             android.content.ContentValues v = new android.content.ContentValues();
             v.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, name);
-            v.put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "audio/wav");
+            v.put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mime);
             v.put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS);
             Uri uri = getContentResolver().insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
             if (uri == null) return null;

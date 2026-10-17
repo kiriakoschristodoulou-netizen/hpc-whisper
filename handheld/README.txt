@@ -1,4 +1,4 @@
-Whisper Tools 3.6
+Whisper Tools 3.7
 by Kyriakos Christodoulou
 
 Type on a Windows CE handheld PC and the text goes straight into any app
@@ -80,6 +80,15 @@ SOUND
   answers are silent (above 20 kHz). Files and the remote's screen use
   the fast channels: a soft hiss while they move, quiet otherwise. Keep
   the phone within about a metre and its media volume at about half.
+
+DIAGNOSTICS
+  Whisper Tools writes everything the link does to "Whisper Tools log.txt"
+  in this folder: every sound it plays, every frame it hears or loses,
+  files, pairing, and how busy the processor is. It is kept across starts
+  (and a soft reset loses only the last seconds); past 3 MB it starts
+  again. The phone keeps its own log: Link, Share diagnostics. After a
+  problem, send both (copy the handheld's with a memory card or
+  ActiveSync).
 
 SOURCE
   The full source is in the source folder (Free Pascal 3.2.2 for Windows

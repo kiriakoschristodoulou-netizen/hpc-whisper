@@ -56,6 +56,7 @@ public final class PairCheck {
     private void changed() { for (Watcher w : watchers) w.onPair(); }
 
     private void step(String s) {
+        DiagLog.log("pair: " + s);
         steps.add(new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date()) + "  " + s);
         while (steps.size() > 12) steps.remove(0);
     }

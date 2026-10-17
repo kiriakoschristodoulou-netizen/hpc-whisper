@@ -10,7 +10,7 @@ uses w3core, w3dsp, w3rx, w3tx, wpair;
 var re, im: TCpx;
     x, y: array of SmallInt; rs: TResampler; r: TRx; i, n, k, mode, secs, code: Integer;
     a: array[0..255] of LongInt; s: LongInt; seed: LongWord; tone: Integer;
-    m: TBitMap; msg: array[0..39] of Byte; fr: TSamples; pat: TSmallArr; pr: TPairResult;
+    m: TBitMap; msg: array[0..39] of Byte; fr: TSamples; pat: TSmallArr; pr: TPairResult; pm: array of Byte;
 function Rnd: Integer; begin seed := seed * 1103515245 + 12345; Result := Integer((seed shr 16) and 2047) - 1024; end;
 begin
   Val(ParamStr(1), mode, code); Val(ParamStr(2), secs, code); Val(ParamStr(3), tone, code);
@@ -34,6 +34,31 @@ begin
     for i := 0 to High(x) do x[i] := 0;
     for i := 0 to High(pat) do x[i + 30000] := pat[i] div 8;
     if mode = 7 then PairAnalyze(x, Length(x), 44100, pr);
+    Exit;
+  end;
+  { 4: the fast receiver reading file packets (1,030 bytes each, as the phone sends them) back to back for
+    TENTHS of a second, at the modem rate; 14: the same length of sound without frames (the sound is made
+    in both, so 4 minus 14 is the receiver's cost on frames) }
+  if (mode = 4) or (mode = 14) then
+  begin
+    SetLength(pm, 1030); for i := 0 to 1029 do pm[i] := (i * 13 + 5) and 255;
+    StdMap(CH_FD, m);
+    fr := MakeFrame51(CH_FD, m, T_FILE_DATA, pm, 1030, 9000);
+    n := 5120 * secs; SetLength(y, n); seed := 1;
+    i := 12800;
+    while i < n do
+    begin
+      for k := 0 to High(fr) do if i + k < n then y[i + k] := fr[k] div 4;
+      i := i + Length(fr) + 1280;
+    end;
+    for i := 0 to n - 1 do y[i] := y[i] + Rnd div 16;
+    if mode = 4 then
+    begin
+      RxInit(r, CH_FD);
+      for i := 0 to n div 4096 - 1 do RxPush(r, y, i * 4096, 4096);
+      k := 0; for i := 0 to High(fr) do if Abs(fr[i]) > k then k := Abs(fr[i]);
+      WriteLn('frames ', r.frames, ' fails ', r.fails, ' frame ', Length(fr), ' samples, peak ', k, ' last ', r.lastFail);
+    end;
     Exit;
   end;
   if mode = 9 then

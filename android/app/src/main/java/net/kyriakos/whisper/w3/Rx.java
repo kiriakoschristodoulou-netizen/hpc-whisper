@@ -17,6 +17,8 @@ public final class Rx {
         void onMessage(Rx rx, int type, byte[] msg, float snrDb, int fixed);
         void onTrain(Rx rx, float[] snrDb);
         void onFail(Rx rx, String why);
+        /** A frame's header was read: what is coming, and how many symbols long (for the diagnostics log). */
+        default void onHeader(Rx rx, int type, int len, int symbols) { }
     }
 
     static final int RB = 1 << 15, MASK = RB - 1, BACK = 8;
@@ -179,6 +181,7 @@ public final class Rx {
                     if (type == Tx.TRAIN) { psym = Tx.TRAIN_SYMBOLS; trainErr = new float[2][ch.count()]; }
                     else psym = (Codec.codedLength(len) * 8 + cur.bitsPerSymbol() - 1) / Math.max(1, cur.bitsPerSymbol());
                     errSum = 0; errN = 0;
+                    sink.onHeader(this, type, len, psym);
                 }
                 if (psym >= 0 && s == 2 + hsym + psym) { finish(); return; }
             }

@@ -75,6 +75,7 @@ public final class Transfers implements Link.Client {
         Item it = new Item(name, true, data.length);
         nextId = (nextId + 1) & 0xFFFF;
         it.send = new FileSend(nextId, name, kind, data);
+        DiagLog.log("file out: queued \"" + name + "\", " + data.length + " bytes, id " + nextId + ", kind " + kind);
         items.add(it);
         changed();
         return it;
@@ -117,6 +118,7 @@ public final class Transfers implements Link.Client {
             if (it.started == 0) {
                 it.started = now;
                 // the fast channel down is measured first, once in a while
+                DiagLog.log("file out: starting \"" + it.name + "\"" + (link.fastDownTrained() ? "" : ", the fast channel down not measured yet"));
                 if (!link.fastDownTrained() && now - trainAsked > 60000) { trainAsked = now; link.send(Channel.FD, Link.T_TRAIN, new byte[0]); }
             }
             long t = Math.max(now, link.playEndMs());
@@ -131,6 +133,7 @@ public final class Transfers implements Link.Client {
             float p = it.send.progress();
             if (p != it.progress) { it.progress = p; changed(); }
             if (it.send.done || it.send.failed) {
+                DiagLog.log("file out: finished, done " + it.send.done + ", failed " + it.send.failed + ", all confirmed " + it.send.confirmedAll);
                 it.finished = true; it.doneAt = now;
                 it.ok = it.send.done;
                 it.state = it.send.failed ? "Stopped: the handheld does not answer"
@@ -168,6 +171,7 @@ public final class Transfers implements Link.Client {
         switch (type) {
             case Link.T_FILE_NEED: {
                 Item it = current();
+                DiagLog.log("file out: the handheld asks " + DiagLog.describe(type, p) + (it == null ? ", but nothing is being sent" : ""));
                 if (it != null) it.send.onNeed(p, now);
                 break;
             }

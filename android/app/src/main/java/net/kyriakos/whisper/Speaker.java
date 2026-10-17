@@ -83,9 +83,11 @@ final class Speaker {
             track = t;
             written = 0;
             route = routeName();
+            DiagLog.log("speaker open: " + rate + " samples/s, buffer " + Math.max(min * 2, rate / 10 * 2) + " bytes, playing on " + (route.isEmpty() ? "(not known yet)" : route));
             return true;
         } catch (Exception e) {
             track = null;
+            DiagLog.log("speaker: could not open: " + e);
             return false;
         }
     }
@@ -172,6 +174,7 @@ final class Speaker {
                 if (++idle > 200) { w = AudioTrack.ERROR_DEAD_OBJECT; } else { sleep(5); continue; }
             }
             // the output died (its route changed, or the system took it): open it again and go on
+            DiagLog.log("speaker: the output " + (w == 0 ? "took nothing for a second" : "failed (" + w + ")") + ", opening it again");
             close();
             reopened++;
             if (!open()) { sleep(200); if (!open()) return false; }
@@ -226,9 +229,12 @@ final class Speaker {
             // the microphone hears this phone from when it sounds until its echo has died away
             if (it.mute) mute.muteBetween(start - 20_000_000L, playingUntil + 60_000_000L);
             playing = true;
-            writeAll(pcm, n);
+            DiagLog.log(String.format(java.util.Locale.US, "speaker: a sound of %d ms%s sounds in %d ms%s", dur / 1_000_000L, wake ? " (with a wake-up lead-in)" : "",
+                    Math.max(0, (start - System.nanoTime()) / 1_000_000L), it.mute ? ", microphone ignored meanwhile" : ""));
+            if (!writeAll(pcm, n)) DiagLog.log("speaker: the sound could not be written");
             framesPlayed++;
             String r = routeName();
+            if (!r.isEmpty() && !r.equals(route)) DiagLog.log("speaker: now playing on " + r);
             if (!r.isEmpty()) route = r;
         }
     }

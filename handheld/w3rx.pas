@@ -59,6 +59,8 @@ type
     trainSnr10: array[0..MAXCAR - 1] of Integer;
     frames, fails: Integer;
     lastFail: string;
+    { for the diagnostics log: frames that seemed to start, that were found (S and R), headers read, the last one }
+    trigs, starts, hdrs, hdrTyp, hdrLen, hdrSym: Integer;
   end;
   PRx = ^TRx;
 
@@ -431,7 +433,7 @@ begin
       if (r.metric[k] > 1843) and ((e shr 1) > r.floor) and (e > 2) then
       begin
         {$ifdef RXDEBUG}WriteLn('trigger at ', r.scan, ' e ', e, ' floor ', r.floor, ' metric ', r.metric[k]);{$endif}
-        r.state := SEEK; r.trig := r.scan; Exit;
+        r.state := SEEK; r.trig := r.scan; Inc(r.trigs); Exit;
       end;
       r.floor := r.floor + SarLongint(e - r.floor, 10);     { about 80 ms }
       if r.floor < 1 then r.floor := 1;
@@ -493,7 +495,7 @@ begin
     ClearBits(r); r.errSum := 0; r.errN := 0;
     for i := 0 to MAXCAR - 1 do r.trainErr[i] := 0;
     r.trainN := 0;
-    r.state := DECODE;
+    r.state := DECODE; Inc(r.starts);
   end;
   if r.state = DECODE then
     while True do
@@ -510,6 +512,7 @@ begin
         if not r.haveMap[r.mapNo] then begin Fail(r, 'map'); Exit; end;
         r.cur := r.maps[r.mapNo];
         ClearBits(r);
+        Inc(r.hdrs); r.hdrTyp := r.typ; r.hdrLen := r.len;
         if r.typ = T_TRAIN then r.psym := TRAIN_SYMBOLS
         else
         begin
@@ -518,6 +521,7 @@ begin
           if CodedLength(r.len) > MAXCODED then begin Fail(r, 'length'); Exit; end;
         end;
         r.errSum := 0; r.errN := 0;
+        r.hdrSym := r.psym;
       end;
       if (r.psym >= 0) and (r.s = 2 + r.hsym + r.psym) then begin Finish(r); Exit; end;
     end;

@@ -1,5 +1,5 @@
 program WhisperTools;
-{ Whisper Tools 3.6, for Windows CE handheld PCs (made on an HP Jornada 720).
+{ Whisper Tools 3.7, for Windows CE handheld PCs (made on an HP Jornada 720).
 
   Type here and the text goes into any app on your phone, with Tab, the
   arrows, Ctrl+C and the other keys; the phone confirms what has arrived.
@@ -19,10 +19,10 @@ program WhisperTools;
 {$ifdef wince}{$define API:=cdecl}{$else}{$define API:=stdcall}{$endif}
 {$packrecords c}
 {$R WhisperTools.res}
-uses Windows, w3core, w3dsp, w3tx, w3rx, waudio, wtext, wfile, wscreen, wwav, wimg, winf, wmodem, wpair;
+uses Windows, w3core, w3dsp, w3tx, w3rx, waudio, wtext, wfile, wscreen, wwav, wimg, winf, wmodem, wpair, wlog;
 
 const
-  VERSION = '3.6';
+  VERSION = '3.7';
   CREATOR = 'Kyriakos Christodoulou';
   CLSNAME: UnicodeString = 'WhisperTools';
   APPNAME: UnicodeString = 'Whisper Tools';
@@ -605,13 +605,16 @@ begin
   if typ = T_TRAIN then x := MakeTrain(ch, lvl)
   else x := MakeFrame(ch, m, typ, p, n, lvl);
   Result := AudioSend(x);
+  if Result then Log('send ' + LChan(ch) + ' ' + LDescribe(typ, p, n) + ', loudness ' + LI(lvl) + ', ' + LI(Int64(Length(x)) * 1000 div OUT_RATE) + ' ms')
+  else Log('send ' + LChan(ch) + ' ' + LType(typ) + ': NOT SENT, the queue is full');
 end;
 
 { an answer to the phone (MAP, FILE_NEED, HELLO): sent when the channel is free }
 procedure Answer(typ: Integer; const p: array of Byte; n: Integer);
 var i: Integer;
 begin
-  if AnswerN > High(Answers) then Exit;
+  if AnswerN > High(Answers) then begin Log('answer ' + LType(typ) + ' dropped: too many answers waiting'); Exit; end;
+  Log('answer ' + LType(typ) + ' waits for its turn (' + LI(AnswerN + 1) + ' waiting)');
   Answers[AnswerN].ch := SilentCh; Answers[AnswerN].typ := typ; Answers[AnswerN].n := n;
   for i := 0 to n - 1 do Answers[AnswerN].p[i] := p[i];
   Inc(AnswerN);
@@ -800,7 +803,7 @@ begin
   if (Incoming.r.kind and KIND_ZLIB) <> 0 then
   begin
     d := InflateAll(@Incoming.r.data[0], Length(Incoming.r.data), MAX_IN_FILE, n);
-    if d = nil then begin SetTrans(Incoming.t, 'Arrived damaged', 1000, True, False); Exit; end;
+    if d = nil then begin SetTrans(Incoming.t, 'Arrived damaged', 1000, True, False); Log('file: all packets here, but it would not unpack'); Exit; end;
     ok := WriteWhole(path, d, n);
     FreeMem(d);
   end
@@ -808,6 +811,7 @@ begin
   else ok := WriteWhole(path, nil, 0);
   SetLength(Incoming.r.data, 0);
   Trans[Incoming.t].name := name;
+  if ok then Log('file: complete and saved') else Log('file: complete, but it could not be saved');
   if ok then SetTrans(Incoming.t, 'Saved in ' + InFolder, 1000, True, True)
   else SetTrans(Incoming.t, 'Could not be saved (is there room?)', 1000, True, False);
   if (Screen = SCR_FILES) and SameW(Folder, InFolder) then ListFolder;
@@ -820,6 +824,7 @@ begin
   id := FrIdOf(p, n);
   if (Incoming.r.id = id) and (Incoming.active or (GetTickCount - Incoming.doneAt < 120000)) and (Length(Incoming.r.got) > 0) then
   begin
+    Log('file: the offer again (' + LI(Incoming.r.count) + ' of ' + LI(Incoming.r.packets) + ' packets here)');
     FrOffer(Incoming.r, GetTickCount);
     Exit;
   end;
@@ -832,9 +837,11 @@ begin
   if (n >= 6) and not MemoryFor((LongInt(p[2]) shl 24) or (p[3] shl 16) or (p[4] shl 8) or p[5]) then
   begin
     FileNote := 'A file from the phone is too large for the free memory.';
+    Log('file: offer refused, not enough free memory');
     Exit;
   end;
-  if not FrFromOffer(Incoming.r, p, n, GetTickCount, MAX_IN_FILE) then Exit;
+  if not FrFromOffer(Incoming.r, p, n, GetTickCount, MAX_IN_FILE) then begin Log('file: offer not understood or too large'); Exit; end;
+  Log('file: receiving a new one, ' + LI(Incoming.r.packets) + ' packets');
   Incoming.active := True;
   nm := SafeName(FromUtf8(@Incoming.r.nameUtf8[0], Length(Incoming.r.nameUtf8)));
   Incoming.t := NewTransfer(False, nm, Incoming.r.size);
@@ -848,11 +855,14 @@ begin
   id := FrIdOf(p, n);
   if (Length(Incoming.r.got) = 0) or (Incoming.r.id <> id) then
   begin
+    Log('file: a packet of a file not offered (id ' + LI(id) + '): will ask for the offer');
     UnknownId := id; UnknownAt := GetTickCount;
     Exit;
   end;
   before := Incoming.r.count;
   FrData(Incoming.r, p, n, GetTickCount);
+  if Incoming.r.count <> before then Log('file: packet kept, ' + LI(Incoming.r.count) + ' of ' + LI(Incoming.r.packets))
+  else Log('file: packet not kept (a repeat, or the wrong size)');
   if Incoming.active and (Incoming.r.count <> before) then
     SetTrans(Incoming.t, 'Receiving', Incoming.r.count * 1000 div Incoming.r.packets, False, False);
 end;
@@ -908,7 +918,7 @@ begin
   PhoneHeard := GetTickCount;
   PhoneAnswers := True;
   case typ of
-    T_TEXT_ACK: TsAck(Ts, g.msg.data, n, GetTickCount);
+    T_TEXT_ACK: begin TsAck(Ts, g.msg.data, n, GetTickCount); Log('text: ' + LI(TsUnconfirmed(Ts)) + ' characters not yet confirmed'); end;
     T_MAP:
       if MapFromMsg(g.msg.data, n, m) and (m.ch = CH_FU) then
       begin
@@ -936,6 +946,7 @@ begin
         if (PairTheirs.ladder >= 0) and (PairTheirs.ladder <= High(PAIR_LADDER)) then
         begin SilentPeak := PAIR_LADDER[PairTheirs.ladder]; LevelSource := 1; end;
         SaveCfg;
+        Log('pair: the phone''s report: typing on the fast channel ' + LI(Ord(TypingOnFast)) + ', silent loudness ' + LI(SilentPeak));
       end;
     T_FILE_OFFER: OnOffer(g.msg.data, n);
     T_FILE_DATA: OnData(g.msg.data, n);
@@ -1290,8 +1301,10 @@ begin
     pos := PairMarkPos - Int64(700) * IN_RATE div 1000;
     SetLength(x, Int64(4200) * IN_RATE div 1000);
     n := AudioRingCopy(pos, x, Length(x));
-    if PairAnalyze(x, n, IN_RATE, PairMine) then
+    if not PairAnalyze(x, n, IN_RATE, PairMine) then Log('pair: the marker was not the phone''s test sound (or it could not be read)')
+    else
     begin
+      Log('pair: the phone''s test sound read, scale ' + LI(PairMine.scale10k) + ', its silent band ' + LI(PairBand10(PairMine, 20000, 21200) div 10) + ' dB');
       HaveMine := True;
       { the phone's silent band too weak here: it will answer on the fast channel, so that one stays on }
       FastAlways := PairBand10(PairMine, 20000, 21200) < 120;
@@ -1311,11 +1324,12 @@ begin
   begin
     PairPlayed := True;
     if HaveMine then PairState := 3
-    else begin PairState := 2; PairDeadline := now + 15000; PairNote := 'Listening for the phone''s test sound (press Pair on the phone if it does not start by itself)...'; end;
+    else begin Log('pair: test sound played, listening for the phone''s'); PairState := 2; PairDeadline := now + 15000; PairNote := 'Listening for the phone''s test sound (press Pair on the phone if it does not start by itself)...'; end;
   end;
   if (PairState = 2) and (LongInt(now - PairDeadline) > 0) then
   begin
     PairState := 3;
+    Log('pair: the phone''s test sound was not heard');
     PairNote := 'The phone''s test sound was not heard. Is Whisper Tools connected on the phone, its media volume about half?';
   end;
   { our report, once we have heard theirs and played ours }
@@ -1334,11 +1348,25 @@ var PhoneHeardSD: LongWord = 0;
 const LISTEN_MS = 1500;          { listening after each text frame of ours, for the phone's answer (it may take ~0.6 s to sound, and as long to play) }
 var WaitAnswer: Boolean = False;  { the last turn held a text frame: the phone will confirm it }
 
+var LastPump: LongWord = 0; LoggedScreen: Integer = -1; LastAlive: LongWord = 0;
+
 procedure Pump;
 var g: TGotMsg; t: TTrainResult; now: LongWord; p: array[0..127] of Byte; n, typ, i: Integer; fp: TByteArr; cs: TSamples;
     changed: Boolean;
 begin
   changed := False;
+  now := GetTickCount;
+  if (LastPump <> 0) and (now - LastPump > 1500) then Log('screen thread: held up for ' + LI(now - LastPump) + ' ms');
+  LastPump := now;
+  if Screen <> LoggedScreen then begin LoggedScreen := Screen; Log('screen ' + LI(Screen)); end;
+  if now - LastAlive >= 15000 then
+  begin
+    LastAlive := now;
+    Log('status: sounds queued ' + LI(AudioQueued) + ', answers waiting ' + LI(AnswerN) + ', text not confirmed ' + LI(TsUnconfirmed(Ts))
+      + ', file in ' + LI(Ord(Incoming.active)) + ', files out ' + LI(NOut) + ', turns ' + LI(Turns) + ', frames heard ' + LI(FramesIn)
+      + ', lost ' + LI(FramesBad) + ', skipped buffers ' + LI(Overruns));
+  end;
+  LogTick(False);
   while AudioTake(g) do
   begin
     if g.ch = CH_SD then PhoneHeardSD := GetTickCount;
@@ -1398,12 +1426,14 @@ begin
     SetLength(fp, 0);
     if FsNext(Outgoing[0].s, now, typ, fp, n) then
     begin
+      Log('file out: ' + LI(FsConfirmed(Outgoing[0].s)) + ' of ' + LI(Outgoing[0].s.packets) + ' packets confirmed');
       if FastFiles then SendMsg(CH_FU, typ, fp, n) else SendMsg(SilentCh, typ, fp, n);
       SetTrans(Outgoing[0].t, 'Sending', FsProgress1000(Outgoing[0].s), False, False);
       changed := True;
     end;
     if Outgoing[0].s.done or Outgoing[0].s.failed then
     begin
+      Log('file out: finished, done ' + LI(Ord(Outgoing[0].s.done)) + ' failed ' + LI(Ord(Outgoing[0].s.failed)) + ' all confirmed ' + LI(Ord(Outgoing[0].s.confirmedAll)));
       if Outgoing[0].s.failed then SetTrans(Outgoing[0].t, 'Stopped: the phone does not answer', FsProgress1000(Outgoing[0].s), True, False)
       else if Outgoing[0].s.confirmedAll then SetTrans(Outgoing[0].t, 'On the phone (Downloads/Whisper Tools)', 1000, True, True)
       else SetTrans(Outgoing[0].t, 'Sent (the phone could not confirm)', 1000, True, True);
@@ -1999,7 +2029,9 @@ begin
   Quitting := True;
   SaveCfg;
   if Assigned(pKillTimer) then pKillTimer(hMain, TIMER_ID);
+  Log('closing');
   AudioStop;
+  LogTick(True);
   DestroyWindow(hMain);
 end;
 
@@ -2373,6 +2405,10 @@ begin
   LoadCfg;
   MakeInFolder;
   Folder := InFolder;
+  LogStart(ProgDir + 'Whisper Tools log.txt', VERSION);
+  Log('settings: microphone rate ' + LI(InRate100 div 100) + ' (source ' + LI(RateSource) + ': 0 = not known yet), silent loudness ' + LI(SilentPeak)
+    + ' (source ' + LI(LevelSource) + '), classic ' + LI(Ord(Classic)) + ', wide ' + LI(Ord(WideSilent)) + ', fast files '
+    + LI(Ord(FastFiles)) + ', fast level ' + LI(FastLevel) + ', typing on fast ' + LI(Ord(TypingOnFast)) + ', fast always ' + LI(Ord(FastAlways)));
 
   if not SystemParametersInfoW(SPI_GETWORKAREA, 0, @wa, 0) then wa := MkRect(0, 0, 640, 214);
   {$ifndef wince}

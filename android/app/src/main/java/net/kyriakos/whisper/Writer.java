@@ -45,6 +45,7 @@ public final class Writer {
         int cls = info.inputType & EditorInfo.TYPE_MASK_CLASS;
         singleLine = cls == EditorInfo.TYPE_CLASS_TEXT
                 && (info.inputType & EditorInfo.TYPE_TEXT_FLAG_MULTI_LINE) == 0;
+        DiagLog.log("keyboard: a new field (" + (singleLine ? "one line" : "several lines") + "), from page byte " + committed);
     }
 
     /** The field is closing or the keyboard is hidden: write what is underlined as it is. */
@@ -74,6 +75,7 @@ public final class Writer {
             if (doc == -1) while (from < m.L && !m.known[from]) from++;
             doc = m.doc;
             committed = from;
+            DiagLog.log("keyboard: a new page from the handheld, writing from byte " + from);
         }
         // the handheld's Backspace went past text already written: take it back
         if (m.L < committed && ic != null) {
@@ -81,6 +83,7 @@ public final class Writer {
             ic.beginBatchEdit();
             if (!shown.isEmpty()) { ic.setComposingText("", 1); ic.finishComposingText(); shown = ""; }
             ic.deleteSurroundingText(chars, 0);
+            DiagLog.log("keyboard: took back " + chars + " characters (Backspace on the handheld)");
             ic.endBatchEdit();
             committed = m.L;
         }
@@ -94,6 +97,7 @@ public final class Writer {
         if (m.doc != doc) return;                           // frame() handles a new page
         if (committed > m.L) committed = m.L;
         int fu = m.firstUnknown(committed);
+        if (fu < m.L) DiagLog.log("keyboard: page byte " + fu + " not heard yet (page " + m.L + " bytes): what follows waits");
         // keys: the text before a key is written at once, then the key is pressed
         int k;
         while ((k = Keys.findKey(m.bytes, committed, fu)) >= 0) {
@@ -127,6 +131,9 @@ public final class Writer {
     /** Writes text for good (it replaces what is underlined). Enter in a one-line field does what Enter does there. */
     private void commit(InputConnection ic, EditorInfo info, String write) {
         if (write.isEmpty()) return;
+        StringBuilder e = new StringBuilder();
+        for (char c : write.toCharArray()) { if (c >= 32 && c < 127 && c != '"') e.append(c); else e.append('<').append((int) c).append('>'); }
+        DiagLog.log("keyboard: wrote \"" + e + "\"");
         if (singleLine && write.indexOf('\n') >= 0) {
             String[] parts = write.split("\n", -1);
             ic.commitText(parts[0], 1);

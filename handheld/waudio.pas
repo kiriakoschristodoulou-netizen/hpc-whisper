@@ -21,7 +21,7 @@ unit waudio;
 {$ifdef wince}{$define API:=cdecl}{$else}{$define API:=stdcall}{$endif}
 interface
 
-uses Windows, w3core, w3dsp, w3rx, w3tx;
+uses Windows, w3core, w3dsp, w3rx, w3tx, wlog;
 
 const
   OUT_RATE = 44100;
@@ -249,6 +249,7 @@ begin
     Inc(FramesOut);
   end;
   LeaveCriticalSection(Lock);
+  if Result then Log('talk: playing a sound of ' + LI(Int64(Length(Cur)) * 1000 div OUT_RATE) + ' ms');
 end;
 
 function QueueEmpty: Boolean;
@@ -284,7 +285,7 @@ begin
 end;
 
 procedure Collect(var r: TRx);
-var m: TRxMsg; c: Integer;
+var m: TRxMsg; c, k: Integer;
 begin
   while RxTake(r, m) do
   begin
@@ -294,6 +295,8 @@ begin
     if GotHead = GotTail then GotTail := (GotTail + 1) mod RXQ;
     LeaveCriticalSection(Lock);
     Inc(FramesIn);
+    Log('heard ' + LChan(r.ch) + ' ' + LDescribe(m.typ, m.data, m.len) + ', quality ' + LI(m.snr10 div 10) + ' dB, '
+      + LI(m.fixed) + ' bytes corrected');
     Notify;
   end;
   if r.trainReady then
@@ -304,6 +307,8 @@ begin
     for c := 0 to MAXCAR - 1 do TrainQ[TrainHead].snr10[c] := r.trainSnr10[c];
     TrainHead := (TrainHead + 1) mod 4;
     LeaveCriticalSection(Lock);
+    c := 0; for k := 0 to Chans[r.ch].n - 1 do c := c + r.trainSnr10[k];
+    Log('heard ' + LChan(r.ch) + ' TRAIN, average quality ' + LI(c div Chans[r.ch].n div 10) + ' dB');
     Notify;
   end;
 end;
@@ -356,7 +361,7 @@ begin
         { a test sound has two markers and a 2 kHz step: only its first counts (the others moved the
           reading 2.7 s late, so a test sound was never read: device test, 16 October 2026) }
         if (MkRun = 15) and ((PairMarkAt = 0) or (LongInt(GetTickCount - PairMarkAt) > 4500)) then
-        begin PairMarkPos := MkRunPos; PairMarkAt := GetTickCount; Notify; end;
+        begin PairMarkPos := MkRunPos; PairMarkAt := GetTickCount; Log('pair: a 2 kHz marker heard'); Notify; end;
       end
       else
       begin
@@ -373,13 +378,14 @@ function OpenOut: Boolean;
 var fmt: TWaveFormat; v: DWORD; k: Integer;
 begin
   Result := False;
-  if (not Assigned(pOutOpen)) or (pOutNum() = 0) then begin OutErr := 'No sound device found.'; Exit; end;
+  if (not Assigned(pOutOpen)) or (pOutNum() = 0) then begin OutErr := 'No sound device found.'; Log('speaker: no sound device'); Exit; end;
   FillChar(fmt, SizeOf(fmt), 0);
   fmt.tag := 1; fmt.channels := 1; fmt.rate := OUT_RATE; fmt.bits := 16; fmt.align := 2; fmt.bytesPerSec := OUT_RATE * 2;
   if pOutOpen(hOut, UINT(-1), @fmt, 0, 0, 0) <> 0 then
   begin
     Inc(OpenOutFails);
     OutErr := 'The speaker would not open at 44,100 samples/s.';
+    Log('speaker: would not open');
     Exit;
   end;
   { the system volume goes to full while the program runs (the frames themselves carry the loudness) }
@@ -408,13 +414,14 @@ function OpenIn: Boolean;
 var fmt: TWaveFormat; k: Integer;
 begin
   Result := False;
-  if (not Assigned(pInOpen)) or (pInNum() = 0) then begin InErr := 'No microphone found.'; Exit; end;
+  if (not Assigned(pInOpen)) or (pInNum() = 0) then begin InErr := 'No microphone found.'; Log('microphone: none found'); Exit; end;
   FillChar(fmt, SizeOf(fmt), 0);
   fmt.tag := 1; fmt.channels := 1; fmt.rate := IN_RATE; fmt.bits := 16; fmt.align := 2; fmt.bytesPerSec := IN_RATE * 2;
   if pInOpen(hIn, UINT(-1), @fmt, 0, 0, 0) <> 0 then
   begin
     Inc(OpenInFails);
     InErr := 'The microphone would not open.';
+    Log('microphone: would not open');
     Exit;
   end;
   for k := 0 to IN_NBUF - 1 do
@@ -448,12 +455,17 @@ end;
   and closer ones are smoothed in. }
 procedure SetRate(r100: Int64);
 begin
-  if (RateSource > 0) and (Abs(r100 - InRate100) * 100 > InRate100) then begin RateOdd := r100; Exit; end;
+  if (RateSource > 0) and (Abs(r100 - InRate100) * 100 > InRate100) then
+  begin
+    if RateOdd <> r100 then Log('microphone rate: an odd reading of ' + LI(r100 div 100) + ' not used (kept ' + LI(InRate100 div 100) + ')');
+    RateOdd := r100; Exit;
+  end;
   RateOdd := 0;
   if RateSource = 0 then begin InRate100 := r100; RateSource := 1; end
   else if Abs(r100 - InRate100) * 10000 > InRate100 then InRate100 := (InRate100 * 3 + r100) div 4
   else Exit;
   LastSet := InRate100; RsSetRates(Rs, InRate100, Int64(MRATE) * 100);
+  Log('microphone rate now ' + LI(InRate100 div 100) + ' (measured ' + LI(r100 div 100) + ')');
 end;
 
 { Pair measured the rate against the phone's clock: it wins, whatever was measured }
@@ -461,7 +473,42 @@ procedure AudioCalibrate(r100: Int64);
 begin
   InRate100 := r100; RateSource := 2; RateOdd := 0;
   RateSamples := 0; RateMs := 0;                    { measurements start again from here }
+  Log('microphone rate calibrated by Pair: ' + LI(r100 div 100));
   LastSet := r100; RsSetRates(Rs, InRate100, Int64(MRATE) * 100);
+end;
+
+var
+  { the diagnostics log: how busy listening keeps the processor, over each 5 s }
+  StAt: LongWord = 0; StBufs: Integer = 0; StBusy: Integer = 0; StMax: Integer = 0; StBehind: Integer = 0;
+  StFastBufs: Integer = 0; PrevFast: Boolean = False;
+  PrevHdrs, PrevFails, PrevTrigs, PrevStarts, PrevFrames: array[0..1] of Integer;
+
+procedure LogRx(var r: TRx; i: Integer);
+begin
+  if r.hdrs <> PrevHdrs[i] then
+  begin
+    PrevHdrs[i] := r.hdrs;
+    Log(LChan(r.ch) + ' frame coming: ' + LType(r.hdrTyp) + ', ' + LI(r.hdrLen) + ' bytes, '
+      + LI(r.hdrSym) + ' symbols (' + LI(Int64(r.hdrSym) * NSYM * 1000 div MRATE) + ' ms)');
+  end;
+  if r.fails <> PrevFails[i] then
+  begin
+    PrevFails[i] := r.fails;
+    Log(LChan(r.ch) + ' frame lost: ' + r.lastFail);
+  end;
+end;
+
+procedure LogStats(now: LongWord);
+begin
+  if StBufs > 0 then
+    Log('listening ' + LI((now - StAt) div 100 div 10) + '.' + LI((now - StAt) div 100 mod 10) + ' s: ' + LI(StBufs) + ' buffers, processor '
+      + LI(StBusy div StBufs) + '% busy (worst buffer ' + LI(StMax) + ' ms of 100), skipped ' + LI(StBehind)
+      + ', fast receiver on for ' + LI(StFastBufs) + ', loudest ' + LI(InPeak * 100 div 32768) + '%; SD seen '
+      + LI(RxSD.trigs - PrevTrigs[0]) + ' found ' + LI(RxSD.starts - PrevStarts[0]) + ' read ' + LI(RxSD.frames - PrevFrames[0])
+      + '; FD seen ' + LI(RxFD.trigs - PrevTrigs[1]) + ' found ' + LI(RxFD.starts - PrevStarts[1]) + ' read ' + LI(RxFD.frames - PrevFrames[1]));
+  PrevTrigs[0] := RxSD.trigs; PrevStarts[0] := RxSD.starts; PrevFrames[0] := RxSD.frames;
+  PrevTrigs[1] := RxFD.trigs; PrevStarts[1] := RxFD.starts; PrevFrames[1] := RxFD.frames;
+  StAt := now; StBufs := 0; StBusy := 0; StMax := 0; StBehind := 0; StFastBufs := 0;
 end;
 
 var
@@ -471,7 +518,7 @@ var
 
 { one full microphone buffer, if there is one; False when there was none }
 function ListenOnce: Boolean;
-var k, n, i, v: Integer; now: LongWord; behind: Boolean; m: TBitMap; r100, ms: Int64;
+var k, n, i, v, busy: Integer; now, t1: LongWord; behind: Boolean; m: TBitMap; r100, ms: Int64;
 begin
   Result := False;
   k := InK;
@@ -481,7 +528,18 @@ begin
   now := GetTickCount;
   behind := True;
   for i := 1 to IN_NBUF - 1 do if (InHdr[(k + i) mod IN_NBUF].flags and 1) = 0 then behind := False;
-  if behind then Inc(Overruns);
+  if behind then
+  begin
+    Inc(Overruns);
+    if StBehind = 0 then Log('listening fell behind: a buffer of sound was skipped (the processor is too busy)');
+    Inc(StBehind);
+  end;
+  if StAt = 0 then StAt := now;
+  if ListenFast <> PrevFast then
+  begin
+    PrevFast := ListenFast;
+    if ListenFast then Log('fast receiver on') else Log('fast receiver off');
+  end;
   { the rate: samples against the clock, from half a second into each listening turn, over all of them.
     Only whole buffers count, each at the moment it arrived: the samples counted after the first buffer
     arrived, over the time to the last one (counting to the moment the microphone closed instead left out
@@ -522,12 +580,17 @@ begin
   LeaveCriticalSection(Lock);
   if not behind then
   begin
+    t1 := GetTickCount;
     i := RsProcess(Rs, InBuf[k], 0, n, Conv, 0);
     RxPush(RxSD, Conv, 0, i);
     Collect(RxSD);
-    if ListenFast then begin RxPush(RxFD, Conv, 0, i); Collect(RxFD); end;
+    if ListenFast then begin RxPush(RxFD, Conv, 0, i); Collect(RxFD); Inc(StFastBufs); end;
     if RxSD.fails + RxFD.fails <> FramesBad then begin FramesBad := RxSD.fails + RxFD.fails; Notify; end;
+    busy := GetTickCount - t1;
+    Inc(StBufs); Inc(StBusy, busy); if busy > StMax then StMax := busy;
+    LogRx(RxSD, 0); LogRx(RxFD, 1);
   end;
+  if now - StAt >= 5000 then LogStats(now);
   InHdr[k].flags := InHdr[k].flags and not DWORD(1);
   pInAdd(hIn, @InHdr[k], SizeOf(TWaveHdr));
   InK := (k + 1) mod IN_NBUF;
@@ -586,6 +649,7 @@ procedure Talk;
 var k, leadPos, tailLeft, peak, playing, i: Integer; t0: LongWord; more: Boolean;
 begin
   if not FullDuplex then begin EndSession; CloseIn; end;
+  Log('talk: microphone closed, speaker opening');
   if not OpenOut then
   begin
     { no speaker: drop what was queued, listen again }
@@ -634,6 +698,8 @@ begin
   LastTurnAt := GetTickCount; LastTurnMs := LastTurnAt - t0;
   LastTurnPeak := peak * 100 div 32768;
   OutPlaying := False;
+  if OutErr <> '' then Log('talk: the speaker stopped taking sound');
+  Log('talk: turn over after ' + LI(LastTurnMs) + ' ms, loudest ' + LI(LastTurnPeak) + '%; listening again');
   EnterCriticalSection(Lock);
   if QTail = QHead then Sounding := False;
   LeaveCriticalSection(Lock);
@@ -641,18 +707,27 @@ begin
 end;
 
 function AudioThread(param: Pointer): DWORD; API;
-var idle: Boolean;
+var idle: Boolean; last, now: LongWord;
 begin
   Result := 0;
+  last := GetTickCount;
   while not Quit do
   begin
+    now := GetTickCount;
+    if now - last > 700 then Log('sound thread: ' + LI(now - last) + ' ms without a turn of its loop (it was held up)');
+    last := now;
+    LogTick(False);
     if not QueueEmpty then
     begin
       Talk;
+      last := GetTickCount;
       Continue;
     end;
     if not InOpen then
+    begin
       if not OpenIn then begin Notify; Sleep(500); Continue; end;
+      Log('microphone open, listening');
+    end;
     idle := not ListenOnce;
     if idle then Sleep(10);
   end;
@@ -660,10 +735,16 @@ begin
   EndSession;
   CloseIn;
   if HaveOldVol then pSetVol(0, OldVol);
+  Log('sound thread: stopped');
+end;
+
+function AudioThreadRtl(param: Pointer): PtrInt;
+begin
+  Result := AudioThread(param);
 end;
 
 procedure AudioStart;
-var tid: DWORD; i: Integer; ramp: Integer;
+var rtid: TThreadID; i: Integer; ramp: Integer;
 begin
   if not InitDone then begin InitializeCriticalSection(Lock); InitDone := True; end;
   Quit := False;
@@ -681,7 +762,10 @@ begin
     if High(Lead) - i < ramp then Lead[i] := Lead[i] * (High(Lead) - i) div ramp;
   end;
   MkCoef := 2 * CosI(Integer((Int64(2000) * 65536 div IN_RATE) and $FFFF)) * 4;
-  hThread := CreateThread(nil, 0, @AudioThread, nil, 0, tid);
+  { started through the Pascal runtime, not straight from Windows: then the runtime knows there are two
+    threads and guards its memory (both threads make and free sound buffers and text). Started from Windows
+    directly, as up to 3.6, the two shared the runtime's memory lists unguarded. }
+  hThread := THandle(BeginThread(@AudioThreadRtl, nil, rtid));
   if hThread <> 0 then SetThreadPriority(hThread, THREAD_PRIORITY_ABOVE_NORMAL);
 end;
 

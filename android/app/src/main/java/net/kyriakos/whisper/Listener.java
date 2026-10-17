@@ -27,7 +27,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  * - Records in stereo where the phone allows it, with a receiver for each
  *   microphone: a "dead spot" in the room rarely hits both. A frame read
  *   twice does no harm (the mirror simply gets the same piece twice).
- * - Can keep the last seconds of sound for a diagnostics recording.
+ * - Keeps the last 30 seconds of sound and a log of every frame (DiagLog).
  * - Also reads format 3 (docs/FORMAT3.md): the sound is converted to the
  *   modem rate (51,200) at the microphone's measured rate, and read on the
  *   silent and fast channels from the handheld. While the phone itself plays,
@@ -56,6 +56,7 @@ public final class Listener {
     private Resampler[] rs3;
     public volatile double measuredRate = 0;
     public volatile int framesW3 = 0, failsW3 = 0;
+    private volatile int noiseStarts = 0;                             // fast receivers that started on noise (diagnostics)
     private final ArrayList<long[]> recent = new ArrayList<>();      // {hash, time} of messages already passed on
 
     // the last 6 seconds of the first microphone, for the pairing check (zero while the phone itself plays)
@@ -88,7 +89,7 @@ public final class Listener {
                 if (mkBg == 0) mkBg = p;
                 if (p > mkBg * 10) {
                     if (mkRun == 0) mkRunPos = ringPos - blk;
-                    if (++mkRun == 15) { long at = mkRunPos; main.post(() -> cb.onPairMarker(at)); }
+                    if (++mkRun == 15) { long at = mkRunPos; DiagLog.log("pair: a 2 kHz marker heard"); main.post(() -> cb.onPairMarker(at)); }
                 } else { mkRun = 0; mkBg += (p - mkBg) / 16; }
             }
             ringPos++;
@@ -134,9 +135,6 @@ public final class Listener {
     public volatile int rate = 0;
     private Receiver[] rx;
 
-    // diagnostics: the first microphone's sound, 16-bit
-    private volatile short[] tape;
-    private volatile int tapePos;
 
     public synchronized boolean start(Context ctx, Callback cb) {
         if (running) return true;
@@ -156,14 +154,30 @@ public final class Listener {
         for (int c = 0; c < ch; c++) {
             rs3[c] = new Resampler(rate, Channel.RATE);
             for (int k = 0; k < LISTEN.length; k++) {
+                final int mic = c + 1;
                 rx3[c][k] = new Rx(Channel.get(LISTEN[k]), new Rx.Sink() {
                     @Override public void onMessage(Rx r, int type, byte[] msg, float snr, int fixed) {
                         framesW3++;
-                        if (fresh(type, msg)) main.post(() -> cb.onMessage(r.ch.id, type, msg, snr));
+                        boolean f = fresh(type, msg);
+                        DiagLog.log("heard " + DiagLog.chan(r.ch.id) + " (mic " + mic + ") " + DiagLog.describe(type, msg)
+                                + String.format(java.util.Locale.US, ", quality %.1f dB, %d bytes corrected", snr, fixed) + (f ? "" : ", already passed on"));
+                        if (f) main.post(() -> cb.onMessage(r.ch.id, type, msg, snr));
                     }
-                    @Override public void onTrain(Rx r, float[] snr) { main.post(() -> cb.onTrain(r.ch.id, snr)); }
+                    @Override public void onTrain(Rx r, float[] snr) {
+                        double a = 0; for (float v : snr) a += v;
+                        DiagLog.log(String.format(java.util.Locale.US, "heard %s (mic %d) TRAIN, average quality %.1f dB", DiagLog.chan(r.ch.id), mic, a / Math.max(1, snr.length)));
+                        main.post(() -> cb.onTrain(r.ch.id, snr));
+                    }
                     // the fast receivers start on noise all the time: only the silent channels count
-                    @Override public void onFail(Rx r, String why) { if (r.ch.silent) failsW3++; }
+                    @Override public void onFail(Rx r, String why) {
+                        if (r.ch.silent) failsW3++;
+                        if (r.ch.silent || !why.equals("header")) DiagLog.log(DiagLog.chan(r.ch.id) + " (mic " + mic + ") frame lost: " + why);
+                        else noiseStarts++;
+                    }
+                    @Override public void onHeader(Rx r, int type, int len, int symbols) {
+                        DiagLog.log(DiagLog.chan(r.ch.id) + " (mic " + mic + ") frame coming: " + DiagLog.typeName(type) + ", " + len
+                                + " bytes, " + symbols + " symbols (" + (symbols * Channel.SYM * 1000L / Channel.RATE) + " ms)");
+                    }
                 });
             }
         }
@@ -185,10 +199,6 @@ public final class Listener {
 
     public int framesRead() { int s = 0; Receiver[] r = rx; if (r != null) for (Receiver x : r) s += x.framesRead; return s; }
 
-    /** Start keeping the sound for a diagnostics recording of this many seconds. */
-    public void startTape(int seconds) { tapePos = 0; tape = new short[Math.max(1, rate) * seconds]; }
-    public boolean tapeFull() { short[] t = tape; return t != null && tapePos >= t.length; }
-    public short[] takeTape() { short[] t = tape; tape = null; return t == null ? null : java.util.Arrays.copyOf(t, Math.min(tapePos, t.length)); }
 
     /** False for a message already passed on from the other microphone (or a repeat within 3 s). */
     private synchronized boolean fresh(int type, byte[] msg) {
@@ -241,14 +251,21 @@ public final class Listener {
         float[] mono = new float[2048], conv = new float[4096];
         long t0 = 0, counted = 0;
         double inRate = rate;
+        long lastRead = 0, stAt = 0, stBusy = 0, stFrames = 0; int stPeak = 0;
+        DiagLog.log("microphone open: " + sourceName + ", " + channelsName + ", " + rate + " samples/s");
         try {
             rec.startRecording();
             while (running) {
                 int got = rec.read(buf, 0, buf.length);
-                if (got <= 0) { if (got < 0) { main.post(() -> cb.onProblem("The microphone stopped.")); break; } continue; }
+                if (got <= 0) { if (got < 0) { DiagLog.log("microphone: read error " + got); main.post(() -> cb.onProblem("The microphone stopped.")); break; } continue; }
                 for (int i = 0; i < got; i++) f[i] = buf[i] / 32768f;
                 int frames = got / ch;
                 long nowN = System.nanoTime();
+                DiagLog.mic(buf, frames, ch, rate);
+                for (int i = 0; i < got; i++) { int v = Math.abs(buf[i]); if (v > stPeak) stPeak = v; }
+                if (lastRead != 0 && nowN - lastRead > 300_000_000L) DiagLog.log("microphone: nothing came for " + (nowN - lastRead) / 1_000_000 + " ms");
+                lastRead = nowN;
+                stFrames += frames;
                 applyMutes(f, frames, ch, nowN);
                 for (int c = 0; c < ch; c++) rx[c].push(f, c, frames, ch);
                 ringAdd(f, frames, ch, cb);
@@ -273,8 +290,16 @@ public final class Listener {
                     int n = rs3[c].process(mono, 0, frames, conv, 0);
                     for (Rx r : rx3[c]) r.push(conv, 0, n);
                 }
-                short[] t = tape;
-                if (t != null) for (int i = 0; i < frames && tapePos < t.length; i++) t[tapePos++] = buf[i * ch];
+                stBusy += System.nanoTime() - nowN;
+                if (nowN - stAt > 5_000_000_000L) {
+                    if (stAt != 0 && stFrames > 0) {
+                        int muted;
+                        synchronized (mutes) { muted = mutes.size(); }
+                        DiagLog.log(String.format(java.util.Locale.US, "listening %.1f s: %d samples/s (measured %.0f), processor %.0f%% busy, loudest %d%%, frames read %d, lost %d, fast starts on noise %d, mute windows %d",
+                                (nowN - stAt) / 1e9, rate, measuredRate, 100.0 * stBusy / Math.max(1, nowN - stAt), stPeak * 100 / 32768, framesW3, failsW3, noiseStarts, muted));
+                    }
+                    stAt = nowN; stBusy = 0; stPeak = 0; stFrames = 0;
+                }
                 long now = System.currentTimeMillis();
                 if (now - lastLevel > 100) {
                     lastLevel = now;
@@ -290,11 +315,13 @@ public final class Listener {
                 }
             }
         } catch (Exception e) {
+            DiagLog.log("microphone stopped: " + e);
             main.post(() -> cb.onProblem("The microphone stopped: " + e.getMessage()));
         } finally {
             try { rec.stop(); } catch (Exception ignored) { }
             rec.release();
             running = false;
+            DiagLog.log("microphone closed");
         }
     }
 }

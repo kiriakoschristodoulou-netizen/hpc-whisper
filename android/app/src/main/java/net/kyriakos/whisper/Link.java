@@ -48,6 +48,10 @@ public final class Link {
 
     private Link() { }
 
+    private static String version(Context c) {
+        try { return c.getPackageManager().getPackageInfo(c.getPackageName(), 0).versionName; } catch (Exception e) { return "?"; }
+    }
+
     public boolean running() { return listener.isRunning(); }
     public boolean speakerWorks() { return speakerOk; }
 
@@ -56,15 +60,21 @@ public final class Link {
         app = ctx.getApplicationContext();
         if (!clients.contains(c)) clients.add(c);
         if (listener.isRunning()) return true;
+        DiagLog.start(new java.io.File(app.getFilesDir(), "diagnostics"), "Whisper Tools " + version(app) + " on " + android.os.Build.MANUFACTURER + " "
+                + android.os.Build.MODEL + ", Android " + android.os.Build.VERSION.RELEASE);
+        DiagLog.log("link starting (for " + c.getClass().getSimpleName() + ")");
         PairCheck.get().load(app);
         boolean ok = listener.start(app, cb);
         if (ok) speakerOk = speaker.start(app);
+        DiagLog.log("link " + (ok ? "started" : "could not start: the microphone did not open") + (ok && !speakerOk ? "; the speaker did not open" : "")
+                + "; silent loudness " + silentLevel + ", answers on fast " + answersOnFast);
         return ok;
     }
 
     public synchronized void detach(Client c) {
         clients.remove(c);
         if (clients.isEmpty()) {
+            DiagLog.log("link stopping");
             main.removeCallbacks(ackCheck);
             listener.stop();
             speaker.stop();
@@ -81,11 +91,14 @@ public final class Link {
     public volatile float silentLevel = 0.5f;
 
     public boolean send(int ch, int type, byte[] payload) {
-        if (!speakerOk) return false;
+        if (!speakerOk) { DiagLog.log("send " + DiagLog.typeName(type) + ": NOT SENT, no speaker"); return false; }
         if (ch == Channel.SD && answersOnFast) ch = Channel.FD;      // see PairCheck
         Channel c = Channel.get(ch);
         float[] f = type == T_TRAIN ? Tx.train(c, level(ch)) : Tx.frame(c, sendMap(ch), type, payload, level(ch));
-        return speaker.play(f, ch == Channel.SD);
+        boolean ok = speaker.play(f, ch == Channel.SD);
+        DiagLog.log("send " + DiagLog.chan(ch) + " " + DiagLog.describe(type, payload) + String.format(java.util.Locale.US, ", loudness %.2f, %d ms", level(ch), f.length * 1000L / Channel.RATE)
+                + (sendMaps[ch] != null ? ", measured map" : "") + (ok ? ", " + speaker.queued() + " queued" : ", NOT SENT: the queue is full"));
+        return ok;
     }
 
     public int queued() { return speaker.queued(); }
@@ -104,15 +117,19 @@ public final class Link {
 
     // ---------- hearing ----------
 
+    private boolean waitingLogged;
+
     private final Runnable ackCheck = new Runnable() {
         @Override public void run() {
             long now = System.currentTimeMillis();
             // never over the handheld: if a frame of its is coming in, wait for its end
-            if (listener.hearingFrame()) { main.postDelayed(this, 40); return; }
+            if (listener.hearingFrame()) { if (!waitingLogged) DiagLog.log("text: answer waits, a frame is coming in"); waitingLogged = true; main.postDelayed(this, 40); return; }
+            waitingLogged = false;
             // the answer should sound about 0.3 s after the handheld's frame ended (it was read ~40 ms after):
             // wait for that, less the time this phone's sound takes to come out
             text.quietMs = Math.max(30, 260 - speaker.delayMs());
             byte[] a = text.ackIfDue(now);
+            if (a != null) DiagLog.log("text: answering after " + text.quietMs + " ms of quiet (sound delay " + speaker.delayMs() + " ms)");
             if (a != null) send(Channel.SD, T_TEXT_ACK, a);
             long next = text.nextCheck(System.currentTimeMillis());
             if (next >= 0) main.postDelayed(this, next);
@@ -146,16 +163,19 @@ public final class Link {
             handheldAnswers = true;
             text.heard(now);
             if (type == T_TEXT) {
+                int before = text.mirror.L;
                 Receiver.Frame f = text.onText(p, now);
+                DiagLog.log("text: page " + before + " -> " + text.mirror.L + " bytes" + (f == null ? " (nothing new)" : ""));
                 if (f != null) for (Client c : clients) c.onFrame(f);
                 main.removeCallbacks(ackCheck);
                 main.postDelayed(ackCheck, Math.max(10, text.nextCheck(now)));
             } else if (type == T_MAP) {
                 BitMap m = BitMap.fromMessage(p);
-                if (m != null && (m.ch.id == Channel.SD || m.ch.id == Channel.FD)) sendMaps[m.ch.id] = m;
+                if (m != null && (m.ch.id == Channel.SD || m.ch.id == Channel.FD)) { sendMaps[m.ch.id] = m; DiagLog.log("map for " + DiagLog.chan(m.ch.id) + ": " + m.bitsPerSymbol() + " bits a symbol"); }
             } else if (type == T_HELLO) {
                 boolean reply = p.length >= 4 && (p[3] & 1) != 0;
                 if (!reply) {
+                    DiagLog.log("the handheld has just started: maps forgotten");
                     resetMaps();                                      // a handheld that has just started knows no maps
                     if (System.currentTimeMillis() - lastHello > 3000) { lastHello = System.currentTimeMillis(); main.postDelayed(() -> sayHello(true), 300); }
                 }
