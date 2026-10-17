@@ -134,6 +134,35 @@ begin
         r.trainReady := False;
       end;
     end;
+    WriteLn('cfo ', r.cfoPpm, ' q ', r.cfoQ, ' n ', r.cfoN);
     WriteLn('frames ', r.frames, ' fails ', r.fails, ' ', r.lastFail, ' | triggers ', r.trigs, ' passed the look ', r.starts + r.fails, ' not ours ', r.gated);
+  end
+  else if cmd = 'afc' then
+  begin
+    { rounds of reading the same sound: each time the rate is corrected by what the first frame's sync measured }
+    x := ReadWav(ParamStr(3), rate);
+    Val(ParamStr(4), rate100, code);
+    for n := 0 to 3 do
+    begin
+      RxInit(r, ch);
+      RsInit(rs, rate100, 5120000, True);
+      SetLength(y, Int64(Length(x)) * 5120000 div rate100 + 64);
+      i := RsProcess(rs, x, 0, Length(x), y, 0);
+      SetLength(y, i);
+      i := 0; typ := -1; mb := nil;
+      s := '';
+      while i < Length(y) do
+      begin
+        code := Length(y) - i; if code > 4096 then code := 4096;
+        RxPush(r, y, i, code);
+        Inc(i, code);
+        if (r.cfoN > 0) and (s = '') then s := ' estimate ' + IStr(r.cfoPpm) + ' ppm (q ' + IStr(r.cfoQ) + ', coh ' + IStr(r.cfoCoh) + ')';
+        if (r.cfoN > 0) and (r.cfoQ >= 60) and (typ = -1) then typ := r.cfoPpm;
+        while RxTake(r, msg) do s := s + ' READ ' + IStr(msg.snr10 div 10) + ' dB';
+      end;
+      WriteLn('round ', n, ' at ', rate100, ':', s, ' frames ', r.frames);
+      if typ = -1 then Break;
+      rate100 := rate100 * (1000000 - (typ * 8) div 10) div 1000000;
+    end;
   end;
 end.

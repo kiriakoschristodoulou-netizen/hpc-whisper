@@ -52,7 +52,7 @@ var
   NotifyWnd: HWND = 0;
   NotifyMsg: UINT = 0;
   InRate100: Int64 = 0;                { the microphone's real rate x 100 (0 = not known: the rate it claims) }
-  RateSource: Integer = 0;             { 0 = what it claims, 1 = measured, 2 = calibrated by Pair (then saved) }
+  RateSource: Integer = 0;             { 0 = what it claims, 1 = timed against the clock, 3 = tuned by the phone's sound (then saved once settled) }
   ListenFast: Boolean = False;         { also listen on the fast down channel (files, remote, link check) }
   FullDuplex: Boolean = False;         { keep the microphone open while playing (sound chips that can) }
   { play at the rate the sound chip really runs at (measured from the microphone, which runs on the same
@@ -75,6 +75,11 @@ var
   FilePieces, FileLost: Integer;
   FilePieceAt: LongWord;
   RateOdd: Int64;                      { an unbelievable rate measurement (x 100), 0 = none }
+  { the rate from the phone's sound (3.8.3): each frame's sync symbol shows how far the microphone's rate is off }
+  AfcN: Integer = 0;                   { corrections made }
+  AfcGood: Integer = 0;                { in a row that were under 0.025 % }
+  AfcPending: Boolean = False; AfcPpm: Integer = 0;
+  AfcSeen: array[0..1] of Integer;
   Turns: Integer;                      { turns of sound played }
   LastTurnAt: LongWord;                { when the last one ended (GetTickCount) }
   LastTurnPeak: Integer;               { its loudest sample, % of full scale }
@@ -481,6 +486,7 @@ end;
   Small changes (under 0.01 %) are left out: every change moves the receiver's tones a little. }
 procedure SetRate(r100: Int64; spanMs: Int64);
 begin
+  if AfcN > 0 then Exit;                      { the phone's own sound sets the rate now (a much better measure) }
   if (RateSource > 0) and (spanMs < 60000) and (Abs(r100 - InRate100) * 400 > InRate100) then
   begin
     if Abs(RateOdd - r100) * 2000 > r100 then Log('microphone rate: an odd reading of ' + LI(r100 div 100) + ' not used (kept ' + LI(InRate100 div 100) + ')');
@@ -501,6 +507,41 @@ begin
   InRate100 := r100; RateSource := 2; RateOdd := 0; RateTrusted := True;
   Log('microphone rate calibrated by Pair: ' + LI(r100 div 100));
   LastSet := r100; RsSetRates(Rs, InRate100, Int64(MRATE) * 100);
+end;
+
+{ the newest measurement of a receiver, kept if it was a clean one }
+procedure AfcCheck(var r: TRx; i: Integer);
+begin
+  if r.cfoN = AfcSeen[i] then Exit;
+  AfcSeen[i] := r.cfoN;
+  if (r.cfoQ < 70) or (r.cfoCoh < 70) then Exit;
+  AfcPpm := r.cfoPpm; AfcPending := True;
+  Log(LChan(r.ch) + ' sync heard: the carriers are ' + LI(r.cfoPpm) + ' ppm off (quality ' + LI(r.cfoQ) + ', alike ' + LI(r.cfoCoh) + ')');
+end;
+
+{ between frames: the microphone's rate follows what the sync symbols say. If the sound is ppm too high, the rate
+  we convert from was too high by as much. }
+procedure AfcApply;
+var p, nw: Int64;
+begin
+  if (not AfcPending) or RxBusy(RxSD) or RxBusy(RxFD) then Exit;
+  AfcPending := False;
+  p := AfcPpm;
+  if p > 6000 then p := 6000 else if p < -6000 then p := -6000;
+  if Abs(p) >= 30 then
+  begin
+    nw := InRate100 - (InRate100 * p * 9 div 10) div 1000000;
+    InRate100 := nw; LastSet := nw; RsSetRates(Rs, InRate100, Int64(MRATE) * 100);
+    Log('microphone rate tuned by the phone''s sound: ' + LI(InRate100 div 100) + '.' + LI((InRate100 mod 100) div 10) + ' (' + LI(AfcPpm) + ' ppm off)');
+  end;
+  Inc(AfcN);
+  if RateSource < 3 then RateSource := 3;
+  if Abs(AfcPpm) < 250 then Inc(AfcGood) else AfcGood := 0;
+  if (AfcGood >= 2) and not RateTrusted then
+  begin
+    RateTrusted := True; RateOdd := 0;
+    Log('microphone rate settled at ' + LI(InRate100 div 100) + ' (two frames in a row within 0.025 %)');
+  end;
 end;
 
 var
@@ -640,12 +681,13 @@ begin
     i := RsProcess(Rs, InBuf[k], 0, n, Conv, 0);
     RxPush(RxSD, Conv, 0, i);
     Collect(RxSD);
+    AfcCheck(RxSD, 0);
     { the fast receiver, within a budget: if it takes more than half the processor over a second, it pauses
       for three (the screen and typing come first; a frame in that time is lost, and asked for again) }
     if ListenFast and (LongInt(now - FastPauseUntil) >= 0) then
     begin
       t2 := GetTickCount;
-      RxPush(RxFD, Conv, 0, i); Collect(RxFD); Inc(StFastBufs);
+      RxPush(RxFD, Conv, 0, i); Collect(RxFD); AfcCheck(RxFD, 1); Inc(StFastBufs);
       busy := Integer(GetTickCount - t2);
       FastMs := FastMs + busy;
       { one buffer that took this long (a quarter of its own length, twice over) cannot go on: pause at once,
@@ -666,6 +708,7 @@ begin
       end;
       FastWinAt := now; FastMs := 0;
     end;
+    AfcApply;
     if RxSD.fails + RxFD.fails <> FramesBad then begin FramesBad := RxSD.fails + RxFD.fails; Notify; end;
     busy := GetTickCount - t1;
     Inc(StBufs); Inc(StBusy, busy); if busy > StMax then StMax := busy;
@@ -834,7 +877,12 @@ procedure AudioChooseRate;
 var want: Integer; fmt: TWaveFormat; h: THandle; ok: Boolean;
 begin
   want := 44100;
-  if SpeakerNative and RateTrusted and (InRate100 > 0) then want := Integer((InRate100 + 50) div 100);
+  if SpeakerNative and RateTrusted and (InRate100 > 0) then
+  begin
+    want := Integer((InRate100 + 50) div 100);
+    { the phone follows a sender whose rate is a little off: a change of the speaker's rate under 0.1 % is not worth the new sound }
+    if (TxRate <> 44100) and (Abs(want - TxRate) < 40) then want := TxRate;
+  end;
   if want = RefusedRate then want := 44100;
   { what the screen says, and the log once: why this rate }
   if want = 44100 then
@@ -890,7 +938,7 @@ begin
   if InRate100 <= 0 then InRate100 := Int64(IN_RATE) * 100;     { not known yet: what it claims }
   RsInit(Rs, InRate100, Int64(MRATE) * 100, True);
   LastSet := InRate100;
-  if InRate100 > 0 then RateTrusted := RateSource > 0;           { a rate kept from before (or Pair) }
+  if InRate100 > 0 then RateTrusted := RateSource >= 3;          { a rate kept from before, once the phone's sound had settled it }
   MakeLead;
   AudioChooseRate;
   MkCoef := 2 * CosI(Integer((Int64(2000) * 65536 div IN_RATE) and $FFFF)) * 4;

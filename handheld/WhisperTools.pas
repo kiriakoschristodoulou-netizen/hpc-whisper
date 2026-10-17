@@ -1,5 +1,5 @@
 program WhisperTools;
-{ Whisper Tools 3.8.2, for Windows CE handheld PCs (made on an HP Jornada 720).
+{ Whisper Tools 3.8.3, for Windows CE handheld PCs (made on an HP Jornada 720).
 
   Type here and the text goes into any app on your phone, with Tab, the
   arrows, Ctrl+C and the other keys; the phone confirms what has arrived.
@@ -22,7 +22,7 @@ program WhisperTools;
 uses Windows, w3core, w3dsp, w3tx, w3rx, waudio, wtext, wfile, wscreen, wwav, wimg, winf, wmodem, wpair, wlog;
 
 const
-  VERSION = '3.8.2';
+  VERSION = '3.8.3';
   CREATOR = 'Kyriakos Christodoulou';
   CLSNAME: UnicodeString = 'WhisperTools';
   APPNAME: UnicodeString = 'Whisper Tools';
@@ -423,11 +423,11 @@ begin
         if ReadFile(h, {$ifdef wince}@b{$else}b{$endif}, 8, {$ifdef wince}@got{$else}got{$endif}, nil) and (got = 8) and (b[0] = $36) then
         begin
           r := b[1] or (LongWord(b[2]) shl 8) or (LongWord(b[3]) shl 16) or (LongWord(b[4]) shl 24);
-          { 2 = calibrated by Pair, 4 = measured over a minute or more (since 3.8.2); 1 and 3 were measured by
-            older versions, over a few seconds and thrown off by a busy processor (3.8.2 kept 42,816 for
+          { 2 = calibrated by Pair, 4 = measured over a minute or more (since 3.8.3); 1 and 3 were measured by
+            older versions, over a few seconds and thrown off by a busy processor (3.8.3 kept 42,816 for
             43,200): not used }
           if (r > 0) and (b[5] in [2, 4]) and (Int64(r) * 20 >= Int64(IN_RATE) * 100 * 19) and (Int64(r) * 20 <= Int64(IN_RATE) * 100 * 21) then
-          begin InRate100 := r; if b[5] = 4 then RateSource := 1 else RateSource := 2; end;
+          begin InRate100 := r; RateSource := 3; end;
           if (b[6] >= 20) and (b[6] <= 230) and (b[7] = 1) then begin SilentPeak := b[6] * 128; LevelSource := 1; end;
           got := 0;
           if ReadFile(h, {$ifdef wince}@b{$else}b{$endif}, 2, {$ifdef wince}@got{$else}got{$endif}, nil) and (got = 2) and (b[0] = $38) then
@@ -453,10 +453,10 @@ begin
   b[4] := $33; b[5] := Ord(Classic); b[6] := Ord(WideSilent); b[7] := Ord(FastFiles); b[8] := FastLevel; b[9] := Ord(OnCard);
   b[10] := $34; b[11] := Ord(TypingOnFast); b[12] := Ord(FastAlways);
   { this handheld's own measurements: the microphone's rate (x 100) and the silent loudness }
-  { only what Pair calibrated, or a minute of listening measured, is kept }
-  if (RateSource = 2) or ((RateSource = 1) and RateTrusted) then r := LongWord(InRate100) else r := 0;
+  { only a rate the phone's sound has settled is kept }
+  if (RateSource = 3) and RateTrusted then r := LongWord(InRate100) else r := 0;
   b[13] := $36; b[14] := r and 255; b[15] := (r shr 8) and 255; b[16] := (r shr 16) and 255; b[17] := r shr 24;
-  if RateSource = 1 then b[18] := 4 else b[18] := RateSource;
+  if r <> 0 then b[18] := 4 else b[18] := 0;
   b[19] := SilentPeak div 128; b[20] := LevelSource;
   b[21] := $38; b[22] := Ord(not SpeakerNative);
   b[23] := $39; b[24] := LogNo;
@@ -1326,8 +1326,6 @@ begin
       HaveMine := True;
       { the phone's silent band too weak here: it will answer on the fast channel, so that one stays on }
       FastAlways := PairBand10(PairMine, 20000, 21200) < 120;
-      { the time between the markers is this microphone's real rate (the phone's clock is good) }
-      if (PairMine.scale10k > 9500) and (PairMine.scale10k < 10500) then AudioCalibrate(Int64(IN_RATE) * PairMine.scale10k div 100);
       SaveCfg;
       if (PairState = 0) or (PairState = 3) then
       begin
@@ -1769,8 +1767,8 @@ begin
     s := IU(InRate100 div 100) + ' samples/s';
     case RateSource of
       0: s := s + ' (what it claims, until measured)';
-      1: s := s + ' (measured)';
-      2: s := s + ' (calibrated by Pair)';
+      1: s := s + ' (timed against the clock)';
+      3: if RateTrusted then s := s + ' (settled by the phone''s sound)' else s := s + ' (being tuned by the phone''s sound)';
     end;
     if RateOdd <> 0 then s := s + '; an odd reading of ' + IU(RateOdd div 100) + ' was not used';
     s := s + ', loudest ' + IU(InPeak * 100 div 32768) + '%';
@@ -1785,7 +1783,7 @@ begin
   begin
     if PairBand10(PairMine, 20000, 21200) >= 120 then col := COL_GOOD else col := COL_FAIL;
     Line('Hears the phone', 'silent ' + DbText(PairBand10(PairMine, 20000, 21200)) + ', fast ' +
-      DbText(PairBand10(PairMine, 500, 12000)) + ' (1-12 kHz)' + ', mic at ' + IU(Int64(IN_RATE) * PairMine.scale10k div 10000), col);
+      DbText(PairBand10(PairMine, 500, 12000)) + ' (1-12 kHz)', col);
   end
   else Line('Hears the phone', 'not measured: press Pair', COL_GREY);
   if HaveTheirs then

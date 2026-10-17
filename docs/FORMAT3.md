@@ -410,3 +410,7 @@ most once in 4 s, up to 0.6), and keeps that level.
 
 **Markers on the phone.** For 8 s after marker A the phone takes no other
 marker (the handheld's ladder would otherwise look like a new start).
+
+## Rate correction (3.8.3)
+
+The silent channels need the receiver's conversion to the modem rate to be accurate to about 0.05%. Every receiver therefore measures the carrier offset from the start (S) of each frame: S repeats every `lag` samples, so the phase turn between consecutive windows is 2π·δ·m per carrier (m = bin / syncStep). A least-squares fit gives δ to about 0.01–0.05%. The receiver corrects its own conversion (new rate = old / (1+δ)); the capture range is about ±0.3%. A frame is accepted as ours when the comb of S carriers is coherent (Σ|z| / Σe ≥ 0.45), which does not depend on the carriers sitting in exact bins.

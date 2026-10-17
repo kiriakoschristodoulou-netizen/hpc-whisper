@@ -63,6 +63,8 @@ type
     trigs, starts, hdrs, hdrTyp, hdrLen, hdrSym, gated: Integer;
     { the full checks of the last tenth of a second (3.8.2): at most 3 }
     fullAt: Int64; fullN: Integer;
+    { the last measurement of the sender's sound against ours (3.8.3): ppm too high (+1000 = 0.1 %), quality 0..100, and a count }
+    cfoPpm, cfoQ, cfoN, cfoCoh: Integer;
   end;
   PRx = ^TRx;
 
@@ -70,6 +72,8 @@ procedure RxInit(var r: TRx; ch: Integer);
 procedure RxAddMap(var r: TRx; const m: TBitMap);
 procedure RxPush(var r: TRx; const x: array of SmallInt; off, n: Integer);
 function RxTake(var r: TRx; var m: TRxMsg): Boolean;
+{ a frame is being read now (the sound should not change under it) }
+function RxBusy(const r: TRx): Boolean;
 
 implementation
 
@@ -267,37 +271,28 @@ begin
   Result := (off * 4096) div all;
 end;
 
-{ S at w: the carriers it uses (bins on its step) should all hold some of its power: at least half of them
-  a tenth of their average. On a fast channel, its upper half of the band should also hold at least a
-  hundredth of what the lower half holds (a voice or a hum holds far less up there). }
+{ S at w: on a fast channel, the upper half of its band should hold at least a hundredth of what the lower
+  half holds (a voice or a hum holds far less up there). }
 function SLooksRight(var r: TRx; w: Int64): Boolean;
-var yre, yim: TCarr; c, n, cnt, on, nOff: Integer; p: array[0..MAXCAR - 1] of Int64; sum, lo, hi, offSum: Int64; Cn: TChannel;
+var yre, yim: TCarr; c, n, cnt, on: Integer; p: array[0..MAXCAR - 1] of Int64; sum, lo, hi: Int64; Cn: TChannel;
 begin
   Cn := Chans[r.ch];
   SymFft(r, w, yre, yim);
-  sum := 0; n := 0; lo := 0; hi := 0; offSum := 0; nOff := 0;
+  sum := 0; n := 0; lo := 0; hi := 0;
   for c := 0 to Cn.n - 1 do
   begin
     p[c] := -1;
-    if (Cn.bins[c] mod Cn.syncStep) <> 0 then
-    begin
-      { S leaves these carriers off }
-      offSum := offSum + Int64(yre[c]) * yre[c] + Int64(yim[c]) * yim[c]; Inc(nOff);
-      Continue;
-    end;
+    if (Cn.bins[c] mod Cn.syncStep) <> 0 then Continue;
     p[c] := Int64(yre[c]) * yre[c] + Int64(yim[c]) * yim[c];
     sum := sum + p[c]; Inc(n);
     if c < Cn.n div 2 then lo := lo + p[c] else hi := hi + p[c];
   end;
   if (n = 0) or (sum <= 0) then begin Result := False; Exit; end;
+  { (that S's carriers repeat as they should is tested by RateOffset: a sender whose clock is off puts its
+    carriers between our bins, and a look at the bins would turn it away) }
   cnt := 0; on := 0;
-  for c := 0 to Cn.n - 1 do
-    if p[c] >= 0 then begin Inc(cnt); if p[c] * 10 * n >= sum then Inc(on); end;
-  Result := on * 2 >= cnt;
-  { S holds its carriers and leaves the ones between them empty; a voice, a click or noise fills both alike.
-    On average the carriers it uses must hold at least 3 times what the others do. }
-  if Result and (nOff > 0) then Result := (sum div n) >= 3 * (offSum div nOff);
-  if Result and (not Cn.silent) then Result := hi * 100 >= lo;
+  Result := True;
+  if not Cn.silent then Result := hi * 100 >= lo;
 end;
 
 procedure Fail(var r: TRx; const why: string);
@@ -454,6 +449,100 @@ begin
   Inc(r.frames);
 end;
 
+{ How far the sound's carriers are from where they should be, in ppm. S repeats after one lag, and a carrier whose
+  frequency is off by a fraction d turns by 2 pi d m between one repeat and the next, m being its bin over the sync
+  step (a whole number, 50 for 20 kHz). The turns of the carriers over the repeats give d (the carriers that turn
+  least first, then the rest, each corrected for whole turns). Quality is how well the carriers agree. }
+procedure RateOffset(var r: TRx; b: Int64);
+const MAXC = 16;
+var Cn: TChannel; step, n, NW, stride, used, c, k, i, cnt, lo, pass, sh: Integer;
+    xr, xi: array[0..MAXC - 1, 0..7] of Int64; th, wt, mm: array[0..MAXC - 1] of Int64;
+    zr, zi, num, den, sw, sr, mx, v, d, rr, sc, ez, sz: Int64; a, kk: Integer; zre, zim: LongInt;
+begin
+  r.cfoCoh := 0;
+  Cn := Chans[r.ch]; step := Cn.syncStep; n := Cn.n;
+  NW := NFFT div r.lag;
+  if (NW < 2) or (NW > 8) then Exit;
+  if b + NW * r.lag + 8 > r.t then Exit;
+  stride := (n div step + 1) div MAXC; if stride < 1 then stride := 1;
+  used := 0; cnt := 0; mx := 1;
+  for c := 0 to n - 1 do
+  begin
+    if (Cn.bins[c] mod step) <> 0 then Continue;
+    Inc(cnt);
+    if ((cnt - 1) mod stride) <> 0 then Continue;
+    if used >= MAXC then Break;
+    for k := 0 to NW - 1 do
+    begin
+      xr[used, k] := 0; xi[used, k] := 0;
+      for i := 0 to r.lag - 1 do
+      begin
+        v := r.buf[(b + Int64(k) * r.lag + i) and RMASK];
+        a := ((Cn.bins[c] * i) and 511) * 128;
+        xr[used, k] := xr[used, k] + v * CosI(a);
+        xi[used, k] := xi[used, k] - v * SinI(a);
+      end;
+      if Abs(xr[used, k]) > mx then mx := Abs(xr[used, k]);
+      if Abs(xi[used, k]) > mx then mx := Abs(xi[used, k]);
+    end;
+    mm[used] := Cn.bins[c] div step;
+    Inc(used);
+  end;
+  if used < 2 then Exit;
+  sh := 0; while (mx div (Int64(1) shl sh)) > (Int64(1) shl 22) do Inc(sh);
+  sc := Int64(1) shl sh; ez := 0; sz := 0;
+  for c := 0 to used - 1 do
+  begin
+    zr := 0; zi := 0;
+    for k := 0 to NW - 2 do
+    begin
+      zr := zr + (xr[c, k] div sc) * (xr[c, k + 1] div sc) + (xi[c, k] div sc) * (xi[c, k + 1] div sc);
+      zi := zi + (xr[c, k] div sc) * (xi[c, k + 1] div sc) - (xi[c, k] div sc) * (xr[c, k + 1] div sc);
+    end;
+    for k := 0 to NW - 2 do
+      ez := ez + (xr[c, k] div sc) * (xr[c, k] div sc) + (xi[c, k] div sc) * (xi[c, k] div sc);
+    kk := 0; v := Abs(zr); if Abs(zi) > v then v := Abs(zi);
+    while v > (Int64(1) shl 28) do begin v := v shr 1; Inc(kk); end;
+    zre := LongInt(zr div (Int64(1) shl kk)); zim := LongInt(zi div (Int64(1) shl kk));
+    th[c] := WrapA(Atan2i(zim, zre));                       { turns x 65536, -32768 .. 32767 }
+    sz := sz + Int64(MagI(zre, zim)) * (Int64(1) shl kk);
+    wt[c] := (Int64(MagI(zre, zim)) * (Int64(1) shl kk)) div 1048576;
+    if wt[c] < 1 then wt[c] := 1;
+  end;
+  {$ifdef RXDEBUG}for c := 0 to used - 1 do WriteLn('  cfo carrier m ', mm[c], ' turn ', th[c], ' weight ', wt[c]);{$endif}
+  { how alike the repeats are (1 for a true S; a voice, a click or noise falls far short) }
+  if ez < 1 then ez := 1;
+  r.cfoCoh := Integer(sz * 100 div ez);
+  lo := 0;
+  for c := 1 to used - 1 do if mm[c] < mm[lo] then lo := c;
+  d := th[lo] * 1000000 div (65536 * mm[lo]);              { ppm }
+  for pass := 0 to 1 do
+  begin
+    num := 0; den := 0;
+    for c := 0 to used - 1 do
+    begin
+      rr := th[c] - d * mm[c] * 65536 div 1000000;
+      rr := WrapA(rr);
+      num := num + wt[c] * rr * mm[c]; den := den + wt[c] * mm[c] * mm[c];
+    end;
+    if den < 1 then Exit;
+    d := d + num * 1000000 div (den * 65536);
+  end;
+  sw := 0; sr := 0;
+  for c := 0 to used - 1 do
+  begin
+    rr := WrapA(th[c] - d * mm[c] * 65536 div 1000000);
+    sw := sw + wt[c]; sr := sr + wt[c] * Abs(rr);
+  end;
+  { the mean turn left over, as a share of a tenth of a turn }
+  rr := sr div sw;
+  r.cfoQ := 100 - Integer(rr * 100 div 6554);
+  if r.cfoQ < 0 then r.cfoQ := 0;
+  if Abs(d) > 30000 then r.cfoQ := 0;
+  r.cfoPpm := Integer(d);
+  Inc(r.cfoN);
+end;
+
 procedure StepRx(var r: TRx);
 var last, d, dS, w, start, early8, st, bestStart: Int64; k, mx, mv, coh, cs, span, bestQ: Integer; e: LongInt; yre, yim: TCarr;
     h: array[0..HDR_CODED - 1] of Byte; i, hb, offS: Integer;
@@ -505,6 +594,11 @@ begin
       Inc(r.gated);
       r.state := IDLE; r.scan := r.trig + 2 * NSYM; Exit;
     end;
+    { how far off the sender's carriers are: from S, which is there to be read before R is (the window starts
+      72 samples in: past the fade-in of S (48) and well inside it, whose start is known to within some 35) }
+    {$ifdef RXDEBUG}WriteLn('dS ', dS);{$endif}
+    RateOffset(r, dS + 72);
+    if r.cfoCoh < 45 then begin Inc(r.gated); r.state := IDLE; r.scan := r.trig + 2 * NSYM; Exit; end;
     { and not more than 3 careful searches in a tenth of a second: a sound that keeps passing the look
       (a voice, music) would otherwise use all the processor }
     if r.t - r.fullAt >= (MRATE div 10) then begin r.fullAt := r.t; r.fullN := 0; end;
@@ -592,6 +686,11 @@ begin
     a := r.fb[(d + m) and RMASK]; b := r.fb[(d + m + r.lag) and RMASK];
     r.P := r.P + a * b; r.E1 := r.E1 + a * a; r.E2 := r.E2 + b * b;
   end;
+end;
+
+function RxBusy(const r: TRx): Boolean;
+begin
+  Result := r.state = DECODE;
 end;
 
 procedure RxPush(var r: TRx; const x: array of SmallInt; off, n: Integer);

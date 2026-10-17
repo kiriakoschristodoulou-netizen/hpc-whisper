@@ -133,7 +133,6 @@ public class LinkActivity extends ToolActivity implements PairCheck.Watcher {
         PairCheck p = PairCheck.get();
         StringBuilder s = new StringBuilder(p.note);
         if (p.mine != null) s.append("\n\nThis phone hears the handheld: ").append(bands(p.mine));
-        if (p.mine != null) s.append(String.format(Locale.US, "\nThe handheld's sound runs at %.1f%% of its stated rate", p.mine.scale10k / 100.0));
         if (p.theirs != null) s.append("\nThe handheld hears this phone: ").append(bands(p.theirs));
         if (p.theirs != null) s.append(Link.get().answersOnFast
                 ? "\nDecided: the silent band does not reach the handheld, so this phone answers on the fast channel (audible hiss)."

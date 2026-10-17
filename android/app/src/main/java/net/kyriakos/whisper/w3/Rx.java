@@ -19,6 +19,10 @@ public final class Rx {
         void onFail(Rx rx, String why);
         /** A frame's header was read: what is coming, and how many symbols long (for the diagnostics log). */
         default void onHeader(Rx rx, int type, int len, int symbols) { }
+        /** A frame's sync symbol was measured: the sound is delta (a fraction, +0.001 = 0.1 %) higher than it should be
+         *  (the sender's clock and ours differ); quality 0..1. The conversion to the modem rate should use a rate
+         *  (1 - delta) times what it used. */
+        default void onRateOffset(Rx rx, double delta, double quality) { }
     }
 
     static final int RB = 1 << 15, MASK = RB - 1, BACK = 8;
@@ -135,6 +139,8 @@ public final class Rx {
             // first a cheap look at S: does its sound lie on our carriers, spread over the band? A voice repeats
             // itself too, a click fills everything; the careful search below costs ten times as much
             if (!sLooksRight(dS + Channel.CP - BACK)) { gated++; state = IDLE; scan = trig + 2L * Channel.SYM; return; }
+            // how far off the sender's carriers are, from S (read before R is); and whether S repeats as it should
+            if (!rateOffset(dS + 72)) { gated++; state = IDLE; scan = trig + 2L * Channel.SYM; return; }
             float[][] y = fft(w);
             double[] sl = slope(y, true);
             double tauR = sl[0];
@@ -251,6 +257,75 @@ public final class Rx {
         for (int c = 0; c < n; c++) if (p[c] >= 0 && p[c] * 10 * cnt >= sum) on++;
         if (on * 2 < cnt) return false;
         return ch.silent || hi * 100 >= lo;
+    }
+
+    /**
+     * How far the sound's carriers are from where they should be (a fraction): S repeats after one lag, and a
+     * carrier whose frequency is off by a fraction d turns by 2 pi d m between one repeat and the next, m being its
+     * bin over the sync step (a whole number: 50 for 20 kHz). The turn of each carrier over the repeats gives d.
+     * Reads no more than 3 % off; quality is how well the carriers agree.
+     */
+    private boolean rateOffset(long b) {
+        int step = ch.syncStep(), n = ch.count(), K = Channel.N / lag;
+        if (K < 2) return true;
+        if (!have(b, K * lag + 8)) return true;
+        int stride = Math.max(1, (n / step + 1) / 16), used = 0;
+        double[] th = new double[n], wt = new double[n], mm = new double[n];
+        int cnt = 0;
+        double tot = 0, sz = 0;
+        for (int c = 0; c < n; c++) {
+            if (ch.bins[c] % step != 0) continue;
+            if ((cnt++ % stride) != 0) continue;
+            double[][] x = new double[K][2];
+            for (int k = 0; k < K; k++) {
+                double re = 0, im = 0;
+                for (int i = 0; i < lag; i++) {
+                    double v = buf[(int) ((b + (long) k * lag + i) & MASK)];
+                    double a = 2 * Math.PI * ((ch.bins[c] * (long) i) % Channel.N) / Channel.N;
+                    re += v * Math.cos(a); im -= v * Math.sin(a);
+                }
+                x[k][0] = re; x[k][1] = im;
+            }
+            double zr = 0, zi = 0, e = 0;
+            for (int k = 0; k + 1 < K; k++) {
+                zr += x[k][0] * x[k + 1][0] + x[k][1] * x[k + 1][1];
+                zi += x[k][0] * x[k + 1][1] - x[k][1] * x[k + 1][0];
+                e += x[k][0] * x[k][0] + x[k][1] * x[k][1];
+            }
+            th[used] = Math.atan2(zi, zr) / (2 * Math.PI);
+            wt[used] = Math.hypot(zr, zi);
+            sz += wt[used];
+            mm[used] = ch.bins[c] / (double) step;
+            tot += e;
+            used++;
+        }
+        if (used < 2) return true;
+        // the repeats of a true S are alike (1); a voice, a click or noise falls far short
+        if (sz < 0.45 * tot) return false;
+        // a coarse reading from the carriers that turn least, then the rest, each corrected for whole turns
+        int lo = 0;
+        for (int i = 1; i < used; i++) if (mm[i] < mm[lo]) lo = i;
+        double d = th[lo] / mm[lo];
+        for (int pass = 0; pass < 2; pass++) {
+            double num = 0, den = 0;
+            for (int i = 0; i < used; i++) {
+                double r = th[i] - d * mm[i];
+                r -= Math.rint(r);
+                num += wt[i] * (d * mm[i] + r) * mm[i]; den += wt[i] * mm[i] * mm[i];
+            }
+            d = num / den;
+        }
+        double sw = 0, sr = 0;
+        for (int i = 0; i < used; i++) {
+            double r = th[i] - d * mm[i];
+            r -= Math.rint(r);
+            sw += wt[i]; sr += wt[i] * r * r;
+        }
+        double rms = Math.sqrt(sr / Math.max(sw, 1e-30));
+        double q = Math.max(0, 1 - rms / 0.1);
+        if (Math.abs(d) > 0.03) q = 0;
+        sink.onRateOffset(this, d, q);
+        return true;
     }
 
     private float[][] fft(long w) {

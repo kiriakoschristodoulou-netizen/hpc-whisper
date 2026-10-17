@@ -55,6 +55,12 @@ public final class Listener {
     private Rx[][] rx3;
     private Resampler[] rs3;
     public volatile double measuredRate = 0;
+    // The handheld's sound is a little faster or slower than it says (its chip runs at its own rate): each frame's sync
+    // symbol shows by how much, and the conversion to the modem rate follows it (3.8.3). 1 = as it says.
+    private volatile double inRate = 0;
+    private double jScale = 1.0, pendingDelta = 0;
+    private boolean pending = false;
+    private int jGood = 0;
     public volatile int framesW3 = 0, failsW3 = 0;
     private volatile int noiseStarts = 0;                             // fast receivers that started on noise (diagnostics)
     private final ArrayList<long[]> recent = new ArrayList<>();      // {hash, time} of messages already passed on
@@ -182,6 +188,10 @@ public final class Listener {
                         if (r.ch.silent || !why.equals("header")) DiagLog.log(DiagLog.chan(r.ch.id) + " (mic " + mic + ") frame lost: " + why);
                         else noiseStarts++;
                     }
+                    @Override public void onRateOffset(Rx r, double delta, double quality) {
+                        if (quality < 0.7 || Math.abs(delta) > 0.03) return;
+                        pendingDelta = delta; pending = true;
+                    }
                     @Override public void onHeader(Rx r, int type, int len, int symbols) {
                         DiagLog.log(DiagLog.chan(r.ch.id) + " (mic " + mic + ") frame coming: " + DiagLog.typeName(type) + ", " + len
                                 + " bytes, " + symbols + " symbols (" + (symbols * Channel.SYM * 1000L / Channel.RATE) + " ms)");
@@ -253,6 +263,20 @@ public final class Listener {
         return null;
     }
 
+    /** Between frames: the conversion follows what the sync symbols said. If the sound is d too high, the rate to convert from was d too high. */
+    private void applyRateOffset() {
+        if (!pending) return;
+        for (Rx[] row : rx3) for (Rx r : row) if (r.busy()) return;
+        pending = false;
+        double d = pendingDelta;
+        if (Math.abs(d) >= 0.00003) {
+            jScale *= 1 - 0.9 * d;
+            if (jScale < 0.97) jScale = 0.97; else if (jScale > 1.03) jScale = 1.03;
+            for (Resampler q : rs3) q.setRates(inRate * jScale, Channel.RATE);
+            DiagLog.log(String.format(java.util.Locale.US, "the handheld's sound is %+.3f%% off its stated rate; reading it at %.4f of the phone's rate", d * 100, jScale));
+        }
+    }
+
     private void loop(AudioRecord rec, int ch, Callback cb) {
         short[] buf = new short[2048 * ch];
         float[] f = new float[2048 * ch];
@@ -260,7 +284,7 @@ public final class Listener {
         long lastLevel = 0;
         float[] mono = new float[2048], conv = new float[4096];
         long t0 = 0, counted = 0;
-        double inRate = rate;
+        inRate = rate;
         long lastRead = 0, stAt = 0, stBusy = 0, stFrames = 0; int stPeak = 0;
         DiagLog.log("microphone open: " + sourceName + ", " + channelsName + ", " + rate + " samples/s");
         try {
@@ -294,7 +318,7 @@ public final class Listener {
                         // a phone's microphone runs within a fraction of a percent of its stated rate: a reading further
                         // off is a measurement spoilt by a held-up phone, not the microphone
                         if (Math.abs(r - rate) / rate < 0.005) {
-                            if (Math.abs(r - inRate) / inRate > 0.0005) { inRate = r; for (Resampler q : rs3) q.setRates(inRate, Channel.RATE); }
+                            if (Math.abs(r - inRate) / inRate > 0.0005) { inRate = r; for (Resampler q : rs3) q.setRates(inRate * jScale, Channel.RATE); }
                             measuredRate = r;
                         } else { DiagLog.log(String.format(java.util.Locale.US, "microphone rate: a reading of %.0f not used", r)); t0 = 0; counted = 0; }
                         if (el > 60) { t0 = nowN; counted = 0; }
@@ -302,6 +326,7 @@ public final class Listener {
                 }
                 BitMap nm;
                 while ((nm = newMaps.poll()) != null) for (Rx[] row : rx3) for (Rx r : row) r.addMap(nm);
+                applyRateOffset();
                 for (int c = 0; c < rs3.length; c++) {
                     if (mono.length < frames) mono = new float[frames];
                     for (int i = 0; i < frames; i++) mono[i] = f[i * ch + c];
