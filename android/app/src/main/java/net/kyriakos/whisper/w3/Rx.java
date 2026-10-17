@@ -191,7 +191,7 @@ public final class Rx {
     private void fail(String why) {
         fails++;
         state = IDLE;
-        scan = sym0 + Channel.SYM;
+        scan = Math.max(sym0 + Channel.SYM, trig + lag);       // never back over where it was triggered: the same noise would trigger it again and again
         sink.onFail(this, why);
     }
 
