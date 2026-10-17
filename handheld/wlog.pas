@@ -1,16 +1,17 @@
 unit wlog;
 { Whisper Tools: the handheld's diagnostics log. Every event of the link is written as one line, with
-  the time since the program started (seconds.milliseconds), into "Whisper Tools log.txt" next to the
-  program. Lines collect in memory and go to the file every second, from whichever thread gets
+  the time since the program started (seconds.milliseconds), into "Whisper Tools log N.txt" in the
+  folder for received files (on a memory card if Settings put them there). Lines collect in memory and go to the file every second, from whichever thread gets
   there first (the sound thread too, so a frozen screen still leaves its last seconds in the file).
-  The file is kept across starts (a soft reboot loses only the last moments); past 3 MB it starts
-  again. }
+  Each start writes a new file (the program keeps the last five); past 3 MB a file is not added to. }
 {$mode objfpc}{$H+}
 interface
 
 uses Windows;
 
-procedure LogStart(const path: UnicodeString; const version: AnsiString);
+{ starts a new log file at path (replacing an older one of that name); False when it cannot be made }
+function LogStart(const path: UnicodeString; const version: AnsiString): Boolean;
+function LogPath: UnicodeString;
 procedure Log(const s: AnsiString);
 { writes what has collected, if a second has passed (or now, if force) }
 procedure LogTick(force: Boolean);
@@ -151,7 +152,7 @@ begin
   if truncate then mode := CREATE_ALWAYS else mode := OPEN_ALWAYS;
   h := CreateFileW(PWideChar(FilePath), GENERIC_WRITE, FILE_SHARE_READ, nil, mode, FILE_ATTRIBUTE_NORMAL, 0);
   if h = INVALID_HANDLE_VALUE then Exit;
-  SetFilePointer(h, 0, nil, FILE_END);
+  if SetFilePointer(h, 0, nil, FILE_END) > MAXFILE then begin CloseHandle(h); Exit; end;
   done := 0;
   if n > 0 then WriteFile(h, {$ifdef wince}@OutB{$else}OutB{$endif}, n, {$ifdef wince}@done{$else}done{$endif}, nil);
   CloseHandle(h);
@@ -175,24 +176,29 @@ begin
   LeaveCriticalSection(FlushLk);
 end;
 
-procedure LogStart(const path: UnicodeString; const version: AnsiString);
-var h: THandle; size: DWORD;
+var LocksMade: Boolean = False;
+
+function LogStart(const path: UnicodeString; const version: AnsiString): Boolean;
+var h: THandle;
 begin
-  InitializeCriticalSection(Lk); InitializeCriticalSection(FlushLk);
+  if not LocksMade then begin InitializeCriticalSection(Lk); InitializeCriticalSection(FlushLk); LocksMade := True; end;
+  Result := False;
+  { a new file for each start: a file left damaged by a reset in the middle of writing (it could then not
+    even be copied: 3.8) cannot stop the next one }
+  h := CreateFileW(PWideChar(path), GENERIC_WRITE, FILE_SHARE_READ, nil, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
+  if h = INVALID_HANDLE_VALUE then Exit;
+  CloseHandle(h);
   FilePath := path;
   T0 := GetTickCount; LastFlush := T0;
-  { a long log starts again }
-  size := 0;
-  h := CreateFileW(PWideChar(FilePath), GENERIC_READ, FILE_SHARE_READ, nil, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
-  if h <> INVALID_HANDLE_VALUE then
-  begin
-    size := SetFilePointer(h, 0, nil, FILE_END);
-    CloseHandle(h);
-  end;
-  if size > MAXFILE then WriteOut(0, True);
   LogOn := True;
+  Result := True;
   Log('=== Whisper Tools ' + version + ' started (the clock ' + LI(T0) + ' ms since the handheld was switched on)');
   LogTick(True);
+end;
+
+function LogPath: UnicodeString;
+begin
+  Result := FilePath;
 end;
 
 end.

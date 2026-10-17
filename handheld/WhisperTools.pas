@@ -1,5 +1,5 @@
 program WhisperTools;
-{ Whisper Tools 3.8, for Windows CE handheld PCs (made on an HP Jornada 720).
+{ Whisper Tools 3.8.1, for Windows CE handheld PCs (made on an HP Jornada 720).
 
   Type here and the text goes into any app on your phone, with Tab, the
   arrows, Ctrl+C and the other keys; the phone confirms what has arrived.
@@ -22,7 +22,7 @@ program WhisperTools;
 uses Windows, w3core, w3dsp, w3tx, w3rx, waudio, wtext, wfile, wscreen, wwav, wimg, winf, wmodem, wpair, wlog;
 
 const
-  VERSION = '3.8';
+  VERSION = '3.8.1';
   CREATOR = 'Kyriakos Christodoulou';
   CLSNAME: UnicodeString = 'WhisperTools';
   APPNAME: UnicodeString = 'Whisper Tools';
@@ -395,6 +395,7 @@ end;
 { the loudness of the silent channel (peak, of 32767): chosen by Pair, from what the phone heard (LevelSource 1),
   or a moderate one until then. The speaker distorts when driven hard, and its amplifier may give up. }
 var SilentPeak: Integer = 14500; LevelSource: Integer = 0;
+    LogNo: Integer = 0;                 { the last of the five log files written }
 
 procedure LoadCfg;
 var h: THandle; b: array[0..15] of Byte; got: DWORD; r: LongWord;
@@ -429,7 +430,12 @@ begin
           if (b[6] >= 20) and (b[6] <= 230) and (b[7] = 1) then begin SilentPeak := b[6] * 128; LevelSource := 1; end;
           got := 0;
           if ReadFile(h, {$ifdef wince}@b{$else}b{$endif}, 2, {$ifdef wince}@got{$else}got{$endif}, nil) and (got = 2) and (b[0] = $38) then
+          begin
             SpeakerNative := b[1] = 0;
+            got := 0;
+            if ReadFile(h, {$ifdef wince}@b{$else}b{$endif}, 2, {$ifdef wince}@got{$else}got{$endif}, nil) and (got = 2) and (b[0] = $39) and (b[1] <= 5) then
+              LogNo := b[1];
+          end;
         end;
       end;
     end;
@@ -438,7 +444,7 @@ begin
 end;
 
 procedure SaveCfg;
-var h: THandle; b: array[0..22] of Byte; got: DWORD; r: LongWord;
+var h: THandle; b: array[0..24] of Byte; got: DWORD; r: LongWord;
 begin
   h := CreateFileW(PWideChar(CfgPath), GENERIC_WRITE, 0, nil, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
   if h = INVALID_HANDLE_VALUE then Exit;
@@ -451,8 +457,9 @@ begin
   if RateSource = 1 then b[18] := 3 else b[18] := RateSource;
   b[19] := SilentPeak div 128; b[20] := LevelSource;
   b[21] := $38; b[22] := Ord(not SpeakerNative);
+  b[23] := $39; b[24] := LogNo;
   got := 0;
-  WriteFile(h, {$ifdef wince}@b{$else}b{$endif}, 23, {$ifdef wince}@got{$else}got{$endif}, nil);
+  WriteFile(h, {$ifdef wince}@b{$else}b{$endif}, 25, {$ifdef wince}@got{$else}got{$endif}, nil);
   CloseHandle(h);
 end;
 
@@ -1736,7 +1743,7 @@ end;
 function LinkBtn(i: Integer): TRect;
 var w: Integer;
 begin
-  w := (CW - 24 - 2 * 6) div 3;
+  w := (CW - 24 - 3 * 6) div 4;
   Result := MkRect(12 + i * (w + 6), CH - STATUS_H - 27, 12 + i * (w + 6) + w, CH - STATUS_H - 5);
 end;
 
@@ -1802,6 +1809,7 @@ begin
   Button(dc, LinkBtn(0), 'Pair', 'P');
   Button(dc, LinkBtn(1), 'Test speaker', 'S');
   Button(dc, LinkBtn(2), 'Check the link', 'K');
+  Button(dc, LinkBtn(3), 'Save what I heard', 'H');
 end;
 
 const NSET = 9;
@@ -2049,6 +2057,47 @@ end;
 
 { ---------- input ---------- }
 
+{ the log: a new file at each start, the oldest of five, in the folder for received files (a memory card
+  can then simply be taken out and read); next to the program if that folder cannot be written }
+procedure StartLog;
+var k, n: Integer; ok: Boolean;
+begin
+  ok := False;
+  for k := 1 to 5 do
+  begin
+    n := (LogNo + k - 1) mod 5 + 1;
+    if LogStart(InFolder + 'Whisper Tools log ' + IU(n) + '.txt', VERSION) then begin LogNo := n; ok := True; Break; end;
+  end;
+  if not ok then ok := LogStart(ProgDir + 'Whisper Tools log ' + IU(GetTickCount mod 1000) + '.txt', VERSION);
+  SaveCfg;
+end;
+
+{ the last 6 seconds of the microphone, as heard (at its real rate), into a sound file next to the log }
+procedure SaveHeard;
+var x: array of SmallInt; n, rate, i: Integer; d: TByteArr; name: UnicodeString;
+  procedure P32(o: Integer; v: LongInt); begin d[o] := v and 255; d[o + 1] := (v shr 8) and 255; d[o + 2] := (v shr 16) and 255; d[o + 3] := (v shr 24) and 255; end;
+begin
+  SetLength(x, RING_N);
+  n := AudioRingCopy(AudioRingPos - RING_N, x, RING_N);
+  rate := Integer(InRate100 div 100);
+  SetLength(d, 44 + 2 * n);
+  for i := 0 to 43 do d[i] := 0;
+  d[0] := Ord('R'); d[1] := Ord('I'); d[2] := Ord('F'); d[3] := Ord('F'); P32(4, 36 + 2 * n);
+  d[8] := Ord('W'); d[9] := Ord('A'); d[10] := Ord('V'); d[11] := Ord('E');
+  d[12] := Ord('f'); d[13] := Ord('m'); d[14] := Ord('t'); d[15] := Ord(' '); P32(16, 16);
+  d[20] := 1; d[22] := 1; P32(24, rate); P32(28, rate * 2); d[32] := 2; d[34] := 16;
+  d[36] := Ord('d'); d[37] := Ord('a'); d[38] := Ord('t'); d[39] := Ord('a'); P32(40, 2 * n);
+  for i := 0 to n - 1 do begin d[44 + 2 * i] := x[i] and 255; d[45 + 2 * i] := (x[i] shr 8) and 255; end;
+  MakeInFolder;
+  name := FreeName(InFolder, 'Whisper Tools heard.wav');
+  if WriteWhole(InFolder + name, @d[0], Length(d)) then
+  begin
+    SpeakerNote := 'Saved the last ' + IU(n div rate) + ' s heard: ' + InFolder + name;
+    Log('saved the last ' + LI(n) + ' samples heard (at ' + LI(rate) + '/s) as ' + AnsiString(name));
+  end
+  else SpeakerNote := 'The sound could not be saved (is there room?)';
+end;
+
 procedure Leave;
 begin
   if Quitting then Exit;
@@ -2286,6 +2335,7 @@ begin
         Ord('p'), Ord('P'): StartPair(False);
         Ord('s'), Ord('S'): TestSpeaker;
         Ord('k'), Ord('K'), 13: CheckLink;
+        Ord('h'), Ord('H'): SaveHeard;
       end;
   end;
 end;
@@ -2335,11 +2385,11 @@ begin
         if (i >= 0) and (i < NSET) and (Classic or (i < 6)) then begin if i = SetSel then ChangeSetting(i, 1); SetSel := i; end;
       end;
     SCR_LINK:
-      for i := 0 to 2 do
+      for i := 0 to 3 do
       begin
         rc := LinkBtn(i);
         if (x >= rc.left) and (x < rc.right) and (y >= rc.top) and (y < rc.bottom) then
-          case i of 0: StartPair(False); 1: TestSpeaker; 2: CheckLink; end;
+          case i of 0: StartPair(False); 1: TestSpeaker; 2: CheckLink; 3: SaveHeard; end;
       end;
     SCR_REMOTE:
       if RemoteOn and (y >= TITLE_H) and (y < CH - STATUS_H) then
@@ -2431,7 +2481,7 @@ begin
   LoadCfg;
   MakeInFolder;
   Folder := InFolder;
-  LogStart(ProgDir + 'Whisper Tools log.txt', VERSION);
+  StartLog;
   Log('settings: microphone rate ' + LI(InRate100 div 100) + ' (source ' + LI(RateSource) + ': 0 = not known yet), silent loudness ' + LI(SilentPeak)
     + ' (source ' + LI(LevelSource) + '), classic ' + LI(Ord(Classic)) + ', wide ' + LI(Ord(WideSilent)) + ', fast files '
     + LI(Ord(FastFiles)) + ', fast level ' + LI(FastLevel) + ', typing on fast ' + LI(Ord(TypingOnFast)) + ', fast always ' + LI(Ord(FastAlways)));

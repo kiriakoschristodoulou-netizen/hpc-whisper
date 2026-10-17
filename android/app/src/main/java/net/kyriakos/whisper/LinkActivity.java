@@ -67,8 +67,8 @@ public class LinkActivity extends ToolActivity implements PairCheck.Watcher {
         LinearLayout diag = ui.card("Diagnostics");
         ui.body(diag, "Everything the link does is written to a log on this phone while it is connected, and the last 30 "
                 + "seconds of what its microphone heard are kept. After a problem, share both in one file with whoever is "
-                + "helping you (send it as a file or document). The handheld keeps its own log: \"Whisper Tools log.txt\", "
-                + "next to WhisperTools.exe. Nothing leaves this phone unless you share it.");
+                + "helping you (send it as a file or document). The handheld keeps its own logs (\"Whisper Tools log 1.txt\" "
+                + "and on), in its folder for received files, on its memory card if its Settings put them there. Nothing leaves this phone unless you share it.");
         diagState = ui.text(diag, "", 14, t().ink, true);
         ui.button(diag, "Share diagnostics", true, v -> shareDiagnostics());
         ui.button(diag, "Clear the log", false, v -> { DiagLog.clear(); diagState.setText("The log is cleared: it starts again from here."); });

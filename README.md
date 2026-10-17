@@ -26,7 +26,7 @@ Made on, and for, the HP Jornada 720. Created by Kyriakos Christodoulou.
   Share. It reads the Classic format (on the handheld: Settings, Typing format,
   Classic). *Apple does not let keyboards use the microphone at all, so an
   iPhone keyboard is impossible.*
-- **Handheld:** `Whisper-Tools-38.zip` from the same release. Copy the folder
+- **Handheld:** `Whisper-Tools-381.zip` from the same release. Copy the folder
   inside it to the handheld and run `WhisperTools.exe`. Its home screen has a button for each tool.
 
 ## Which handhelds

@@ -161,7 +161,7 @@ var
   RingPos: Int64 = 0;                  { samples written so far }
   Lead: TSamplesArr;
   { rate measurement over all listening turns }
-  RateSamples: Int64 = 0; RateMs: Int64 = 0; LastSet: Int64 = 0; RefusedRate: Integer = 0;
+  RateSamples: Int64 = 0; RateMs: Int64 = 0; LastSet: Int64 = 0; RefusedRate: Integer = 0; RateLogged: Boolean = False;
   { marker watch }
   MkCoef, MkCoefL, MkCoefH: LongInt; MkS1, MkS2, MkL1, MkL2, MkH1, MkH2: Int64; MkN: Integer; MkBg: Int64 = 0; MkRun: Integer = 0; MkRunPos: Int64;
 
@@ -820,7 +820,21 @@ begin
   want := 44100;
   if SpeakerNative and RateTrusted and (InRate100 > 0) then want := Integer((InRate100 + 50) div 100);
   if want = RefusedRate then want := 44100;
+  { what the screen says, and the log once: why this rate }
+  if want = 44100 then
+  begin
+    if not SpeakerNative then OutRateNote := 'at 44,100/s, converted by Windows (Settings)'
+    else if RefusedRate <> 0 then OutRateNote := 'at 44,100/s: the card does not take its own rate (' + UnicodeString(LI(RefusedRate)) + ')'
+    else OutRateNote := 'at 44,100/s until the chip''s own rate is known (Pair, or a minute of listening; ' + UnicodeString(LI(RateMs div 1000)) + ' s so far)';
+  end;
+  if (want = TxRate) and not RateLogged then
+  begin
+    RateLogged := True;
+    Log('speaker: plays at ' + LI(TxRate) + '/s (own rate wanted ' + LI(Ord(SpeakerNative)) + ', rate trusted ' + LI(Ord(RateTrusted))
+      + ', microphone ' + LI(InRate100 div 100) + ', measured over ' + LI(RateMs div 1000) + ' s, refused ' + LI(RefusedRate) + ')');
+  end;
   if want = TxRate then Exit;
+  RateLogged := False;
   if want <> 44100 then
   begin
     { does the sound card take it? (asked without opening it) }

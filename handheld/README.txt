@@ -1,4 +1,4 @@
-Whisper Tools 3.8
+Whisper Tools 3.8.1
 by Kyriakos Christodoulou
 
 Type on a Windows CE handheld PC and the text goes straight into any app
@@ -87,13 +87,15 @@ SOUND
   the phone within about a metre and its media volume at about half.
 
 DIAGNOSTICS
-  Whisper Tools writes everything the link does to "Whisper Tools log.txt"
-  in this folder: every sound it plays, every frame it hears or loses,
-  files, pairing, and how busy the processor is. It is kept across starts
-  (and a soft reset loses only the last seconds); past 3 MB it starts
-  again. The phone keeps its own log: Link, Share diagnostics. After a
-  problem, send both (copy the handheld's with a memory card or
-  ActiveSync).
+  Whisper Tools writes everything the link does to a log: every sound it
+  plays, every frame it hears or loses, files, pairing, and how busy the
+  processor is. Each start writes a new file, "Whisper Tools log 1.txt"
+  to "... 5.txt" in turn, in the folder for received files: set Received
+  files to the memory card (Settings) and the card can simply be taken out
+  and read on a computer. On the Link screen, Save what I heard (H) keeps
+  the last 6 seconds the microphone heard as "Whisper Tools heard.wav" in
+  the same folder. The phone keeps its own log: Link, Share diagnostics.
+  After a problem, send the logs and the sound.
 
 SOURCE
   The full source is in the source folder (Free Pascal 3.2.2 for Windows
