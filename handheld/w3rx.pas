@@ -61,6 +61,8 @@ type
     lastFail: string;
     { for the diagnostics log: frames that seemed to start, that were found (S and R), headers read, the last one }
     trigs, starts, hdrs, hdrTyp, hdrLen, hdrSym, gated: Integer;
+    { the full checks of the last tenth of a second (3.8.2): at most 3 }
+    fullAt: Int64; fullN: Integer;
   end;
   PRx = ^TRx;
 
@@ -269,15 +271,20 @@ end;
   a tenth of their average. On a fast channel, its upper half of the band should also hold at least a
   hundredth of what the lower half holds (a voice or a hum holds far less up there). }
 function SLooksRight(var r: TRx; w: Int64): Boolean;
-var yre, yim: TCarr; c, n, cnt, on: Integer; p: array[0..MAXCAR - 1] of Int64; sum, lo, hi: Int64; Cn: TChannel;
+var yre, yim: TCarr; c, n, cnt, on, nOff: Integer; p: array[0..MAXCAR - 1] of Int64; sum, lo, hi, offSum: Int64; Cn: TChannel;
 begin
   Cn := Chans[r.ch];
   SymFft(r, w, yre, yim);
-  sum := 0; n := 0; lo := 0; hi := 0;
+  sum := 0; n := 0; lo := 0; hi := 0; offSum := 0; nOff := 0;
   for c := 0 to Cn.n - 1 do
   begin
     p[c] := -1;
-    if (Cn.bins[c] mod Cn.syncStep) <> 0 then Continue;
+    if (Cn.bins[c] mod Cn.syncStep) <> 0 then
+    begin
+      { S leaves these carriers off }
+      offSum := offSum + Int64(yre[c]) * yre[c] + Int64(yim[c]) * yim[c]; Inc(nOff);
+      Continue;
+    end;
     p[c] := Int64(yre[c]) * yre[c] + Int64(yim[c]) * yim[c];
     sum := sum + p[c]; Inc(n);
     if c < Cn.n div 2 then lo := lo + p[c] else hi := hi + p[c];
@@ -287,6 +294,9 @@ begin
   for c := 0 to Cn.n - 1 do
     if p[c] >= 0 then begin Inc(cnt); if p[c] * 10 * n >= sum then Inc(on); end;
   Result := on * 2 >= cnt;
+  { S holds its carriers and leaves the ones between them empty; a voice, a click or noise fills both alike.
+    On average the carriers it uses must hold at least 3 times what the others do. }
+  if Result and (nOff > 0) then Result := (sum div n) >= 3 * (offSum div nOff);
   if Result and (not Cn.silent) then Result := hi * 100 >= lo;
 end;
 
@@ -491,6 +501,15 @@ begin
       itself too (and fills the fast channel's lower half), a click fills everything; the careful search
       below costs ten times as much. Not ours: on by two symbols. }
     if not SLooksRight(r, dS + NCP - RBACK) then
+    begin
+      Inc(r.gated);
+      r.state := IDLE; r.scan := r.trig + 2 * NSYM; Exit;
+    end;
+    { and not more than 3 careful searches in a tenth of a second: a sound that keeps passing the look
+      (a voice, music) would otherwise use all the processor }
+    if r.t - r.fullAt >= (MRATE div 10) then begin r.fullAt := r.t; r.fullN := 0; end;
+    Inc(r.fullN);
+    if r.fullN > 3 then
     begin
       Inc(r.gated);
       r.state := IDLE; r.scan := r.trig + 2 * NSYM; Exit;

@@ -134,6 +134,6 @@ begin
         r.trainReady := False;
       end;
     end;
-    WriteLn('frames ', r.frames, ' fails ', r.fails, ' ', r.lastFail);
+    WriteLn('frames ', r.frames, ' fails ', r.fails, ' ', r.lastFail, ' | triggers ', r.trigs, ' passed the look ', r.starts + r.fails, ' not ours ', r.gated);
   end;
 end.

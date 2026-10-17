@@ -548,6 +548,8 @@ end;
 var
   SessT0, SessLast: LongWord; SessCount, SessCountAt: Int64; SessOn: Boolean; RateAt: LongWord = 0;
   PeakAt: LongWord; Pk: Integer;
+  { when the loop last looked and found no buffer ready: a buffer taken soon after was ready no earlier than that }
+  EmptyAt: LongWord = 0; EmptyValid: Boolean = False;
   Conv: array[0..IN_N * 2] of SmallInt;
 
 procedure EndSession;
@@ -563,14 +565,20 @@ end;
 
 { one full microphone buffer, if there is one; False when there was none }
 function ListenOnce: Boolean;
-var k, n, i, v, busy: Integer; now, t1, t2: LongWord; behind, fresh: Boolean; m: TBitMap; r100, ms: Int64;
+var k, n, i, v, busy: Integer; now, t1, t2, arrive: LongWord; behind, fresh: Boolean; m: TBitMap; r100, ms: Int64;
 begin
   Result := False;
   k := InK;
-  if (InHdr[k].flags and 1) = 0 then Exit;
+  if (InHdr[k].flags and 1) = 0 then begin EmptyAt := GetTickCount; EmptyValid := True; Exit; end;
   Result := True;
   n := InHdr[k].recorded div 2;
   now := GetTickCount;
+  { the time this buffer arrived is known (to within the 10 ms the loop sleeps) only if the loop was waiting
+    for it: it looked a moment ago and found nothing. After any hold-up the buffers wait in a row and the
+    time they are taken says nothing (3.8.1: that made a microphone of 43,200 read as 42,816). }
+  fresh := EmptyValid and (now - EmptyAt <= 20);
+  if fresh then arrive := EmptyAt + (now - EmptyAt) div 2 else arrive := now;
+  EmptyValid := False;
   behind := True;
   for i := 1 to IN_NBUF - 1 do if (InHdr[(k + i) mod IN_NBUF].flags and 1) = 0 then behind := False;
   if behind then
@@ -590,17 +598,16 @@ begin
     behind it): a buffer taken late, after the processor was held up, made the microphone look fast
     (43,600 for 43,200: 3.7, device log). The samples counted after the first such buffer, up to the last
     such one, over the time between them. }
-  fresh := (InHdr[(k + 1) mod IN_NBUF].flags and 1) = 0;
   if not SessOn then
   begin
     SessCount := SessCount + n;
-    if (SessCount >= IN_RATE div 2) and fresh then begin SessOn := True; SessT0 := now; SessLast := now; SessCount := 0; SessCountAt := 0; end;
+    if (SessCount >= IN_RATE div 2) and fresh then begin SessOn := True; SessT0 := arrive; SessLast := arrive; SessCount := 0; SessCountAt := 0; end;
   end
   else if behind then begin EndSession; SessCount := 0; end
   else
   begin
     SessCount := SessCount + n;
-    if fresh then begin SessLast := now; SessCountAt := SessCount; end;
+    if fresh then begin SessLast := arrive; SessCountAt := SessCount; end;
     ms := SessLast - SessT0;
     if (ms >= 1000) and (RateMs + ms >= 8000) and (now - RateAt >= 2000) then
     begin
@@ -639,11 +646,20 @@ begin
     begin
       t2 := GetTickCount;
       RxPush(RxFD, Conv, 0, i); Collect(RxFD); Inc(StFastBufs);
-      FastMs := FastMs + Integer(GetTickCount - t2);
+      busy := Integer(GetTickCount - t2);
+      FastMs := FastMs + busy;
+      { one buffer that took this long (a quarter of its own length, twice over) cannot go on: pause at once,
+        without waiting for the second to be over }
+      if busy > 250 then
+      begin
+        FastPauseUntil := GetTickCount + 3000; Inc(FastPauses);
+        Log('fast receiver paused for 3 s: one buffer took ' + LI(busy) + ' ms (the processor is needed elsewhere)');
+        FastWinAt := GetTickCount; FastMs := 0;
+      end;
     end;
     if now - FastWinAt >= 1000 then
     begin
-      if FastMs > 500 then
+      if FastMs > 350 then
       begin
         FastPauseUntil := now + 3000; Inc(FastPauses);
         Log('fast receiver paused for 3 s: it took ' + LI(FastMs) + ' ms of the last ' + LI(now - FastWinAt) + ' (the processor is needed elsewhere)');
