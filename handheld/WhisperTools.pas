@@ -1,5 +1,5 @@
 program WhisperTools;
-{ Whisper Tools 3.8.4, for Windows CE handheld PCs (made on an HP Jornada 720).
+{ Whisper Tools 3.8.5, for Windows CE handheld PCs (made on an HP Jornada 720).
 
   Type here and the text goes into any app on your phone, with Tab, the
   arrows, Ctrl+C and the other keys; the phone confirms what has arrived.
@@ -22,7 +22,7 @@ program WhisperTools;
 uses Windows, w3core, w3dsp, w3tx, w3rx, waudio, wtext, wfile, wscreen, wwav, wimg, winf, wmodem, wpair, wlog;
 
 const
-  VERSION = '3.8.4';
+  VERSION = '3.8.5';
   CREATOR = 'Kyriakos Christodoulou';
   CLSNAME: UnicodeString = 'WhisperTools';
   APPNAME: UnicodeString = 'Whisper Tools';

@@ -322,7 +322,7 @@ public final class Rx {
         }
         if (used < 2) return true;
         // the repeats of a true S are alike (1); a voice, a click or noise falls far short
-        if (sz < 0.45 * tot) return false;
+        if (sz < 0.65 * tot) return false;
         // a coarse reading from the difference of neighbouring carriers (they differ by little: whole turns cannot be
         // lost until the sound is 100 % off), then all of them, each corrected for whole turns
         double dn = 0, dw = 0;
@@ -354,7 +354,10 @@ public final class Rx {
         }
         double rms = Math.sqrt(sr / Math.max(sw, 1e-30));
         double q = Math.max(0, 1 - rms / 0.1);
-        if (Math.abs(d) > 0.03) q = 0;
+        if (Math.abs(d) > 0.015) q = 0;           // no handheld's chip is that far off; what lands there is a fit to noise
+        // a true S repeats exactly (1.0); noise that happens to pass the gate falls short, and with only a few carriers
+        // a wide search always finds some rate that fits it: such a reading must never move the conversion
+        if (sz < 0.85 * tot) q = 0;
         sink.onRateOffset(this, d, q);
         return true;
     }

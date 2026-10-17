@@ -201,7 +201,7 @@ public final class Listener {
                         else noiseStarts++;
                     }
                     @Override public void onRateOffset(Rx r, double delta, double quality) {
-                        if (quality < 0.7 || Math.abs(delta) > 0.03) return;
+                        if (quality < 0.8 || Math.abs(delta) > 0.015) return;
                         pendingDelta = delta; pending = true;
                         pendingBig = Math.abs(delta) > 0.0004;     // too far off for this frame to be read
                     }

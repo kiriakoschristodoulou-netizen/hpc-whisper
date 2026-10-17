@@ -5,7 +5,7 @@ program w3tool;
     w3tool rx CH in.wav RATE100 [map.bin]          read frames; RATE100 = the true rate x 100
   Prints one line per message: "msg TYPE LEN SNR10 FIXED HEX", and "train SNR10..." }
 {$mode objfpc}{$H+}
-uses w3core, w3dsp, w3tx, w3rx;
+uses SysUtils, w3core, w3dsp, w3tx, w3rx;
 
 function ReadFileBytes(const p: string): TBytes;
 var f: File; n: Int64;
@@ -76,9 +76,11 @@ begin
 end;
 
 var
+  dumpN: Integer = 0;
   cmd: string; ch, typ, code, i, n, rate: LongInt; m: TBitMap; pl, mb: TBytes; x, y: TSamples;
   r: TRx; rs: TResampler; msg: TRxMsg; rate100: Int64; s: string;
 begin
+  if GetEnvironmentVariable('TRIG') <> '' then Val(GetEnvironmentVariable('TRIG'), RxTrig, code);
   cmd := ParamStr(1);
   Val(ParamStr(2), ch, code);
   if cmd = 'tx' then
@@ -124,6 +126,11 @@ begin
       n := Length(y) - i; if n > 4096 then n := 4096;
       RxPush(r, y, i, n);
       Inc(i, n);
+      if (GetEnvironmentVariable('DUMP') <> '') and (r.cfoN <> dumpN) then
+      begin
+        dumpN := r.cfoN;
+        WriteLn('  at ', (i * 10) div 512000, ' tenths-s: estimate ', r.cfoPpm, ' ppm, q ', r.cfoQ, ', alike ', r.cfoCoh);
+      end;
       while RxTake(r, msg) do
         WriteLn('msg ', msg.typ, ' ', msg.len, ' ', msg.snr10, ' ', msg.fixed, ' ', Hex(msg.data, msg.len));
       if r.trainReady then

@@ -9,7 +9,7 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "Kyriakos Christodoulou\0"
       VALUE "FileDescription", "Whisper Tools\0"
-      VALUE "FileVersion", "3.8.4\0"
+      VALUE "FileVersion", "3.8.5\0"
       VALUE "ProductName", "Whisper Tools\0"
       VALUE "OriginalFilename", "WhisperTools.exe\0"
     END

@@ -71,6 +71,8 @@ type
   end;
   PRx = ^TRx;
 
+var RxTrig: Integer = 1843;       { the metric that starts a look at a frame (Q12): 0.45 }
+
 procedure RxInit(var r: TRx; ch: Integer);
 { forget all sound heard, keep the maps: the same sound is about to be given again, converted with a better rate }
 procedure RxReset(var r: TRx);
@@ -581,7 +583,7 @@ begin
       if r.floor = 0 then r.floor := e + 1;          { the first look }
       { a frame: the two halves alike (S), and clearly louder than the recent average. A steady tone
         is alike too, but never louder than its own average: it does not start a frame. }
-      if (r.metric[k] > 1843) and ((e shr 1) > r.floor) and (e > 2) then
+      if (r.metric[k] > RxTrig) and ((e shr 1) > r.floor) and (e > 2) then
       begin
         {$ifdef RXDEBUG}WriteLn('trigger at ', r.scan, ' e ', e, ' floor ', r.floor, ' metric ', r.metric[k]);{$endif}
         r.state := SEEK; r.trig := r.scan; Inc(r.trigs); Exit;
@@ -622,7 +624,7 @@ begin
       72 samples in: past the fade-in of S (48) and well inside it, whose start is known to within some 35) }
     {$ifdef RXDEBUG}WriteLn('dS ', dS);{$endif}
     RateOffset(r, dS + 72);
-    if r.cfoCoh < 45 then begin Inc(r.gated); r.state := IDLE; r.scan := r.trig + 2 * NSYM; Exit; end;
+    if r.cfoCoh < 85 then begin Inc(r.gated); r.state := IDLE; r.scan := r.trig + 2 * NSYM; Exit; end;
     { and not more than 3 careful searches in a tenth of a second: a sound that keeps passing the look
       (a voice, music) would otherwise use all the processor }
     if r.t - r.fullAt >= (MRATE div 10) then begin r.fullAt := r.t; r.fullN := 0; end;

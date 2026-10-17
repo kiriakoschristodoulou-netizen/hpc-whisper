@@ -514,7 +514,7 @@ procedure AfcCheck(var r: TRx; i: Integer);
 begin
   if r.cfoN = AfcSeen[i] then Exit;
   AfcSeen[i] := r.cfoN;
-  if (r.cfoQ < 70) or (r.cfoCoh < 70) then Exit;
+  if (r.cfoQ < 80) or (r.cfoCoh < 85) or (Abs(r.cfoPpm) > 15000) then Exit;
   AfcPpm := r.cfoPpm; AfcPending := True;
   Log(LChan(r.ch) + ' sync heard: the carriers are ' + LI(r.cfoPpm) + ' ppm off (quality ' + LI(r.cfoQ) + ', alike ' + LI(r.cfoCoh) + ')');
 end;
