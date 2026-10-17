@@ -54,10 +54,10 @@ public class AfcTest {
                             Double.isNaN(est[0]) ? "none" : String.format("%+.3f%% (q %.2f)", est[0] * 100, est[1]),
                             q[0] > -99 ? String.format("read %.1f dB", q[0]) : "not read");
                     lastQ = q[0];
-                    if (!Double.isNaN(est[0]) && est[1] > 0.3) scale = scale * (1 - est[0] * 0.8);
+                    if (!Double.isNaN(est[0]) && est[1] > 0.3) scale = scale * (1 - est[0] * (Math.abs(est[0]) > 0.001 ? 1.0 : 0.9));
                 }
                 boolean ok = lastQ >= 18;
-                boolean inRange = Math.abs(pct) <= 0.31 && noiseDb <= 2e-4;   // the noisy rows only show how the estimate refuses a bad measurement
+                boolean inRange = Math.abs(pct) <= 1.01 && noiseDb <= 2e-4;   // the noisy rows only show how the estimate refuses a bad measurement
                 if (!ok && inRange) fails++;
                 System.out.printf("%s noise %.0e, play rate off %+5.2f%%:%s%n", ok ? "ok  " : inRange ? "FAIL" : "out of range", noiseDb, pct, line);
             }

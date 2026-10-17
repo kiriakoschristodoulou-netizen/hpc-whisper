@@ -83,6 +83,7 @@ public final class PairCheck {
         Link link = Link.get();
         if (running()) return;
         if (!link.running()) { note = "Connect first."; changed(); return; }
+        if (app != null) Listener.forgetCorrection(app);
         steps.clear();
         mine = null; theirs = null; played = false; reported = false;
         state = LEVEL;

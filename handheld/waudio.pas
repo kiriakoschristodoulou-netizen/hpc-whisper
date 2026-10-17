@@ -29,7 +29,7 @@ const
   OUT_NBUF = 3;
   IN_RATE = 44100;
   IN_N = 4410;
-  IN_NBUF = 6;
+  IN_NBUF = 24;                       { 2.4 s of sound can wait: a frame being read is never held up for the screen }
   OUTQ = 16;
   RXQ = 32;
   RING_N = IN_RATE * 6;               { the last 6 seconds of the microphone }
@@ -78,7 +78,7 @@ var
   { the rate from the phone's sound (3.8.3): each frame's sync symbol shows how far the microphone's rate is off }
   AfcN: Integer = 0;                   { corrections made }
   AfcGood: Integer = 0;                { in a row that were under 0.025 % }
-  AfcPending: Boolean = False; AfcPpm: Integer = 0;
+  AfcPending: Boolean = False; AfcPpm: Integer = 0; ReplayAt: Int64 = 0;
   AfcSeen: array[0..1] of Integer;
   Turns: Integer;                      { turns of sound played }
   LastTurnAt: LongWord;                { when the last one ended (GetTickCount) }
@@ -519,18 +519,23 @@ begin
   Log(LChan(r.ch) + ' sync heard: the carriers are ' + LI(r.cfoPpm) + ' ppm off (quality ' + LI(r.cfoQ) + ', alike ' + LI(r.cfoCoh) + ')');
 end;
 
-{ between frames: the microphone's rate follows what the sync symbols say. If the sound is ppm too high, the rate
-  we convert from was too high by as much. }
-procedure AfcApply;
-var p, nw: Int64;
+{ the microphone's rate follows what the sync symbols say. If the sound is ppm too high, the rate we convert from was
+  too high by as much. A small error waits for the end of the frame; a large one (the frame in hand cannot be read
+  as it is) is corrected at once, and True is returned: the last half second of sound is to be given again. }
+function AfcApply: Boolean;
+var p, nw: Int64; big: Boolean;
 begin
-  if (not AfcPending) or RxBusy(RxSD) or RxBusy(RxFD) then Exit;
+  Result := False;
+  if not AfcPending then Exit;
+  big := Abs(AfcPpm) > 400;
+  if (not big) and (RxBusy(RxSD) or RxBusy(RxFD)) then Exit;
   AfcPending := False;
   p := AfcPpm;
-  if p > 6000 then p := 6000 else if p < -6000 then p := -6000;
+  if p > 15000 then p := 15000 else if p < -15000 then p := -15000;
   if Abs(p) >= 30 then
   begin
-    nw := InRate100 - (InRate100 * p * 9 div 10) div 1000000;
+    if big then nw := InRate100 - (InRate100 * p) div 1000000
+    else nw := InRate100 - (InRate100 * p * 9 div 10) div 1000000;
     InRate100 := nw; LastSet := nw; RsSetRates(Rs, InRate100, Int64(MRATE) * 100);
     Log('microphone rate tuned by the phone''s sound: ' + LI(InRate100 div 100) + '.' + LI((InRate100 mod 100) div 10) + ' (' + LI(AfcPpm) + ' ppm off)');
   end;
@@ -542,6 +547,7 @@ begin
     RateTrusted := True; RateOdd := 0;
     Log('microphone rate settled at ' + LI(InRate100 div 100) + ' (two frames in a row within 0.025 %)');
   end;
+  Result := big and (RingPos - ReplayAt > IN_RATE);
 end;
 
 var
@@ -592,6 +598,31 @@ var
   { when the loop last looked and found no buffer ready: a buffer taken soon after was ready no earlier than that }
   EmptyAt: LongWord = 0; EmptyValid: Boolean = False;
   Conv: array[0..IN_N * 2] of SmallInt;
+
+{ the last half second of the microphone, given again to fresh receivers through the corrected conversion: the frame
+  that showed the error is read after all }
+var ReplBuf: array[0..IN_N - 1] of SmallInt;
+
+procedure AfcReplay;
+var pos: Int64; n, i, m: Integer;
+begin
+  ReplayAt := RingPos;
+  pos := RingPos - IN_RATE div 2;
+  if pos < 0 then pos := 0;
+  RxReset(RxSD); RxReset(RxFD);
+  AfcSeen[0] := 0; AfcSeen[1] := 0;
+  RsInit(Rs, InRate100, Int64(MRATE) * 100, True);
+  while pos < RingPos do
+  begin
+    n := Integer(RingPos - pos); if n > IN_N then n := IN_N;
+    for i := 0 to n - 1 do ReplBuf[i] := Ring[(pos + i) mod RING_N];
+    m := RsProcess(Rs, ReplBuf, 0, n, Conv, 0);
+    RxPush(RxSD, Conv, 0, m); Collect(RxSD);
+    if ListenFast then begin RxPush(RxFD, Conv, 0, m); Collect(RxFD); end;
+    pos := pos + n;
+  end;
+  Log('the sound just heard was read again at the corrected rate');
+end;
 
 procedure EndSession;
 var ms: Int64;
@@ -679,20 +710,18 @@ begin
   begin
     t1 := GetTickCount;
     i := RsProcess(Rs, InBuf[k], 0, n, Conv, 0);
-    RxPush(RxSD, Conv, 0, i);
-    Collect(RxSD);
-    AfcCheck(RxSD, 0);
-    { the fast receiver, within a budget: if it takes more than half the processor over a second, it pauses
-      for three (the screen and typing come first; a frame in that time is lost, and asked for again) }
-    if ListenFast and (LongInt(now - FastPauseUntil) >= 0) then
+    { one down channel at a time: while a frame is being read on the fast one, the silent receiver does not look (it
+      would use a sixth of the processor), and the other way round }
+    if not RxBusy(RxFD) then begin RxPush(RxSD, Conv, 0, i); Collect(RxSD); AfcCheck(RxSD, 0); end;
+    { the fast receiver, within a budget: if it takes more than half the processor over a second while it is only
+      looking, it pauses for three (the screen and typing come first). A frame being read is never stopped. }
+    if ListenFast and (LongInt(now - FastPauseUntil) >= 0) and not RxBusy(RxSD) then
     begin
       t2 := GetTickCount;
       RxPush(RxFD, Conv, 0, i); Collect(RxFD); AfcCheck(RxFD, 1); Inc(StFastBufs);
       busy := Integer(GetTickCount - t2);
       FastMs := FastMs + busy;
-      { one buffer that took this long (a quarter of its own length, twice over) cannot go on: pause at once,
-        without waiting for the second to be over }
-      if busy > 250 then
+      if (busy > 250) and not RxBusy(RxFD) then
       begin
         FastPauseUntil := GetTickCount + 3000; Inc(FastPauses);
         Log('fast receiver paused for 3 s: one buffer took ' + LI(busy) + ' ms (the processor is needed elsewhere)');
@@ -701,14 +730,14 @@ begin
     end;
     if now - FastWinAt >= 1000 then
     begin
-      if FastMs > 350 then
+      if (FastMs > 350) and not RxBusy(RxFD) then
       begin
         FastPauseUntil := now + 3000; Inc(FastPauses);
         Log('fast receiver paused for 3 s: it took ' + LI(FastMs) + ' ms of the last ' + LI(now - FastWinAt) + ' (the processor is needed elsewhere)');
       end;
       FastWinAt := now; FastMs := 0;
     end;
-    AfcApply;
+    if AfcApply then AfcReplay;
     if RxSD.fails + RxFD.fails <> FramesBad then begin FramesBad := RxSD.fails + RxFD.fails; Notify; end;
     busy := GetTickCount - t1;
     Inc(StBufs); Inc(StBusy, busy); if busy > StMax then StMax := busy;
@@ -761,6 +790,7 @@ end;
 procedure Talk;
 var k, leadPos, tailLeft, peak, playing, i: Integer; t0: LongWord; more: Boolean;
 begin
+  if hThread <> 0 then SetThreadPriority(hThread, THREAD_PRIORITY_ABOVE_NORMAL);     { playing must not stutter }
   if not FullDuplex then begin EndSession; CloseIn; end;
   Log('talk: microphone closed, speaker opening');
   if not OpenOut then
@@ -772,6 +802,7 @@ begin
     LeaveCriticalSection(Lock);
     Notify;
     Sleep(300);
+    if hThread <> 0 then SetThreadPriority(hThread, THREAD_PRIORITY_NORMAL);
     Exit;
   end;
   OutPlaying := True; Notify;
@@ -811,6 +842,7 @@ begin
   LastTurnAt := GetTickCount; LastTurnMs := LastTurnAt - t0;
   LastTurnPeak := peak * 100 div 32768;
   OutPlaying := False;
+  if hThread <> 0 then SetThreadPriority(hThread, THREAD_PRIORITY_NORMAL);
   if OutErr <> '' then Log('talk: the speaker stopped taking sound');
   Log('talk: turn over after ' + LI(LastTurnMs) + ' ms, loudest ' + LI(LastTurnPeak) + '%; listening again');
   EnterCriticalSection(Lock);
@@ -948,7 +980,9 @@ begin
     threads and guards its memory (both threads make and free sound buffers and text). Started from Windows
     directly, as up to 3.6, the two shared the runtime's memory lists unguarded. }
   hThread := THandle(BeginThread(@AudioThreadRtl, nil, rtid));
-  if hThread <> 0 then SetThreadPriority(hThread, THREAD_PRIORITY_ABOVE_NORMAL);
+  { listening runs at the screen's own priority: a long frame is read in turns with the screen, and the 2.4 s queue
+    of sound waits meanwhile (Talk raises it while playing) }
+  if hThread <> 0 then SetThreadPriority(hThread, THREAD_PRIORITY_NORMAL);
 end;
 
 procedure AudioStop;

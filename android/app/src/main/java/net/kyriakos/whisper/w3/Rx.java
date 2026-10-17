@@ -36,8 +36,12 @@ public final class Rx {
     private final float[] buf = new float[RB], fb = new float[RB];
     private final float[] metric = new float[RB], energy = new float[RB];
     private long t = 0;                          // samples so far
-    private double P, E1, E2;
-    private final Biquad[] pre;
+    private double E1, E2;
+    /** The sound against itself one lag later, and at the lags either side of it (a rate error stretches the repeat
+     *  by lag*delta samples and turns each carrier: whichever lag it is nearest to still finds it). */
+    private static final int[] JO = {0, 1, -1, 2, -2};
+    private final double[] PJ = new double[JO.length];
+    private Biquad[] pre;
     private final int lag;
     private float floor = -1;
     private int resum = 0;
@@ -64,8 +68,20 @@ public final class Rx {
         std = BitMap.standard(ch);
         maps.put(0, std);
         lag = ch.syncLag();
-        pre = ch.silent ? new Biquad[]{Biquad.highpass(17500, 0.5412), Biquad.highpass(17500, 1.3066)}
-                        : new Biquad[]{Biquad.highpass(300, 0.7071)};
+        pre = makePre();
+    }
+
+    private Biquad[] makePre() {
+        return ch.silent ? new Biquad[]{Biquad.highpass(17500, 0.5412), Biquad.highpass(17500, 1.3066)}
+                         : new Biquad[]{Biquad.highpass(300, 0.7071)};
+    }
+
+    /** Forget all sound heard (the maps stay): the same sound is about to be given again, converted with a better rate. */
+    public void reset() {
+        java.util.Arrays.fill(buf, 0f); java.util.Arrays.fill(fb, 0f);
+        java.util.Arrays.fill(metric, 0f); java.util.Arrays.fill(energy, 0f);
+        java.util.Arrays.fill(PJ, 0); E1 = E2 = 0; t = 0; floor = -1; resum = 0;
+        state = IDLE; scan = 600; pre = makePre();
     }
 
     public void addMap(BitMap m) { if (m.ch.id == ch.id) maps.put(m.number, m); }
@@ -81,14 +97,17 @@ public final class Rx {
             fb[k] = f;
             // running sums: window start d = t - 2 lag + 1
             float a = fb[(int) ((t - lag) & MASK)], o = fb[(int) ((t - 2 * lag) & MASK)];
-            P += a * f - o * a;
+            for (int q = 0; q < JO.length; q++)
+                PJ[q] += fb[(int) ((t - lag - JO[q]) & MASK)] * f - fb[(int) ((t - 2L * lag - JO[q]) & MASK)] * a;
             E2 += f * f - a * a;
             E1 += a * a - o * o;
             if (++resum >= 8192) { resum = 0; recompute(); }
             if (t >= 2 * lag) {
                 long d = t - 2 * lag + 1;
                 double e = Math.max(0, E2);
-                metric[(int) (d & MASK)] = (float) (P / Math.max(1e-24, Math.max(E1, e)));      // 1 only when both halves are full and alike
+                double pm = PJ[0];
+                for (int q = 1; q < PJ.length; q++) if (PJ[q] > pm) pm = PJ[q];
+                metric[(int) (d & MASK)] = (float) (pm / Math.max(1e-24, Math.max(E1, e)));      // 1 only when both halves are full and alike
                 energy[(int) (d & MASK)] = (float) (e / lag);
             }
             t++;
@@ -97,13 +116,15 @@ public final class Rx {
     }
 
     private void recompute() {
-        double p = 0, e1 = 0, e2 = 0;
+        double e1 = 0, e2 = 0;
         long d = t - 2 * lag + 1;
+        java.util.Arrays.fill(PJ, 0);
         for (int m = 0; m < lag; m++) {
             float a = fb[(int) ((d + m) & MASK)], b = fb[(int) ((d + m + lag) & MASK)];
-            p += a * b; e1 += a * a; e2 += b * b;
+            e1 += a * a; e2 += b * b;
+            for (int q = 0; q < JO.length; q++) PJ[q] += b * fb[(int) ((d + m - JO[q]) & MASK)];
         }
-        P = p; E1 = e1; E2 = e2;
+        E1 = e1; E2 = e2;
     }
 
     /** Has sample index i arrived (window of n from i)? */
@@ -302,11 +323,21 @@ public final class Rx {
         if (used < 2) return true;
         // the repeats of a true S are alike (1); a voice, a click or noise falls far short
         if (sz < 0.45 * tot) return false;
-        // a coarse reading from the carriers that turn least, then the rest, each corrected for whole turns
+        // a coarse reading from the difference of neighbouring carriers (they differ by little: whole turns cannot be
+        // lost until the sound is 100 % off), then all of them, each corrected for whole turns
+        double dn = 0, dw = 0;
+        for (int i = 0; i + 1 < used; i++) {
+            double dm = mm[i + 1] - mm[i];
+            if (dm <= 0) continue;
+            double dt = th[i + 1] - th[i];
+            dt -= Math.rint(dt);
+            double w = Math.min(wt[i], wt[i + 1]);
+            dn += w * dt / dm; dw += w;
+        }
         int lo = 0;
         for (int i = 1; i < used; i++) if (mm[i] < mm[lo]) lo = i;
-        double d = th[lo] / mm[lo];
-        for (int pass = 0; pass < 2; pass++) {
+        double d = dw > 0 ? dn / dw : th[lo] / mm[lo];
+        for (int pass = 0; pass < 3; pass++) {
             double num = 0, den = 0;
             for (int i = 0; i < used; i++) {
                 double r = th[i] - d * mm[i];

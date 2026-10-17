@@ -23,3 +23,7 @@ tests/w3/ua/
 tests/w3/turn.wav
 tests/w3/rate.wav
 tests/w3/rate-payload.bin
+tests/w3/*-payload.bin
+tests/w3/afc.wav
+tests/w3/mis.wav
+tests/w3/rep.wav

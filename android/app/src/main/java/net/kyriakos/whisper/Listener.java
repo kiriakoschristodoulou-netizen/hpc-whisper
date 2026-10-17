@@ -61,6 +61,13 @@ public final class Listener {
     private double jScale = 1.0, pendingDelta = 0;
     private boolean pending = false;
     private int jGood = 0;
+    private boolean pendingBig = false;
+    private long lastReplayAt = -1;                              // ring position of the last replay
+    private Context appCtx;
+    /** The handheld's correction is its own (its chip's): kept for the next session, forgotten when Pair is pressed again. */
+    public static void forgetCorrection(Context c) {
+        try { c.getApplicationContext().getSharedPreferences("pair", Context.MODE_PRIVATE).edit().remove("jScale").apply(); } catch (Exception ignored) { }
+    }
     public volatile int framesW3 = 0, failsW3 = 0;
     private volatile int noiseStarts = 0;                             // fast receivers that started on noise (diagnostics)
     private final ArrayList<long[]> recent = new ArrayList<>();      // {hash, time} of messages already passed on
@@ -153,6 +160,11 @@ public final class Listener {
         AudioRecord rec = open(ctx);
         if (rec == null) { cb.onProblem("The microphone could not be opened. Another app may be using it."); return false; }
         running = true;
+        appCtx = ctx.getApplicationContext();
+        try {
+            float js = appCtx.getSharedPreferences("pair", Context.MODE_PRIVATE).getFloat("jScale", 1f);
+            jScale = (js >= 0.985f && js <= 1.015f) ? js : 1.0;
+        } catch (Exception e) { jScale = 1.0; }
         final int ch = rec.getChannelCount();
         rx = new Receiver[ch];
         for (int c = 0; c < ch; c++) {
@@ -191,6 +203,7 @@ public final class Listener {
                     @Override public void onRateOffset(Rx r, double delta, double quality) {
                         if (quality < 0.7 || Math.abs(delta) > 0.03) return;
                         pendingDelta = delta; pending = true;
+                        pendingBig = Math.abs(delta) > 0.0004;     // too far off for this frame to be read
                     }
                     @Override public void onHeader(Rx r, int type, int len, int symbols) {
                         DiagLog.log(DiagLog.chan(r.ch.id) + " (mic " + mic + ") frame coming: " + DiagLog.typeName(type) + ", " + len
@@ -263,17 +276,42 @@ public final class Listener {
         return null;
     }
 
-    /** Between frames: the conversion follows what the sync symbols said. If the sound is d too high, the rate to convert from was d too high. */
-    private void applyRateOffset() {
+    /** The conversion follows what the sync symbols said. If the sound is d too high, the rate to convert from was d too
+     *  high. A small correction waits for the end of a frame; a large one (the frame in hand cannot be read as it is)
+     *  is made at once, and the last half second of sound is given again with it, so that frame is read after all. */
+    private void applyRateOffset(int newFrames) {
         if (!pending) return;
-        for (Rx[] row : rx3) for (Rx r : row) if (r.busy()) return;
-        pending = false;
+        boolean big = pendingBig;
+        if (!big) for (Rx[] row : rx3) for (Rx r : row) if (r.busy()) return;
+        pending = false; pendingBig = false;
         double d = pendingDelta;
-        if (Math.abs(d) >= 0.00003) {
-            jScale *= 1 - 0.9 * d;
-            if (jScale < 0.97) jScale = 0.97; else if (jScale > 1.03) jScale = 1.03;
-            for (Resampler q : rs3) q.setRates(inRate * jScale, Channel.RATE);
-            DiagLog.log(String.format(java.util.Locale.US, "the handheld's sound is %+.3f%% off its stated rate; reading it at %.4f of the phone's rate", d * 100, jScale));
+        if (Math.abs(d) < 0.00003) { jGood++; return; }
+        // the first correction of a large error is whole; small ones are taken gently
+        double k = Math.abs(d) > 0.001 ? 1.0 : 0.9;
+        jScale *= 1 - k * d;
+        if (jScale < 0.97) jScale = 0.97; else if (jScale > 1.03) jScale = 1.03;
+        for (Resampler q : rs3) q.setRates(inRate * jScale, Channel.RATE);
+        DiagLog.log(String.format(java.util.Locale.US, "the handheld's sound is %+.3f%% off its stated rate; reading it at %.4f of the phone's rate", d * 100, jScale));
+        jGood = Math.abs(d) < 0.00025 ? jGood + 1 : 0;
+        if (jGood >= 2 && appCtx != null) {
+            try { appCtx.getSharedPreferences("pair", Context.MODE_PRIVATE).edit().putFloat("jScale", (float) jScale).apply(); } catch (Exception ignored) { }
+        }
+        if (big && (lastReplayAt < 0 || ringPos - lastReplayAt > rate)) {
+            lastReplayAt = ringPos;
+            long end = ringPos - newFrames, from = Math.max(Math.max(0, end - rate / 2), ringPos - ring.length + 1);
+            for (int c = 0; c < rs3.length; c++) {
+                rs3[c] = new Resampler(inRate * jScale, Channel.RATE);
+                for (Rx r : rx3[c]) r.reset();
+                float[] blk = new float[2048], out = new float[rs3[c].maxOut(2048) + 8];
+                for (long pos = from; pos < end; ) {
+                    int n = (int) Math.min(2048, end - pos);
+                    for (int i = 0; i < n; i++) blk[i] = ring[(int) ((pos + i) % ring.length)];
+                    int m = rs3[c].process(blk, 0, n, out, 0);
+                    for (Rx r : rx3[c]) r.push(out, 0, m);
+                    pos += n;
+                }
+            }
+            DiagLog.log("the sound just heard was read again at the corrected rate");
         }
     }
 
@@ -326,7 +364,7 @@ public final class Listener {
                 }
                 BitMap nm;
                 while ((nm = newMaps.poll()) != null) for (Rx[] row : rx3) for (Rx r : row) r.addMap(nm);
-                applyRateOffset();
+                applyRateOffset(frames);
                 for (int c = 0; c < rs3.length; c++) {
                     if (mono.length < frames) mono = new float[frames];
                     for (int i = 0; i < frames; i++) mono[i] = f[i * ch + c];

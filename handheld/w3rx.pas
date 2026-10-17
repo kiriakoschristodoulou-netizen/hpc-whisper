@@ -36,6 +36,9 @@ type
     energy: array[0..RB - 1] of LongInt;
     t: Int64;
     P, E1, E2: Int64;
+    { the sound against itself at the lags either side of the sync lag (3.8.4): a rate error stretches the repeat and turns
+      the carriers, and whichever lag it is nearest to still finds it. Kept only while no frame is being read. }
+    pj: array[1..4] of Int64; pjOk: Boolean;
     resum: Integer;
     pre: array[0..1] of TBiquad; npre: Integer;
     floor: LongInt;
@@ -69,6 +72,8 @@ type
   PRx = ^TRx;
 
 procedure RxInit(var r: TRx; ch: Integer);
+{ forget all sound heard, keep the maps: the same sound is about to be given again, converted with a better rate }
+procedure RxReset(var r: TRx);
 procedure RxAddMap(var r: TRx; const m: TBitMap);
 procedure RxPush(var r: TRx; const x: array of SmallInt; off, n: Integer);
 function RxTake(var r: TRx; var m: TRxMsg): Boolean;
@@ -78,6 +83,7 @@ function RxBusy(const r: TRx): Boolean;
 implementation
 
 const IDLE = 0; SEEK = 1; DECODE = 2; DECIM = 4;
+  JO: array[1..4] of Integer = (1, -1, 2, -2);
 
 procedure BqSet(var b: TBiquad; const c: array of LongInt);
 begin
@@ -112,6 +118,14 @@ begin
   r.scan := 600;
   r.state := IDLE;
   SetLength(r.bitsBuf, MAXCODED + 64);
+end;
+
+procedure RxReset(var r: TRx);
+var mp: array[0..31] of TBitMap; hv: array[0..31] of Boolean; ch: Integer;
+begin
+  ch := r.ch; mp := r.maps; hv := r.haveMap;
+  RxInit(r, ch);
+  r.maps := mp; r.haveMap := hv;
 end;
 
 procedure RxAddMap(var r: TRx; const m: TBitMap);
@@ -513,10 +527,20 @@ begin
   { how alike the repeats are (1 for a true S; a voice, a click or noise falls far short) }
   if ez < 1 then ez := 1;
   r.cfoCoh := Integer(sz * 100 div ez);
-  lo := 0;
-  for c := 1 to used - 1 do if mm[c] < mm[lo] then lo := c;
-  d := th[lo] * 1000000 div (65536 * mm[lo]);              { ppm }
-  for pass := 0 to 1 do
+  { a coarse reading from the difference of neighbouring carriers (whole turns cannot be lost until the sound is
+    100 % off), then all of them, each corrected for whole turns }
+  num := 0; den := 0;
+  for c := 0 to used - 2 do
+  begin
+    if mm[c + 1] <= mm[c] then Continue;
+    rr := WrapA(th[c + 1] - th[c]);
+    k := wt[c]; if wt[c + 1] < k then k := wt[c + 1];
+    num := num + k * rr * 1000000 div (65536 * (mm[c + 1] - mm[c]));
+    den := den + k;
+  end;
+  if den > 0 then d := num div den
+  else begin lo := 0; for c := 1 to used - 1 do if mm[c] < mm[lo] then lo := c; d := th[lo] * 1000000 div (65536 * mm[lo]); end;
+  for pass := 0 to 2 do
   begin
     num := 0; den := 0;
     for c := 0 to used - 1 do
@@ -677,7 +701,7 @@ begin
 end;
 
 procedure Recompute(var r: TRx);
-var d: Int64; m: Integer; a, b: LongInt;
+var d: Int64; m, q: Integer; a, b: LongInt;
 begin
   r.P := 0; r.E1 := 0; r.E2 := 0;
   d := r.t - 2 * r.lag + 1;
@@ -686,6 +710,18 @@ begin
     a := r.fb[(d + m) and RMASK]; b := r.fb[(d + m + r.lag) and RMASK];
     r.P := r.P + a * b; r.E1 := r.E1 + a * a; r.E2 := r.E2 + b * b;
   end;
+  if r.state <> DECODE then
+  begin
+    for q := 1 to 4 do r.pj[q] := 0;
+    for m := 0 to r.lag - 1 do
+      if ((d + m + r.lag) and 3) = 0 then          { every eighth sample only }
+      begin
+        b := r.fb[(d + m + r.lag) and RMASK];
+        for q := 1 to 4 do r.pj[q] := r.pj[q] + b * r.fb[(d + m - JO[q]) and RMASK];
+      end;
+    r.pjOk := True;
+  end
+  else r.pjOk := False;
 end;
 
 function RxBusy(const r: TRx): Boolean;
@@ -694,7 +730,7 @@ begin
 end;
 
 procedure RxPush(var r: TRx; const x: array of SmallInt; off, n: Integer);
-var i, j, k: Integer; v, f, a, o, mt, m32, p32: LongInt; d, e, mx, pp: Int64; el: LongInt;
+var i, j, k, ti, i1, i2: Integer; v, f, a, o, mt, m32, p32: LongInt; d, e, mx, pp: Int64; el: LongInt;
 begin
   for i := 0 to n - 1 do
   begin
@@ -710,6 +746,21 @@ begin
     r.E2 := r.E2 + f * f - a * a;
     r.E1 := r.E1 + a * a - o * o;
     Inc(r.resum);
+    if r.state = DECODE then r.pjOk := False
+    else if r.pjOk then
+    begin
+      { the sums either side of the lag use every eighth sample (an eighth of the work); the sound repeats, so an
+        eighth of its products give an eighth of the sum }
+      if (r.t and 3) = 0 then
+      begin
+        ti := LongInt(r.t); i1 := ti - r.lag; i2 := ti - 2 * r.lag;
+        r.pj[1] := r.pj[1] + r.fb[(i1 - 1) and RMASK] * f - r.fb[(i2 - 1) and RMASK] * a;
+        r.pj[2] := r.pj[2] + r.fb[(i1 + 1) and RMASK] * f - r.fb[(i2 + 1) and RMASK] * a;
+        r.pj[3] := r.pj[3] + r.fb[(i1 - 2) and RMASK] * f - r.fb[(i2 - 2) and RMASK] * a;
+        r.pj[4] := r.pj[4] + r.fb[(i1 + 2) and RMASK] * f - r.fb[(i2 + 2) and RMASK] * a;
+      end;
+    end
+    else r.resum := 8192;                    { the sums either side are made again (a frame was being read) }
     if r.resum >= 8192 then begin r.resum := 0; Recompute(r); end;
     { the metric and the energy, every DECIM samples (the processor of a handheld has no time for more) }
     if ((r.t and (DECIM - 1)) = 0) and (r.t >= 2 * r.lag) then
@@ -718,6 +769,13 @@ begin
       e := r.E2; if e < 0 then e := 0;
       mx := r.E1; if e > mx then mx := e;
       pp := r.P;
+      if r.pjOk then
+      begin
+        if (r.pj[1] shl 2) > pp then pp := r.pj[1] shl 2;
+        if (r.pj[2] shl 2) > pp then pp := r.pj[2] shl 2;
+        if (r.pj[3] shl 2) > pp then pp := r.pj[3] shl 2;
+        if (r.pj[4] shl 2) > pp then pp := r.pj[4] shl 2;
+      end;
       if (pp <= 0) or (mx < 1) then mt := 0
       else
       begin

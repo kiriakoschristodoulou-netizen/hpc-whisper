@@ -414,3 +414,9 @@ marker (the handheld's ladder would otherwise look like a new start).
 ## Rate correction (3.8.3)
 
 The silent channels need the receiver's conversion to the modem rate to be accurate to about 0.05%. Every receiver therefore measures the carrier offset from the start (S) of each frame: S repeats every `lag` samples, so the phase turn between consecutive windows is 2π·δ·m per carrier (m = bin / syncStep). A least-squares fit gives δ to about 0.01–0.05%. The receiver corrects its own conversion (new rate = old / (1+δ)); the capture range is about ±0.3%. A frame is accepted as ours when the comb of S carriers is coherent (Σ|z| / Σe ≥ 0.45), which does not depend on the carriers sitting in exact bins.
+
+### Finding S when the rate is off (3.8.4)
+
+A rate error stretches the repeat of S by lag·δ samples and turns each carrier, so the correlation at exactly one lag loses its real part (for the silent channel at 0.5 % off it is a quarter turn). The receivers also correlate at lag±1 and lag±2 and use the largest: whichever is nearest the true repeat still finds S, for errors up to about ±1 %. On the handheld the extra sums use every fourth sample and only run while no frame is being read. The estimate of δ starts from the difference of neighbouring sync carriers (unambiguous until 100 % off) and is then refined with all of them.
+
+When a large error (over 0.04 %) is measured, the receiver does not wait for the next frame: the conversion is corrected at once, all receivers are reset and the last half second of microphone sound is converted again and given to them, so the frame that showed the error is read.
