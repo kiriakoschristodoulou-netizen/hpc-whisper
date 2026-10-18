@@ -68,6 +68,12 @@ jobs:
           for s in 0 1 2; do ../wmsim tones.txt tone44.raw 4 $s 50 44100 && ../wmsim tones.txt tone432.raw 4 $s 50 43200 && java -cp cls ToneChain tone44.raw tone432.raw 'Hi there'; done
           mkdir -p clsw && javac -d clsw $(find stubs -name "*.java") ../../android/app/src/main/java/net/kyriakos/whisper/{Writer,Mirror,Keys,TextLink,Receiver,DiagLog}.java ../../android/app/src/main/java/net/kyriakos/whisper/w3/Channel.java WriterTest.java && java -cp clsw WriterTest writer-frames.txt
           mkdir -p m && java -cp cls ScreenDump m && java -cp cls AdpcmTest 8000 m/a.wav && ./linux/mediatest m m/a.wav
+      - name: Show the failure of the Format 3 step
+        if: failure()
+        run: |
+          { grep -nE "FAIL|rror|xception|Fatal|FAILED" format3.log | head -15; echo ---; tail -12 format3.log; } > f3sum.txt || true
+          msg=$(sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g' f3sum.txt)
+          echo "::error title=Format 3 log::$msg"
       - name: Keep the log of the Format 3 step
         if: always()
         uses: actions/upload-artifact@v4
