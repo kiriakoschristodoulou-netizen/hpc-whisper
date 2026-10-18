@@ -37,6 +37,7 @@ jobs:
       - name: Format 3 (the handheld's Pascal and the phone's Java against each other)
         working-directory: tests/w3
         run: |
+          exec > >(tee "$GITHUB_WORKSPACE/format3.log") 2>&1
           mkdir -p linux cls
           javac -d cls ../../android/app/src/main/java/net/kyriakos/whisper/w3/*.java ../../android/app/src/main/java/net/kyriakos/whisper/{Receiver,Mirror,Keys,TextLink,Adpcm,DiagLog,SelfTest}.java $(ls *.java | grep -v WriterTest)
           fpc -O2 -Fu../../handheld -Fi../../handheld -FUlinux -olinux/w3tool w3tool.pas
@@ -67,6 +68,13 @@ jobs:
           for s in 0 1 2; do ../wmsim tones.txt tone44.raw 4 $s 50 44100 && ../wmsim tones.txt tone432.raw 4 $s 50 43200 && java -cp cls ToneChain tone44.raw tone432.raw 'Hi there'; done
           mkdir -p clsw && javac -d clsw $(find stubs -name "*.java") ../../android/app/src/main/java/net/kyriakos/whisper/{Writer,Mirror,Keys,TextLink,Receiver,DiagLog}.java ../../android/app/src/main/java/net/kyriakos/whisper/w3/Channel.java WriterTest.java && java -cp clsw WriterTest writer-frames.txt
           mkdir -p m && java -cp cls ScreenDump m && java -cp cls AdpcmTest 8000 m/a.wav && ./linux/mediatest m m/a.wav
+      - name: Keep the log of the Format 3 step
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: format3-log
+          path: format3.log
+          if-no-files-found: ignore
 
   build:
     runs-on: ubuntu-latest
