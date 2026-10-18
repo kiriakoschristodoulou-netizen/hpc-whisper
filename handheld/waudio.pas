@@ -32,7 +32,7 @@ const
   IN_NBUF = 24;                       { 2.4 s of sound can wait: a frame being read is never held up for the screen }
   OUTQ = 16;
   RXQ = 32;
-  RING_N = IN_RATE * 6;               { the last 6 seconds of the microphone }
+  RING_N = IN_RATE * 30;              { the last 30 seconds of the microphone }
   LEAD_MS = 150;                      { lead-in before each turn of sound }
   TAIL_MS = 150;                      { silence after it }
 
@@ -542,6 +542,7 @@ end;
 procedure SetRate(r100: Int64; spanMs: Int64);
 begin
   if AfcN > 0 then Exit;                      { the phone's own sound sets the rate now (a much better measure) }
+  if RateSource >= 2 then Exit;               { (3.9.2) Pair's beeps or a pilot fixed it, to a few ppm: clock readings (+-0.1 %) must not move it }
   if (RateSource > 0) and (spanMs < 60000) and (Abs(r100 - InRate100) * 400 > InRate100) then
   begin
     if Abs(RateOdd - r100) * 2000 > r100 then Log('microphone rate: an odd reading of ' + LI(r100 div 100) + ' not used (kept ' + LI(InRate100 div 100) + ')');
@@ -674,13 +675,18 @@ begin
 end;
 
 procedure LogStats(now: LongWord);
-var expect: Int64;
+var expect: Int64; hp: Integer;
 begin
   { the share of the sound that was really heard (3.9.1: 40 % was lost with "skipped 0": the driver drops sound when the
     program is too slow to take it back) }
   expect := Int64(now - StAt) * InRate100 div 100000;
-  if (expect > 0) and (InRate100 > 0) then HeardPct := Integer(StSamples * 100 div expect) else HeardPct := 100;
-  if HeardPct > 100 then HeardPct := 100;
+  hp := 100;
+  if (expect > 0) and (InRate100 > 0) then
+  begin
+    if StSamples * 100 div expect > 100 then hp := 100 else hp := Integer(StSamples * 100 div expect);
+  end;
+  if hp < 0 then hp := 0;
+  HeardPct := hp;                                 { (one whole assignment: the main thread reads it for the self test) }
   if (HeardPct < 90) and (LongInt(now - FastPauseUntil) >= 0) then
   begin
     FastPauseUntil := now + 10000; Inc(FastPauses);
@@ -1024,6 +1030,8 @@ begin
   if SpeakerNative and RateTrusted and (InRate100 > 0) then
   begin
     want := Integer((InRate100 + 50) div 100);
+    { (3.9.2) the chip divides a 143.77 MHz clock by 256 x 13: exactly 43,200. What was measured is within a tenth of a percent of it }
+    if Abs(want - 43200) <= 130 then want := 43200;
     { the phone follows a sender whose rate is a little off: a change of the speaker's rate under 0.1 % is not worth the new sound }
     if (TxRate <> 44100) and (Abs(want - TxRate) < 40) then want := TxRate;
   end;

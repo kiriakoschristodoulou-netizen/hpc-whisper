@@ -496,3 +496,18 @@ carry plain tones where the modem's frames were lost to distortion, packet spaci
 * Tested (tests/w3/tonedown.sh): messages of 1, 4, 24 and 60 bytes at 50 % and 10 % loudness, directly and through the
   room, the phone's 48,000 and the chip's 43,229.6, noise to 20 times the usual; 24 of 24 read, with the receiver's rate wrong by up to 2 % (epsilon measured within 200 ppm), and a minute of
   noise starts and reads nothing; the recording of a real 3.9.1 run is read by the silent receivers at their old cost.
+
+### Files when the answers come as tones (3.9.3)
+
+A frame of tones takes 2-3 s to sound (and the phone's microphone is deaf meanwhile), so a phone that answers in
+tones must not answer in the gaps of a batch. Seen live in 3.9.2: the phone answered 250 ms after every packet, over the
+handheld's next one, and the handheld's wait (1.5 s) ended before the answer did. Now:
+
+* the phone waits 2.2 s without a packet before it answers FILE_NEED when its answers go as tones (250 ms otherwise);
+* the handheld listens 6.5 s after a batch while it has never heard the phone on the silent channel (1.5 s otherwise),
+  and never starts a packet while a frame of tones is coming in;
+* the handheld answers the phone's files (FILE_NEED) on the fast channel when files go fast (the silent channel up
+  did not reach the phone in that run);
+* a clock reading of the microphone's rate (+-0.1 %) never moves a rate that Pair or a pilot has set (a few ppm),
+  and the speaker plays at exactly 43,200 when the microphone is within 0.3 % of it;
+* the handheld keeps the last 30 s of sound (was 6 s) and saves it itself 31 s after the end mark of the self test.

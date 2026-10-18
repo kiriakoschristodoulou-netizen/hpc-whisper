@@ -144,6 +144,7 @@ public final class Transfers implements Link.Client {
         // in: answers when the handheld goes quiet
         for (Item r : items) {
             if (r.out || r.recv == null) continue;
+            r.recv.quietMs = link.answersOnTones ? FileRecv.QUIET_TONES_MS : FileRecv.QUIET_MS;
             if (r.recv.needDue(now) && now >= link.playEndMs()) {
                 link.send(Channel.SD, Link.T_FILE_NEED, r.recv.need());
             }
@@ -151,7 +152,7 @@ public final class Transfers implements Link.Client {
         }
         // forget old finished incoming transfers' state (but keep them listed)
         for (Item r : items) if (r.finished && r.recv != null && now - r.doneAt > 120000) r.recv = null;
-        if (unknownId >= 0 && now - unknownAt > FileRecv.QUIET_MS && now >= link.playEndMs()) {
+        if (unknownId >= 0 && now - unknownAt > (link.answersOnTones ? FileRecv.QUIET_TONES_MS : FileRecv.QUIET_MS) && now >= link.playEndMs()) {
             link.send(Channel.SD, Link.T_FILE_NEED, FileRecv.needOffer(unknownId));
             unknownId = -1;
         }

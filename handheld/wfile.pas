@@ -15,6 +15,9 @@ const
   MAXPACKETS = 8192;                   { 8 MB }
   KIND_OTHER = 0; KIND_PICTURE = 1; KIND_SOUND = 2; KIND_TEXT = 3; KIND_DOCUMENT = 4; KIND_ZLIB = $80;
 
+var
+  FileWaitMs: LongWord = 1500;        { (3.9.2) how long the sender listens after a batch: as long as the phone's answer takes to sound (tones: ~3 s) }
+
 type
   TByteArr = array of Byte;
   TFileSend = record
@@ -152,7 +155,7 @@ begin
   begin
     s.offerSentThisBatch := True;
     s.offerDue := False;
-    if (s.inBatch = 0) and s.everHeard and (s.nextNew > 0) then begin s.waiting := True; s.waitUntil := now + WAIT_MS; end;
+    if (s.inBatch = 0) and s.everHeard and (s.nextNew > 0) then begin s.waiting := True; s.waitUntil := now + FileWaitMs; end;
     MakeOffer(s, p, n); typ := $10; Result := True;
     Exit;
   end;
@@ -180,7 +183,7 @@ begin
   end;
   s.inBatch := 0;
   s.offerSentThisBatch := False;
-  s.waiting := True; s.waitUntil := now + WAIT_MS;
+  s.waiting := True; s.waitUntil := now + FileWaitMs;
 end;
 
 procedure FsNeed(var s: TFileSend; const p: array of Byte; n: Integer);

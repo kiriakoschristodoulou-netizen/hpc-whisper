@@ -1,4 +1,4 @@
-Whisper Tools 3.9.2
+Whisper Tools 3.9.3
 by Kyriakos Christodoulou
 
 Type on a Windows CE handheld PC and the text goes straight into any app

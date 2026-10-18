@@ -22,7 +22,7 @@ program WhisperTools;
 uses Windows, w3core, w3dsp, w3tx, w3rx, waudio, wtext, wfile, wscreen, wwav, wimg, winf, wmodem, wpair, wtest, wlog, wtone;
 
 const
-  VERSION = '3.9.2';
+  VERSION = '3.9.3';
   CREATOR = 'Kyriakos Christodoulou';
   CLSNAME: UnicodeString = 'WhisperTools';
   APPNAME: UnicodeString = 'Whisper Tools';
@@ -152,6 +152,7 @@ var
   TestRun: Integer = 0;
   TestPlayedAt: LongWord = 0;       { when its last piece was queued }
   TestTally: TTally;                { what was heard of the phone's part }
+  TestSaved: Boolean = True;
   TestReported: Boolean = True;     { the results went to the phone (or there is nothing to tell) }
   { typing as tones, until the phone's confirmations are heard }
   F3Good: Boolean = False;
@@ -648,7 +649,9 @@ var i: Integer;
 begin
   if AnswerN > High(Answers) then begin Log('answer ' + LType(typ) + ' dropped: too many answers waiting'); Exit; end;
   Log('answer ' + LType(typ) + ' waits for its turn (' + LI(AnswerN + 1) + ' waiting)');
-  Answers[AnswerN].ch := SilentCh; Answers[AnswerN].typ := typ; Answers[AnswerN].n := n;
+  Answers[AnswerN].ch := SilentCh; Answers[AnswerN].typ := typ;
+  if (typ = T_FILE_NEED) and FastFiles then Answers[AnswerN].ch := CH_FU;      { (3.9.2) the phone's files go on the channel it hears best }
+  Answers[AnswerN].n := n;
   for i := 0 to n - 1 do Answers[AnswerN].p[i] := p[i];
   Inc(AnswerN);
 end;
@@ -963,6 +966,7 @@ begin
 end;
 
 procedure RemoteView; forward;
+procedure SaveHeard; forward;
 
 { ---------- what the phone said ---------- }
 
@@ -1346,7 +1350,7 @@ begin
   FastUntil := GetTickCount + 120000;
   { the self test follows the test sound and the loudness steps (TestFeed plays it a piece at a time) }
   TestRun := Integer((GetTickCount shr 5) mod 120) + 1;
-  TestStage := 0; TestActive := True; TestReported := False;
+  TestStage := 0; TestActive := True; TestReported := False; TestSaved := False;
   TallyInit(TestTally); AudioTestMark;
   x := PairPattern(TxRate);
   { then the loudness ladder: the phone hears which loudness comes through cleanest, and says so in its report }
@@ -1424,6 +1428,8 @@ procedure TestReportStep(now: LongWord);
 var b: array[0..REPORT_LEN - 1] of Byte; x: TSamples; n, lo, hi: Integer; due, nothing: Boolean; info: TReportInfo;
 begin
   nothing := False;
+  { the phone's part sounds in the 30 s after our end mark: keep that sound, for finding out what went wrong }
+  if TestActive and (TestStage >= NPIECES) and (not TestSaved) and (LongInt(now - TestPlayedAt) >= 31000) then begin TestSaved := True; SaveHeard; end;
   if (not TestActive) or TestReported or (TestStage < NPIECES) or (AudioQueued > 0) then Exit;
   due := False;
   if TestTally.endP and (LongInt(now - TestTally.endAt) >= 1500) then due := True
@@ -1508,7 +1514,7 @@ end;
 
 { ---------- the timer: hearing, answering, sending ---------- }
 
-var PhoneHeardSD: LongWord = 0;
+var PhoneHeardSD: LongWord = 0; PhoneSilentHeard: Boolean = False;
 const LISTEN_MS = 1500;          { listening after each text frame of ours, for the phone's answer (it may take ~0.6 s to sound, and as long to play) }
 var WaitAnswer: Boolean = False;  { the last turn held a text frame: the phone will confirm it }
 
@@ -1537,6 +1543,7 @@ begin
   while AudioTake(g) do
   begin
     if (g.ch = CH_SD) or (g.ch = TD_CH) then PhoneHeardSD := GetTickCount;
+    if g.ch = CH_SD then PhoneSilentHeard := True;
     OnPhone(g);
     if g.msg.typ <> T_SCREEN then changed := True;
   end;
@@ -1600,8 +1607,9 @@ begin
       InvalidateRect(hMain, nil, False); Exit;
     end;
   end;
-  if (NOut > 0) and not Playing then
+  if (NOut > 0) and not Playing and not AudioTdBusy then
   begin
+    if PhoneSilentHeard then FileWaitMs := 1500 else FileWaitMs := 6500;     { a phone that answers in tones needs ~5 s to be heard (2.2 s quiet, then ~2.4 s of tones) }
     SetLength(fp, 0);
     if FsNext(Outgoing[0].s, now, typ, fp, n) then
     begin

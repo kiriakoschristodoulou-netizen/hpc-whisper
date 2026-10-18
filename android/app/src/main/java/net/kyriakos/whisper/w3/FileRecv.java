@@ -10,6 +10,9 @@ import java.nio.charset.StandardCharsets;
  */
 public final class FileRecv {
     public static final long QUIET_MS = 250;
+    /** How long without a packet before answering: when the answer is a frame of tones (2-3 s, the phone deaf while it sounds) the sender's gaps between packets (about 1.5 s) must not count as quiet. */
+    public static final long QUIET_TONES_MS = 2200;
+    public volatile long quietMs = QUIET_MS;
 
     public final int id, size, packets, kind;
     public final String name;
@@ -70,7 +73,7 @@ public final class FileRecv {
     public int received() { return count; }
     public byte[] data() { return data; }
 
-    public boolean needDue(long now) { return !answered && now - lastHeard >= QUIET_MS; }
+    public boolean needDue(long now) { return !answered && now - lastHeard >= quietMs; }
 
     public byte[] need() {
         answered = true;

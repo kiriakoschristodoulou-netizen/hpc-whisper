@@ -1,5 +1,5 @@
 #!/bin/bash
-# usage: ./mkzip.sh 392   ->  Whisper-Tools-392.zip (the program, the readme and the source), no dots in the names
+# usage: ./mkzip.sh 393   ->  Whisper-Tools-393.zip (the program, the readme and the source), no dots in the names
 set -e
 cd "$(dirname "$0")"
 n=Whisper-Tools-$1
