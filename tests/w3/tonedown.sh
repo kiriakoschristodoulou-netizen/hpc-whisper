@@ -34,14 +34,16 @@ done
 head -c 24 /dev/urandom > $T/pl.bin; hex=$(od -An -v -tx1 $T/pl.bin | tr -d ' \n')
 $J ttx 2 $T/pl.bin $T/b.wav 48000 0.2 2>/dev/null; $J down $T/b.wav $T/c.wav 0.005 2>/dev/null
 python3 - $T/c.wav $T/d.wav $T/e.wav <<'P'
-import sys, wave, numpy as np
-w = wave.open(sys.argv[1]); r = w.getframerate(); d = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(float)
+import sys, wave, math, array
+w = wave.open(sys.argv[1]); r = w.getframerate(); d = array.array('h'); d.frombytes(w.readframes(w.getnframes()))
+def clip(v): return -32768 if v < -32768 else 32767 if v > 32767 else int(v)
 def put(f, x):
-    o = wave.open(f, 'wb'); o.setnchannels(1); o.setsampwidth(2); o.setframerate(r); o.writeframes(np.clip(x, -32768, 32767).astype(np.int16).tobytes()); o.close()
-put(sys.argv[2], d + 850)
-t = np.arange(len(d)) / r
-beep = 14000 * np.sin(2 * np.pi * 2000 * t) * ((t > 0.3) & (t < 0.9))        # before the frame
-put(sys.argv[3], d + beep + 850)
+    o = wave.open(f, 'wb'); o.setnchannels(1); o.setsampwidth(2); o.setframerate(r); o.writeframes(array.array('h', [clip(v) for v in x]).tobytes()); o.close()
+put(sys.argv[2], [v + 850 for v in d])
+def beep(i):
+    t = i / r
+    return 14000 * math.sin(2 * math.pi * 2000 * t) if 0.3 < t < 0.9 else 0       # before the frame
+put(sys.argv[3], [v + beep(i) + 850 for i, v in enumerate(d)])
 P
 check "offset of 850" 2 24 "$hex" "$($P trx 0 $T/d.wav 4322960)"
 check "offset of 850 and a loud 2 kHz beep before it" 2 24 "$hex" "$($P trx 0 $T/e.wav 4322960)"
