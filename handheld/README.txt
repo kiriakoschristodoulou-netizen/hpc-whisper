@@ -1,4 +1,4 @@
-Whisper Tools 3.8.5
+Whisper Tools 3.9.0
 by Kyriakos Christodoulou
 
 Type on a Windows CE handheld PC and the text goes straight into any app
@@ -17,8 +17,8 @@ THE PHONE
   microphone, so there is no iPhone keyboard. Use the receiver page in
   the browser, with Copy and Share:
   https://kiriakoschristodoulou-netizen.github.io/hpc-whisper/
-  The page understands the Classic format only: on the handheld choose
-  Settings, Typing format, Classic.
+  The page understands the tone format only: on the handheld choose
+  Settings, Typing format, Tones only.
 
 THE HANDHELD
   Needs an ARM processor and Windows CE 3.0 or later (tested on the HP
@@ -47,17 +47,17 @@ THE HOME SCREEN
               Alt+Z switches between zoom and the whole screen, Alt+X
               zooms in twice as far, Alt+U refreshes.
   4 Link      The sound in and out, the phone, and the speed of each
-              channel. Pair (P) checks the sound both ways and adjusts both
-              devices; Test speaker (S) plays a one-second beep; Check the
+              channel. Pair + test (P) checks the sound both ways, adjusts
+              both devices and runs the self test (see SOUND); Test speaker (S) plays a one-second beep; Check the
               link (K) measures the fast channels (a soft hiss from each
               side for a few seconds).
-  5 Settings  Typing format (Standard, or Classic for the receiver page),
+  5 Settings  Typing format (Automatic, Silent only, or Tones only for the receiver page),
               the silent channel (narrow 20.0-21.2 kHz,
               inaudible; or wide 18.2-21.2 kHz, twice as fast, some people
               hear it), files fast or silent, loudness of the fast channel,
               where received files go, the speaker's rate (the sound chip's
               own, measured, or 44,100 converted by Windows), and the
-              Classic band, speed, volume.
+              the tones' band, speed and volume.
   6 Exit
 
 KEYS THAT GO TO THE PHONE
@@ -75,7 +75,14 @@ THE PROGRAM'S OWN SHORTCUTS (on Alt, so every Ctrl key reaches the phone)
 
 SOUND
   First time: on the Link screen press Test speaker (you should hear a
-  beep), then press Pair on the phone, in a quiet room. Pairing measures
+  beep), then press Pair and self test on the phone, in a quiet room, the
+  phone beside the handheld. It takes about a minute and needs nothing
+  more from you: both devices play their test sound, then a set of test
+  frames in every sound format, count what they heard of each other's and
+  say so on their screens and in their logs. TYPING always gets through:
+  until the phone's confirmations are heard, the handheld types with
+  tones (slow, and they carry through what the other formats cannot), and
+  it goes silent by itself once the phone confirms. Pairing measures
   this handheld's microphone and finds how loud it should play; both are
   kept (the Link screen shows them). Pair again in a new place, or if
   typing stops getting through. Once its microphone has been measured

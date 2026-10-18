@@ -222,6 +222,7 @@ public final class DiagLog {
             case 0x32: s.append("HELLO"); if (n >= 4) s.append(" version ").append(p[0] & 255).append(" reply ").append(p[3] & 1); break;
             case 0x33: s.append("CHECK"); if (n >= 1) s.append(" ch ").append(chan(p[0] & 255)); break;
             case 0x34: s.append("PAIR_REPORT"); if (n >= 40) s.append(" scale ").append(w16(p, 34)).append(" ladder ").append((p[38] & 255) - 1).append(" quality ").append((p[39] & 255) - 20).append(" dB"); break;
+            case 0x35: s.append("SELFTEST"); if (n >= 3) s.append(" stage ").append(p[1] & 255).append(" number ").append(p[2] & 255); break;
             default: s.append("type 0x").append(Integer.toHexString(type));
         }
         return s.append(" (").append(n).append(" bytes)").toString();

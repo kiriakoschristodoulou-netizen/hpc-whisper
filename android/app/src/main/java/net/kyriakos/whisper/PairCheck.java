@@ -42,6 +42,10 @@ public final class PairCheck {
     /** The last test sound heard (what was analysed), to share when it was not understood. */
     public volatile float[] lastHeard; public volatile int lastHeardRate;
     private boolean ladderDone;
+    /** The self test: what was heard, and where this phone's part of it stands. */
+    public final SelfTest test = new SelfTest();
+    private boolean pStarted, ownPatternPending, finished;
+    private long pEndAt;
     public String note = "";
     /** What happened, step by step, for the Pair card. */
     public final List<String> steps = new ArrayList<>();
@@ -86,6 +90,8 @@ public final class PairCheck {
         if (app != null) Listener.forgetCorrection(app);
         steps.clear();
         mine = null; theirs = null; played = false; reported = false;
+        test.begin(); pStarted = false; ownPatternPending = false; finished = false; ladderDone = false;
+        main.removeCallbacks(testTick); main.removeCallbacks(fallbackP);
         state = LEVEL;
         note = "Finding how loud this phone can play without a side-sound (a few faint clicks may be heard)...";
         step("Pair pressed here: checking this phone's loudness");
@@ -146,14 +152,14 @@ public final class PairCheck {
                 step("No test sound from the handheld in 15 s");
                 changed();
             }
-            if (mine != null && played && ladderDone && !reported) {
+            if (mine != null && played && ladderDone && pStarted && !reported) {
                 reported = true;
                 Link.get().send(Channel.FD, Pair.REPORT, Pair.report(mine));
                 step("Sent the handheld how this phone heard it");
                 if (state == DONE) note = theirs != null ? "Done." : "Done here; waiting for the handheld's results...";
                 changed();
             }
-            if (running() || (mine != null && !reported)) main.postDelayed(this, 200);
+            if (running() || (mine != null && !reported && !finished)) main.postDelayed(this, 200);
         }
     };
 
@@ -163,6 +169,7 @@ public final class PairCheck {
         if (now - lastMarkerAt < 8000) return;                  // the rest of the same test sound (and its ladder)
         if (state == LEVEL || state == PLAYING) return;         // our own sound (the microphone is muted anyway)
         lastMarkerAt = now;
+        test.begin(); pStarted = false; finished = false;
         step("Heard the start of a test sound");
         changed();
         main.postDelayed(() -> analyze(pos), 3400);
@@ -180,6 +187,8 @@ public final class PairCheck {
         mine = r; lastMineAt = System.currentTimeMillis();
         ladderDone = false;
         step("Measured the handheld's test sound; now its loudness steps...");
+        main.removeCallbacks(fallbackP);
+        main.postDelayed(fallbackP, 50000);                      // the end mark of its part never came: go on anyway
         // the handheld's loudness ladder follows its test sound: read it once it has ended, then answer
         final long a = pos - rate * 7L / 10 + r.aAt;                   // marker A, in the ring
         main.postDelayed(() -> readLadder(a, r.scale10k), 3700);
@@ -198,12 +207,87 @@ public final class PairCheck {
         else step("The handheld's loudness steps were not read: " + ladder.why);
         ladderDone = true;
         if (state == IDLE || state == DONE) {
-            // the handheld started: our turn now that its sound has ended (this phone's loudness check is skipped, to answer in time)
-            theirs = null; reported = false;
-            playPattern("Heard the handheld's test sound; now playing this phone's...");
-        } else if (state == LISTENING) state = DONE;
+            // the handheld started: our turn when its part of the self test has ended (its end mark, or the fallback)
+            // (this phone's loudness check is skipped, to answer in time)
+            theirs = null; reported = false; ownPatternPending = true;
+            note = "Heard the handheld's test sound; its self test follows, then this phone's turn...";
+            if (test.endH) startBlockP();
+        } else if (state == LISTENING) {
+            state = DONE;
+            if (test.endH) startBlockP();
+        }
         main.removeCallbacks(tick);
         main.post(tick);
+        changed();
+    }
+
+    // ---------- the self test ----------
+
+    private final Runnable fallbackP = () -> { if (!pStarted && (mine != null || !test.heardNothing())) { step("The handheld's end mark was not heard; going on"); startBlockP(); } };
+
+    /** A format 3 test frame from the handheld was read. */
+    public void onTestMessage(int stage) {
+        if (stage == SelfTest.ST_END_H && !pStarted && (mine != null || ownPatternPending || state == LISTENING || state == DONE))
+            main.postDelayed(this::startBlockP, 500);
+        changed();
+    }
+
+    /** A frame of tones of the self test was read (or the handheld's results). */
+    public void onTestTones() {
+        if (test.reported) finish();
+        changed();
+    }
+
+    /** This phone's part: its test sound if the handheld started, then its frames, then the wait for the handheld's results. */
+    private void startBlockP() {
+        if (pStarted) return;
+        pStarted = true;
+        main.removeCallbacks(fallbackP);
+        Link link = Link.get();
+        if (ownPatternPending) {
+            ownPatternPending = false;
+            playPattern("Playing this phone's test sound (beeps)...");
+        }
+        int run = Math.max(0, test.run);
+        step("Playing this phone's part of the self test");
+        for (int i = 0; i < SelfTest.NSD; i++) link.sendTest(Channel.SD, SelfTest.payload(run, SelfTest.ST_SD, i));
+        for (int i = 0; i < SelfTest.NFD; i++) link.sendTest(Channel.FD, SelfTest.payload(run, SelfTest.ST_FD, i));
+        link.sendTest(Channel.SD, SelfTest.payload(run, SelfTest.ST_END_P, 0));
+        link.sendTest(Channel.FD, SelfTest.payload(run, SelfTest.ST_END_P, 1));
+        pEndAt = link.playEndMs();
+        note = "Self test: this phone is playing its part; then the handheld tells what it heard (about a minute in all)...";
+        main.removeCallbacks(testTick);
+        main.postDelayed(testTick, 1000);
+        main.removeCallbacks(tick);
+        main.post(tick);
+        changed();
+    }
+
+    private final Runnable testTick = new Runnable() {
+        @Override public void run() {
+            if (finished) return;
+            if (test.reported) { finish(); return; }
+            if (System.currentTimeMillis() > pEndAt + 70000) { finish(); return; }
+            main.postDelayed(this, 1000);
+        }
+    };
+
+    /** The handheld's results are in (or did not come): the words, the log, and what this phone decides. */
+    private void finish() {
+        if (finished) return;
+        finished = true;
+        main.removeCallbacks(testTick);
+        DiagLog.log(test.oneLine());
+        for (String l : test.lines()) DiagLog.log("self test: " + l.trim());
+        step(test.oneLine().replace("self test: ", "Self test: "));
+        if (test.reported) {
+            // what the handheld really read of this phone decides the channel for answers (the test sound's bands only guessed)
+            boolean sd = SelfTest.count(test.sdMask) >= 2, fd = SelfTest.count(test.fdMask) >= 2;
+            if (!sd && fd) Link.get().answersOnFast = true;
+            else if (sd) Link.get().answersOnFast = false;
+            save();
+            note = "Self test done. The results are below.";
+        } else note = "Self test: this phone's part was played, but the handheld's results did not arrive (an older Whisper Tools on the handheld, or it did not hear the end of this phone's part).";
         changed();
     }
 

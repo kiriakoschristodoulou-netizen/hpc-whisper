@@ -49,12 +49,14 @@ public class LinkActivity extends ToolActivity implements PairCheck.Watcher {
         connectBtn = ui.button(c, "Connect", true, v -> { if (LinkService.on()) disconnect(); else connect(); });
 
         LinearLayout pc = ui.card("Pair");
-        ui.body(pc, "Run this once with each new phone or handheld, in a quiet room. Started here, the phone first finds how "
-                + "loud it can play without a side-sound, then both devices play a 3-second test sound (beeps) in turn and "
-                + "measure how well they hear each other; each side then adjusts itself. It can also be started on the handheld.");
+        ui.body(pc, "Run this once with each new phone or handheld, in a quiet room, the phone beside the handheld. Started here, the phone "
+                + "first finds how loud it can play without a side-sound, then both devices play a 3-second test sound (beeps) in turn and "
+                + "measure how well they hear each other. Then a self test: each plays a set of test frames in every sound format and "
+                + "counts the other's, about a minute in all, by itself. Each side then adjusts itself, and the results stay in the "
+                + "diagnostics. It can also be started on the handheld.");
         pairText = ui.text(pc, "", 14, t().ink, false);
         pairText.setPadding(0, ui.dp(6), 0, 0);
-        ui.button(pc, "Pair", true, v -> pair());
+        ui.button(pc, "Pair and self test", true, v -> pair());
         ui.button(pc, "Share the last test sound heard", false, v -> shareTestSound());
 
         LinearLayout chk = ui.card("Link check");
@@ -142,6 +144,10 @@ public class LinkActivity extends ToolActivity implements PairCheck.Watcher {
             s.append("\nThe handheld's loudness steps, as heard here (dB clean):");
             for (int i = 0; i < p.ladder.qDb.length; i++) s.append(i == 0 ? " " : ", ").append(p.ladder.qDb[i] < -90 ? "-" : String.valueOf(Math.round(p.ladder.qDb[i])));
             s.append(String.format(Locale.US, "; it will use step %d", p.ladder.choice + 1));
+        }
+        if (p.test != null && (!p.test.heardNothing() || p.test.reported)) {
+            s.append("\n\nSelf test:");
+            for (String l : p.test.lines()) s.append("\n").append(l);
         }
         if (!p.steps.isEmpty()) {
             s.append("\n\nSteps:");

@@ -219,6 +219,7 @@ procedure SnInit(var s: TSender; docId: Byte);
 begin
   FillChar(s, SizeOf(s), 0);
   s.docId := docId;
+  if s.docId >= $FD then s.docId := 0;
   s.tailDone := True;
   s.sweepPos := -1;
 end;
@@ -227,6 +228,7 @@ procedure SnNewDoc(var s: TSender);
 var id: Byte;
 begin
   id := Byte(s.docId + 1);
+  if id >= $FD then id := 0;
   s.L := 0; s.sentL := -1; s.liveFrom := 0; s.repairFrom := 0; s.repair2From := 0;
   s.docId := id; s.tailDone := True; s.sweepPos := -1;
 end;

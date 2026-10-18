@@ -19,3 +19,10 @@
 
 Build and run: see the "Format 3" step in `.github/workflows/android.yml` (every push runs them).
 The handheld's tables (`handheld/w3tab.inc`) are made by `handheld/gen-tables.py`.
+- `selftest.sh` with `selftool.pas`, `SelfToolTest.java`: the self test (docs/FORMAT3.md, section 8): the handheld's
+  frames of tones and its results frame are read by the phone's receiver through the Jornada's playback chain, and the
+  test frames' fill is the same bytes on both sides.
+- `DropTest.java`: the silent and fast channels through Windows CE's playback conversion (it drops samples going from
+  44,100 to the chip's 43,200) against a handheld playing at 43,200 directly.
+- `ToneChain.java` (with `../wmsim`): the version 2 tones through the same chains, at every speed.
+

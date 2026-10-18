@@ -66,6 +66,7 @@ procedure TsInit(var s: TTextSender; docId: Byte);
 begin
   FillChar(s, SizeOf(s), 0);
   s.docId := docId;
+  if s.docId >= $FD then s.docId := 0;          { $FD and $FE belong to the self test }
   s.tailDone := True;
   s.sweepPos := -1;
   s.sentL := -1;
@@ -76,6 +77,7 @@ var keep: Boolean;
 begin
   keep := s.acksSeen;
   s.docId := Byte(s.docId + 1);
+  if s.docId >= $FD then s.docId := 0;
   s.L := 0; s.keyEnd := 0; s.sentL := -1; s.liveFrom := 0; s.repairFrom := 0; s.repair2From := 0;
   s.tailDone := True; s.sweepPos := -1; s.acked := 0; s.resends := 0; s.resendAt := 0;
   s.acksSeen := keep;

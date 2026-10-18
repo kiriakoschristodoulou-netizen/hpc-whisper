@@ -19,10 +19,10 @@ program WhisperTools;
 {$ifdef wince}{$define API:=cdecl}{$else}{$define API:=stdcall}{$endif}
 {$packrecords c}
 {$R WhisperTools.res}
-uses Windows, w3core, w3dsp, w3tx, w3rx, waudio, wtext, wfile, wscreen, wwav, wimg, winf, wmodem, wpair, wlog;
+uses Windows, w3core, w3dsp, w3tx, w3rx, waudio, wtext, wfile, wscreen, wwav, wimg, winf, wmodem, wpair, wtest, wlog;
 
 const
-  VERSION = '3.8.5';
+  VERSION = '3.9.0';
   CREATOR = 'Kyriakos Christodoulou';
   CLSNAME: UnicodeString = 'WhisperTools';
   APPNAME: UnicodeString = 'Whisper Tools';
@@ -103,7 +103,8 @@ var
   CfgPath: UnicodeString = '';
 
   { settings }
-  Classic: Boolean = False;         { the version 2 tones, for older phone apps }
+  Classic: Boolean = False;         { the version 2 tones only, for older phone apps and the receiver page }
+  AutoTones: Boolean = True;        { typing goes as version 2 tones until the phone's confirmations are heard (then silent) }
   WideSilent: Boolean = False;      { the wide silent channel (18.2-21.2 kHz): faster, but some people hear it }
   FastFiles: Boolean = True;        { files from here on the fast channel (a soft hiss); silent is slow }
   FastLevel: Integer = 1;           { 0 = 1/8, 1 = 1/4, 2 = 1/2 of full loudness }
@@ -145,6 +146,16 @@ var
   LastMarkSeen: LongWord = 0;
   PairNote: UnicodeString = '';
   SpeakerNote: UnicodeString = '';
+  { the self test (wtest.pas) }
+  TestActive: Boolean = False;      { this handheld's part is being played }
+  TestStage: Integer = 0;           { the next piece of it }
+  TestRun: Integer = 0;
+  TestPlayedAt: LongWord = 0;       { when its last piece was queued }
+  TestTally: TTally;                { what was heard of the phone's part }
+  TestReported: Boolean = True;     { the results went to the phone (or there is nothing to tell) }
+  { typing as tones, until the phone's confirmations are heard }
+  F3Good: Boolean = False;
+  TextFrames: Integer = 0;
 
   { files }
   Folder: UnicodeString = '';
@@ -435,7 +446,12 @@ begin
             SpeakerNative := b[1] = 0;
             got := 0;
             if ReadFile(h, {$ifdef wince}@b{$else}b{$endif}, 2, {$ifdef wince}@got{$else}got{$endif}, nil) and (got = 2) and (b[0] = $39) and (b[1] <= 5) then
+            begin
               LogNo := b[1];
+              got := 0;
+              if ReadFile(h, {$ifdef wince}@b{$else}b{$endif}, 2, {$ifdef wince}@got{$else}got{$endif}, nil) and (got = 2) and (b[0] = $3A) then
+                AutoTones := b[1] <> 0;
+            end;
           end;
         end;
       end;
@@ -445,7 +461,7 @@ begin
 end;
 
 procedure SaveCfg;
-var h: THandle; b: array[0..24] of Byte; got: DWORD; r: LongWord;
+var h: THandle; b: array[0..26] of Byte; got: DWORD; r: LongWord;
 begin
   h := CreateFileW(PWideChar(CfgPath), GENERIC_WRITE, 0, nil, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
   if h = INVALID_HANDLE_VALUE then Exit;
@@ -460,8 +476,9 @@ begin
   b[19] := SilentPeak div 128; b[20] := LevelSource;
   b[21] := $38; b[22] := Ord(not SpeakerNative);
   b[23] := $39; b[24] := LogNo;
+  b[25] := $3A; b[26] := Ord(AutoTones);
   got := 0;
-  WriteFile(h, {$ifdef wince}@b{$else}b{$endif}, 25, {$ifdef wince}@got{$else}got{$endif}, nil);
+  WriteFile(h, {$ifdef wince}@b{$else}b{$endif}, 27, {$ifdef wince}@got{$else}got{$endif}, nil);
   CloseHandle(h);
 end;
 
@@ -734,16 +751,10 @@ begin
   LeaveCriticalSection(ClassicLock);
 end;
 
-{ the next frame of classic tones, as sound, when there is one }
-function ClassicSamples(var x: TSamples): Boolean;
-var f: TFrame; tm: TToneMaker; buf: array[0..4409] of SmallInt; n, i: Integer; more: Boolean;
+{ a frame of version 2 tones as sound at the speaker's rate }
+procedure FrameSamples(const f: TFrame; var x: TSamples);
+var tm: TToneMaker; buf: array[0..4409] of SmallInt; n, i: Integer; more: Boolean;
 begin
-  Result := False;
-  if not Classic then Exit;
-  EnterCriticalSection(ClassicLock);
-  Result := SnNext(ClassicSnd, GetTickCount, f);
-  LeaveCriticalSection(ClassicLock);
-  if not Result then Exit;
   TmInit(tm, TxRate);
   tm.band := Band; tm.speed := Speed; tm.volume := Volume;
   TmStart(tm, f);
@@ -755,6 +766,46 @@ begin
     for i := 0 to High(buf) do x[n + i] := buf[i];
     Inc(n, Length(buf));
   until (not more) or (n > TxRate * 5);
+end;
+
+{ the next frame of classic tones, as sound, when there is one }
+function ClassicSamples(var x: TSamples): Boolean;
+var f: TFrame;
+begin
+  Result := False;
+  if not Classic then Exit;
+  EnterCriticalSection(ClassicLock);
+  Result := SnNext(ClassicSnd, GetTickCount, f);
+  LeaveCriticalSection(ClassicLock);
+  if not Result then Exit;
+  FrameSamples(f, x);
+end;
+
+{ a TEXT message as a frame of tones: the same document, offset and bytes, in the version 2 sound, which a
+  phone reads through the same copy of the document (docs/FORMAT3.md, section 8) }
+procedure SendTones(const p: array of Byte; n: Integer);
+var f: TFrame; t: array[0..MAXLEN] of Byte; x: TSamples; i, len: Integer;
+begin
+  len := n - 6;
+  if len > MAXLEN then len := MAXLEN;
+  if len < 0 then len := 0;
+  for i := 0 to len - 1 do t[i] := p[6 + i];
+  EncodeFrame(t, len, p[1], p[0], (p[2] shl 8) or p[3], (p[4] shl 8) or p[5], f);
+  FrameSamples(f, x);
+  if AudioSend(x) then
+    Log('send tones: doc ' + LI(p[0]) + ' seq ' + LI(p[1]) + ' length ' + LI((p[2] shl 8) or p[3]) + ' from ' + LI((p[4] shl 8) or p[5]) + ' chars ' + LI(len)
+      + ', band ' + LI(BAND_HZ[Band]) + ' Hz, ' + LI(Int64(Length(x)) * 1000 div TxRate) + ' ms at ' + LI(TxRate) + '/s')
+  else Log('send tones: NOT SENT, the queue is full');
+end;
+
+{ does the next text go as tones? Until the phone's confirmations have been heard, yes, except every fourth frame,
+  which goes silent as a question: does the phone confirm? }
+function UseTones: Boolean;
+begin
+  Result := False;
+  if Classic or (not AutoTones) or F3Good then Exit;
+  Inc(TextFrames);
+  Result := (TextFrames and 3) <> 0;
 end;
 
 { ---------- files: sending ---------- }
@@ -936,7 +987,18 @@ begin
   PhoneHeard := GetTickCount;
   PhoneAnswers := True;
   case typ of
-    T_TEXT_ACK: begin TsAck(Ts, g.msg.data, n, GetTickCount); Log('text: ' + LI(TsUnconfirmed(Ts)) + ' characters not yet confirmed'); end;
+    T_TEXT_ACK:
+      begin
+        TsAck(Ts, g.msg.data, n, GetTickCount);
+        if not F3Good then Log('text: the phone''s confirmations are heard: typing goes silent');
+        F3Good := True;
+        Log('text: ' + LI(TsUnconfirmed(Ts)) + ' characters not yet confirmed');
+      end;
+    T_SELFTEST:
+      begin
+        TallyAdd(TestTally, g.msg.data, n, GetTickCount);
+        if (n >= 3) then Log('self test: heard stage ' + LI(g.msg.data[1]) + ' number ' + LI(g.msg.data[2]) + ' on ' + LChan(g.ch) + ' (' + LI(TestTally.frames) + ' read so far)');
+      end;
     T_MAP:
       if MapFromMsg(g.msg.data, n, m) and (m.ch = CH_FU) then
       begin
@@ -1277,7 +1339,11 @@ begin
   PairState := 1; PairPlayed := False; PairReported := False;
   if not answering then begin HaveMine := False; HaveTheirs := False; end;
   PairNote := 'Playing the test sound (beeps), then listening for the phone''s...';
-  FastUntil := GetTickCount + 40000;
+  FastUntil := GetTickCount + 120000;
+  { the self test follows the test sound and the loudness steps (TestFeed plays it a piece at a time) }
+  TestRun := Integer((GetTickCount shr 5) mod 120) + 1;
+  TestStage := 0; TestActive := True; TestReported := False;
+  TallyInit(TestTally);
   x := PairPattern(TxRate);
   { then the loudness ladder: the phone hears which loudness comes through cleanest, and says so in its report }
   z := PairLadder(CH_SU, PAIR_LADDER);
@@ -1309,6 +1375,76 @@ begin
   if d10 >= 0 then Result := '+' + IU(d10 div 10) + ' dB' else Result := '-' + IU((-d10) div 10) + ' dB';
 end;
 
+const NPIECES = NTONE + NSU + NFU + 2;
+
+{ the next piece of the self test, once the last is about to end: a frame of tones (or three), frames on the silent
+  and the fast channel, then the end mark on each }
+procedure TestFeed(now: LongWord);
+var x: TSamples; p: array[0..TEST_LEN - 1] of Byte; k: Integer; ok: Boolean;
+begin
+  if (not TestActive) or (TestStage >= NPIECES) then Exit;
+  if AudioQueued > 1 then Exit;
+  k := TestStage;
+  ok := True;
+  if k < NTONE then
+  begin
+    ToneTestSound(k, TestRun, TxRate, Volume, x);
+    ok := AudioSend(x);
+    if ok then Log('self test: tones ' + LI(BAND_HZ[TONE_BAND[k]]) + ' Hz, ' + LI(SPEED_MS[TONE_SPEED[k]]) + ' ms a symbol');
+  end
+  else if k < NTONE + NSU then
+  begin
+    TestPayload(TestRun, ST_SU, k - NTONE, p);
+    ok := SendMsg(CH_SU, T_SELFTEST, p, TEST_LEN);
+  end
+  else if k < NTONE + NSU + NFU then
+  begin
+    TestPayload(TestRun, ST_FU, k - NTONE - NSU, p);
+    ok := SendMsg(CH_FU, T_SELFTEST, p, TEST_LEN);
+  end
+  else if k = NPIECES - 2 then
+  begin
+    TestPayload(TestRun, ST_END_H, 0, p);
+    ok := SendMsg(CH_SU, T_SELFTEST, p, TEST_LEN);
+  end
+  else
+  begin
+    TestPayload(TestRun, ST_END_H, 1, p);
+    ok := SendMsg(CH_FU, T_SELFTEST, p, TEST_LEN);
+  end;
+  if not ok then Exit;                            { the queue was full: this piece again next time }
+  Inc(TestStage);
+  PairNote := 'Self test: playing part ' + IU(TestStage) + ' of ' + IU(NPIECES) + '. Keep the phone beside the handheld...';
+  if TestStage >= NPIECES then TestPlayedAt := now;
+end;
+
+{ once the phone has played its part (or gone quiet), the handheld tells it what it read, in tones }
+procedure TestReportStep(now: LongWord);
+var b: array[0..15] of Byte; x: TSamples; n, lo, hi: Integer; due: Boolean;
+begin
+  if (not TestActive) or TestReported or (TestStage < NPIECES) or (AudioQueued > 0) then Exit;
+  due := False;
+  if TestTally.endP and (LongInt(now - TestTally.endAt) >= 400) then due := True
+  else if (TestTally.frames > 0) and (LongInt(now - TestTally.lastAt) >= 9000) then due := True
+  else if (TestTally.frames = 0) and (LongInt(now - TestPlayedAt) >= 70000) then
+  begin
+    TestReported := True; TestActive := False;
+    Log('self test: nothing was heard of the phone''s part (an older Whisper Tools on the phone, or it did not hear the end of this handheld''s part)');
+    PairNote := 'The phone did not play its part of the self test.';
+    Exit;
+  end;
+  if not due then Exit;
+  lo := 0; hi := 0;
+  if HaveMine then begin lo := PairBand10(PairMine, 1000, 12000) div 10; hi := PairBand10(PairMine, 20200, 21200) div 10; end;
+  n := ReportMake(TestTally, lo, hi, b);
+  ReportSound(b, n, TxRate, Volume, x);
+  AudioSend(x);
+  TestReported := True; TestActive := False;
+  Log('self test: heard from the phone: silent down ' + LI(TestTally.sdMask) + ' (of ' + LI((1 shl NSD) - 1) + '), fast down ' + LI(TestTally.fdMask)
+    + ' (of ' + LI((1 shl NFD) - 1) + '), end mark ' + LI(Ord(TestTally.endP)) + '; told the phone');
+  PairNote := 'Self test done. The results are on the phone.';
+end;
+
 procedure PairStep(now: LongWord);
 var x: TSmallArr; n: Integer; pos: Int64; b: array[0..63] of Byte;
 begin
@@ -1336,7 +1472,7 @@ begin
       else if PairState = 2 then PairState := 3;
     end;
   end;
-  if (PairState = 1) and (AudioQueued = 0) then
+  if (PairState = 1) and (AudioQueued = 0) and ((not TestActive) or (TestStage >= NPIECES)) then
   begin
     PairPlayed := True;
     if HaveMine then PairState := 3
@@ -1349,7 +1485,7 @@ begin
     PairNote := 'The phone''s test sound was not heard. Is Whisper Tools connected on the phone, its media volume about half?';
   end;
   { our report, once we have heard theirs and played ours }
-  if HaveMine and PairPlayed and not PairReported and (AudioQueued = 0) then
+  if HaveMine and PairPlayed and not PairReported and (AudioQueued = 0) and (TestReported or not TestActive) then
   begin
     PairReported := True;
     n := PairReportMake(PairMine, b);
@@ -1396,6 +1532,8 @@ begin
   FeedPlayer;
   now := GetTickCount;
   PairStep(now);
+  TestFeed(now);
+  TestReportStep(now);
   { the fast receiver costs the processor a fifth of its time: it listens only when something fast can come
     (a file announced on the silent channel, the remote, a link check, or the Files and Remote screens) }
   ListenFast := FastAlways or (Screen = SCR_FILES) or (Screen = SCR_REMOTE) or RemoteOn or Incoming.active or (LongInt(FastUntil - now) > 0);
@@ -1439,8 +1577,16 @@ begin
   end;
   if not Classic then
   begin
+    { silent text that the phone does not confirm twice: back to tones until it does }
+    if F3Good and (TsUnconfirmed(Ts) > 0) and (Ts.resends >= 2) then
+    begin F3Good := False; Log('text: the phone''s confirmations stopped: typing goes as tones again'); end;
     n := TsNext(Ts, now, p);
-    if n > 0 then begin SendMsg(SilentCh, T_TEXT, p, n); WaitAnswer := True; InvalidateRect(hMain, nil, False); Exit; end;
+    if n > 0 then
+    begin
+      if UseTones then SendTones(p, n)
+      else begin SendMsg(SilentCh, T_TEXT, p, n); WaitAnswer := True; end;
+      InvalidateRect(hMain, nil, False); Exit;
+    end;
   end;
   if (NOut > 0) and not Playing then
   begin
@@ -1793,7 +1939,9 @@ begin
       DbText(PairBand10(PairTheirs, 18500, 21200)) + ', fast ' + DbText(PairBand10(PairTheirs, 1000, 12000)), col);
   end
   else Line('Phone hears this', 'not known yet (the phone sends it after pairing)', COL_GREY);
-  if TypingOnFast then s := 'on the fast channel (a soft hiss): the silent band does not reach the phone'
+  if Classic then s := 'as tones only (for the receiver page)'
+  else if AutoTones and not F3Good then s := 'as tones (' + KHz(BAND_HZ[Band]) + ' kHz) until the phone confirms; then silent'
+  else if TypingOnFast then s := 'on the fast channel (a soft hiss): the silent band does not reach the phone'
   else s := 'silent, ' + KHz(100 * Chans[SilentCh].bins[0]) + '-' + KHz(100 * Chans[SilentCh].bins[Chans[SilentCh].n - 1]) + ' kHz';
   Line('Typing goes', s, COL_TEXT);
   if LevelSource = 1 then s := IU(SilentPeak * 100 div 32767) + '% (chosen by Pair)'
@@ -1806,7 +1954,7 @@ begin
   if PairNote <> '' then begin Txt(dc, PairNote, MkRect(10, y, CW - 10, y + 15), fNorm, COL_KEY, DT_LEFT or DT_SINGLELINE or DT_END_ELLIPSIS); y := y + 15; end;
   if SpeakerNote <> '' then begin Txt(dc, SpeakerNote, MkRect(10, y, CW - 10, y + 15), fNorm, COL_KEY, DT_LEFT or DT_SINGLELINE or DT_END_ELLIPSIS); y := y + 15; end;
   if CheckState <> '' then Txt(dc, CheckState, MkRect(10, y, CW - 10, y + 15), fNorm, COL_GREY, DT_LEFT or DT_SINGLELINE or DT_END_ELLIPSIS);
-  Button(dc, LinkBtn(0), 'Pair', 'P');
+  Button(dc, LinkBtn(0), 'Pair + test', 'P');
   Button(dc, LinkBtn(1), 'Test speaker', 'S');
   Button(dc, LinkBtn(2), 'Check the link', 'K');
   Button(dc, LinkBtn(3), 'Save what I heard', 'H');
@@ -1823,9 +1971,9 @@ begin
     3: Result := 'Fast loudness';
     4: Result := 'Received files';
     5: Result := 'Speaker rate';
-    6: Result := 'Classic band';
-    7: Result := 'Classic speed';
-    8: Result := 'Classic volume';
+    6: Result := 'Tones band';
+    7: Result := 'Tones speed';
+    8: Result := 'Tones volume';
   else Result := '';
   end;
 end;
@@ -1833,8 +1981,9 @@ end;
 function SettingValue(i: Integer): UnicodeString;
 begin
   case i of
-    0: if Classic then Result := 'Classic (for the receiver page, e.g. on an iPhone): text only'
-       else Result := 'Standard: silent, all keys, the phone confirms';
+    0: if Classic then Result := 'Tones only (for the receiver page, e.g. on an iPhone): text only'
+       else if AutoTones then Result := 'Automatic: tones until the phone confirms, then silent'
+       else Result := 'Silent only: all keys, the phone must confirm';
     1: if WideSilent then Result := 'Wide, 18.2-21.2 kHz: twice as fast, some people hear it'
        else Result := 'Narrow, 20.0-21.2 kHz: inaudible';
     2: if FastFiles then Result := 'Fast: a soft hiss while it goes, about 7-12 kbit/s' else Result := 'Silent: slow (a 10 KB file takes 1-2 minutes)';
@@ -1852,7 +2001,13 @@ end;
 procedure ChangeSetting(i, dir: Integer);
 begin
   case i of
-    0: begin Classic := not Classic; NewPage; end;
+    0: begin
+         { automatic -> silent only -> tones only -> automatic }
+         if Classic then begin Classic := False; AutoTones := True; end
+         else if AutoTones then AutoTones := False
+         else Classic := True;
+         NewPage;
+       end;
     1: WideSilent := not WideSilent;
     2: FastFiles := not FastFiles;
     3: FastLevel := (FastLevel + 3 + dir) mod 3;
@@ -1871,7 +2026,7 @@ begin
   y := TITLE_H + 6;
   for i := 0 to NSET - 1 do
   begin
-    if (i >= 6) and not Classic then Break;
+    if (i >= 6) and not (Classic or AutoTones) then Break;
     if i = SetSel then FillR(dc, MkRect(6, y - 1, CW - 6, y + 16), COL_SEL);
     Txt(dc, SettingName(i), MkRect(12, y, 170, y + 16), fBold, COL_NAVY, DT_LEFT or DT_SINGLELINE);
     Txt(dc, SettingValue(i), MkRect(170, y, CW - 12, y + 16), fNorm, COL_TEXT, DT_LEFT or DT_SINGLELINE or DT_END_ELLIPSIS);
@@ -2253,7 +2408,7 @@ begin
     SCR_SETTINGS:
       case vk of
         VK_UP_: if SetSel > 0 then Dec(SetSel);
-        VK_DOWN_: if (SetSel < NSET - 1) and (Classic or (SetSel < 5)) then Inc(SetSel);
+        VK_DOWN_: if (SetSel < NSET - 1) and (Classic or AutoTones or (SetSel < 5)) then Inc(SetSel);
         VK_LEFT_: ChangeSetting(SetSel, -1);
         VK_RIGHT_: ChangeSetting(SetSel, 1);
       end;
@@ -2382,7 +2537,7 @@ begin
     SCR_SETTINGS:
       begin
         i := (y - TITLE_H - 6) div 18;
-        if (i >= 0) and (i < NSET) and (Classic or (i < 6)) then begin if i = SetSel then ChangeSetting(i, 1); SetSel := i; end;
+        if (i >= 0) and (i < NSET) and (Classic or AutoTones or (i < 6)) then begin if i = SetSel then ChangeSetting(i, 1); SetSel := i; end;
       end;
     SCR_LINK:
       for i := 0 to 3 do

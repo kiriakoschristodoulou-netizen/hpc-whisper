@@ -102,6 +102,17 @@ public final class Link {
         return ok;
     }
 
+    /** A self-test frame: always on the channel named (a quiet silent channel is what the test measures). */
+    public boolean sendTest(int ch, byte[] payload) {
+        if (!speakerOk) return false;
+        Channel c = Channel.get(ch);
+        float[] f = Tx.frame(c, sendMap(ch), SelfTest.TYPE, payload, level(ch));
+        boolean ok = speaker.play(f, ch == Channel.SD);
+        DiagLog.log("send " + DiagLog.chan(ch) + " SELFTEST stage " + (payload[1] & 255) + " number " + (payload[2] & 255) + String.format(java.util.Locale.US, ", loudness %.2f, %d ms", level(ch), f.length * 1000L / Channel.RATE)
+                + (ok ? ", " + speaker.queued() + " queued" : ", NOT SENT: the queue is full"));
+        return ok;
+    }
+
     public int queued() { return speaker.queued(); }
     /** The pairing check's test sound (made at the modem rate). */
     public boolean playPattern(float[] f51) { return speakerOk && speaker.play(f51, true); }
@@ -195,6 +206,11 @@ public final class Link {
 
     private final Listener.Callback cb = new Listener.Callback() {
         @Override public void onFrame(Receiver.Frame f) {
+            if (PairCheck.get().test.onTone(f)) {                       // the self test's tones: not text
+                DiagLog.log("self test: tones " + (f.bandHz) + " Hz, " + f.ms + " ms a symbol, document " + f.doc + ", corrections " + f.fixed);
+                PairCheck.get().onTestTones();
+                return;
+            }
             text.mirror.apply(f, System.currentTimeMillis());       // Classic text: into the one shared copy too
             for (Client c : clients) c.onFrame(f);
         }
@@ -216,6 +232,13 @@ public final class Link {
         @Override public void onMessage(int ch, int type, byte[] p, float snr) {
             long now = System.currentTimeMillis();
             if (type == net.kyriakos.whisper.w3.Pair.REPORT) PairCheck.get().onReport(p);
+            if (type == SelfTest.TYPE) {
+                int stage = PairCheck.get().test.onMessage(type, p, snr);
+                DiagLog.log("self test: " + (stage < 0 ? "a damaged test frame on " : "stage " + stage + " number " + (p.length > 2 ? p[2] & 255 : -1) + " on ") + DiagLog.chan(ch) + String.format(java.util.Locale.US, ", %.0f dB", snr));
+                if (stage >= 0) PairCheck.get().onTestMessage(stage);
+                lastHeard = now; handheldAnswers = true;
+                return;
+            }
             lastHeard = now;
             handheldAnswers = true;
             text.heard(now);

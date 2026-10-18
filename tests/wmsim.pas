@@ -6,15 +6,17 @@ program wmsim;
   8 for backspace, -1 for a new document. }
 {$mode objfpc}{$H+}
 uses wmodem;
-const RATE = 44100; BUFN = 4410;
-var t: TToneMaker; snd: TSender; f: TFrame; sc: Text; fo: file;
+const BUFN = 4410;
+var RATE: LongInt; t: TToneMaker; snd: TSender; f: TFrame; sc: Text; fo: file;
     evMs, evCode: array[0..99999] of LongInt; nev, iev, code: LongInt;
     band, speed, vol: Integer; buf: array[0..BUFN - 1] of SmallInt;
     busy: Boolean; nowMs: LongWord; idleBufs, frames: Integer;
 begin
+  RATE := 44100;
   Assign(sc, ParamStr(1)); Reset(sc); nev := 0;
   while not Eof(sc) do begin ReadLn(sc, evMs[nev], evCode[nev]); Inc(nev); end;
   Close(sc);
+  if ParamCount >= 6 then Val(ParamStr(6), RATE, code);
   Val(ParamStr(3), band, code); Val(ParamStr(4), speed, code); Val(ParamStr(5), vol, code);
   TmInit(t, RATE); t.band := band; t.speed := speed; t.volume := vol;
   SnInit(snd, 7);

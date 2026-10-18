@@ -422,3 +422,43 @@ A rate error stretches the repeat of S by lag·δ samples and turns each carrier
 When a large error (over 0.04 %) is measured, the receiver does not wait for the next frame: the conversion is corrected at once, all receivers are reset and the last half second of microphone sound is converted again and given to them, so the frame that showed the error is read.
 
 A reading of the rate is trusted only when the repeats of S are alike to within 0.85 (a true S gives 1.0, noise at most about 0.8), the fit leaves little over, and the rate is within 1.5 %: with a few sync carriers and a wide search some rate always fits noise, and 3.8.4 moved the conversion by it (a phone tape of room noise gave 76 corrections of about ±1 %). A start is looked at further only when the alikeness is at least 0.85 on the handheld (0.65 on the phone).
+
+## 8. The self test and typing with tones
+
+### Typing never depends on the fast formats
+
+The handheld sends what you type as **frames of version 2 tones** (`FORMAT.md`) until it hears the phone confirm
+(TEXT_ACK), and only then switches to the silent channel. A TEXT message and a tone frame carry the same four
+things (document number, sequence, document length, offset, then the bytes), so the phone puts both into the same
+copy of the document (`Mirror`) and the keyboard cannot tell them apart. Every fourth frame, while tones are used,
+goes on the silent channel as a question: if the phone's confirmation comes back, typing goes silent; if the
+confirmations stop (two repeats unconfirmed), it goes back to tones. Tones need no answer: the version 2
+schedule of repeats fills any gap. Settings, Typing format: Automatic (this), Silent only, or Tones only (also the
+only format the receiver page reads).
+
+Why: simulation (`tests/w3/DropTest`, `ToneChain`) shows the tones read through the Jornada's playback chain,
+including Windows CE's conversion by dropping samples, at every speed and band, while the fast channel does not
+(1 frame in 8 at 44,100 played as it is, all of them at the chip's own 43,200). On a real pair the silent and fast
+channels lost frames the simulation never lost, so the tones are the base the rest builds on, not a fallback to
+configure.
+
+Document numbers $FD and $FE belong to the self test; a sender never uses them for text.
+
+### The self test
+
+Pair (on either device) is followed by a scripted exchange; each device counts the other's frames and nothing
+needs doing by hand. Every test frame is a format 3 message of type $35 (24 bytes: run, stage, number, and a fill
+computed from them so that a frame read wrongly is never counted) or a frame of tones with document $FD.
+
+| Part | From | Content |
+| --- | --- | --- |
+| H | handheld | after its test sound and loudness steps: 5 frames of tones (20.0 kHz at 32 ms a symbol, 20.0 kHz at 20 ms, 18.0 kHz at 32 ms, 20.0 kHz at 48 ms, 20.0 kHz at 32 ms again), 3 frames on SU (stage 1), 2 on FU (stage 2), then the end mark (stage 3) once on SU and once on FU |
+| P | phone | on the end mark (or 50 s after the handheld's test sound, if it never came): 3 frames on SD (stage 10), 3 on FD (stage 11), the end mark (stage 20) on SD and on FD |
+| report | handheld | on the end mark of P (or 9 s after the last frame of it): one frame of tones, document $FE: 1, run, SD mask, FD mask, end mark read, test frames read, the test sound's 1-12 kHz and 20.2-21.2 kHz levels in dB + 20 |
+
+When the handheld started the test, the phone plays its own test sound and then P; when the phone started it, P
+follows H directly. The handheld's own pairing report (PAIR_REPORT) is sent after the report of the self test, so
+the two never talk over each other. The phone writes the result in words on its Pair card and in its diagnostics,
+and decides from the frames the handheld really read (not from the test sound's bands) whether its answers go on
+the silent or the fast channel. Nothing is ever sent for the handheld's part if the phone is an older version (the
+handheld waits 70 s for any test frame, then gives up).
