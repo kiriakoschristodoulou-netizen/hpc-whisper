@@ -1,8 +1,9 @@
 program selftool;
 { The handheld's self test pieces (wtest.pas) on Linux, for tests against the phone's SelfTest.java.
     selftool tones IDX RUN RATE out.wav     one frame of tones of the test
-    selftool report SD FD ENDP RATE out.wav  the handheld's results as a frame of tones
-    selftool payload RUN STAGE IDX out.bin   a test frame's 24 bytes
+    selftool endtone RUN RATE out.wav        the end mark of the handheld's part (tones)
+    selftool report SD FD ENDP RATE out.wav TD  the handheld's results as a frame of tones (made-up own readings: mic 43,200, speaker 44,100, ...)
+    selftool payload RUN STAGE IDX out.bin [LEN]  a test frame's bytes (24, or 8 for tones down)
     selftool check in.bin                    does this payload pass the handheld's check (prints ok or bad) }
 {$mode objfpc}{$H+}
 uses SysUtils, w3tx, wtest;
@@ -27,7 +28,7 @@ begin
   Close(f);
 end;
 
-var x: TSamples; p: array[0..TEST_LEN - 1] of Byte; b: array[0..15] of Byte; t: TTally; f: File; n, rate: LongInt;
+var x: TSamples; p: array[0..TEST_LEN - 1] of Byte; b: array[0..REPORT_LEN - 1] of Byte; t: TTally; info: TReportInfo; f: File; n, rate: LongInt;
 begin
   if ParamStr(1) = 'tones' then
   begin
@@ -35,18 +36,28 @@ begin
     ToneTestSound(StrToInt(ParamStr(2)), StrToInt(ParamStr(3)), rate, 50, x);
     WriteWav(ParamStr(5), x, rate);
   end
+  else if ParamStr(1) = 'endtone' then
+  begin
+    rate := StrToInt(ParamStr(3));
+    EndToneSound(StrToInt(ParamStr(2)), rate, 50, x);
+    WriteWav(ParamStr(4), x, rate);
+  end
   else if ParamStr(1) = 'report' then
   begin
     rate := StrToInt(ParamStr(5));
     TallyInit(t); t.run := 7; t.sdMask := StrToInt(ParamStr(2)); t.fdMask := StrToInt(ParamStr(3)); t.endP := ParamStr(4) = '1'; t.frames := 9;
-    n := ReportMake(t, 23, -4, b);
+    t.tdMask := StrToInt(ParamStr(7));
+    info.micRate := 43200; info.spkRate := 44100; info.peakPct := 61; info.tdStarts := 4; info.tdHdrs := 3; info.sdHdrs := 1; info.fdHdrs := 2; info.fdStarts := 5;
+    n := ReportMake(t, 23, -4, info, b);
     ReportSound(b, n, rate, 50, x);
     WriteWav(ParamStr(6), x, rate);
   end
   else if ParamStr(1) = 'payload' then
   begin
-    TestPayload(StrToInt(ParamStr(2)), StrToInt(ParamStr(3)), StrToInt(ParamStr(4)), p);
-    Assign(f, ParamStr(5)); Rewrite(f, 1); BlockWrite(f, p, TEST_LEN); Close(f);
+    n := TEST_LEN;
+    if ParamCount >= 6 then n := StrToInt(ParamStr(6));
+    TestPayloadN(StrToInt(ParamStr(2)), StrToInt(ParamStr(3)), StrToInt(ParamStr(4)), n, p);
+    Assign(f, ParamStr(5)); Rewrite(f, 1); BlockWrite(f, p, n); Close(f);
   end
   else if ParamStr(1) = 'check' then
   begin

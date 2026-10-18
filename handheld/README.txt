@@ -1,4 +1,4 @@
-Whisper Tools 3.9.0
+Whisper Tools 3.9.1
 by Kyriakos Christodoulou
 
 Type on a Windows CE handheld PC and the text goes straight into any app
@@ -82,7 +82,9 @@ SOUND
   say so on their screens and in their logs. TYPING always gets through:
   until the phone's confirmations are heard, the handheld types with
   tones (slow, and they carry through what the other formats cannot), and
-  it goes silent by itself once the phone confirms. Pairing measures
+  it goes silent by itself once the phone confirms. The phone answers
+  silently if the self test showed the handheld hears that, and otherwise
+  as tones (17.8-19.3 kHz, slower but they get through). Pairing measures
   this handheld's microphone and finds how loud it should play; both are
   kept (the Link screen shows them). Pair again in a new place, or if
   typing stops getting through. Once its microphone has been measured

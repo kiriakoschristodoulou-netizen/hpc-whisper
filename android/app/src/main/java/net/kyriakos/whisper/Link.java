@@ -6,6 +6,7 @@ import android.os.Looper;
 
 import net.kyriakos.whisper.w3.BitMap;
 import net.kyriakos.whisper.w3.Channel;
+import net.kyriakos.whisper.w3.ToneDown;
 import net.kyriakos.whisper.w3.Tx;
 
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -45,6 +46,13 @@ public final class Link {
     public volatile boolean handheldAnswers = false;               // it has sent a format 3 message (it listens too)
     /** The pairing check found the silent channel down too weak: answers go on the fast one. */
     public volatile boolean answersOnFast = false;
+    /** Tones down (the fifth "channel"): what is short goes to the handheld as tones, which its sound chip hears whatever the
+     *  modem does. On until the self test has shown the silent channel reaches the handheld. */
+    public static final int TD = 5;
+    public volatile boolean answersOnTones = true;
+    public volatile float tdLevel = 0.3f, fdLevel = 0.35f;
+    /** The quiet after each frame on the fast channel down (ms): the handheld's receiver reads one frame at a time, slowly. */
+    static final int FD_GAP_MS = 150;
 
     private Link() { }
 
@@ -67,7 +75,7 @@ public final class Link {
         boolean ok = listener.start(app, cb);
         if (ok) { raiseVolume(); speakerOk = speaker.start(app); }
         DiagLog.log("link " + (ok ? "started" : "could not start: the microphone did not open") + (ok && !speakerOk ? "; the speaker did not open" : "")
-                + "; silent loudness " + silentLevel + ", answers on fast " + answersOnFast);
+                + "; silent loudness " + silentLevel + ", answers on fast " + answersOnFast + ", on tones " + answersOnTones + " (" + tdLevel + "), fast loudness " + fdLevel);
         return ok;
     }
 
@@ -87,28 +95,37 @@ public final class Link {
     public BitMap sendMap(int ch) { BitMap m = sendMaps[ch]; return m != null ? m : BitMap.standard(Channel.get(ch)); }
 
     /** Peak loudness of what the phone sends on a channel (of full scale). */
-    public float level(int ch) { return ch == Channel.FD ? 0.35f : ch == Channel.SD ? silentLevel : 0.5f; }
+    public float level(int ch) { return ch == Channel.FD ? fdLevel : ch == Channel.SD ? silentLevel : ch == TD ? tdLevel : 0.5f; }
     /** Peak of the silent channel down: as loud as this phone plays it without an audible side-sound (set by Pair). */
     public volatile float silentLevel = 0.5f;
 
     public boolean send(int ch, int type, byte[] payload) {
         if (!speakerOk) { DiagLog.log("send " + DiagLog.typeName(type) + ": NOT SENT, no speaker"); return false; }
+        if (ch == Channel.SD && answersOnTones && type != T_TRAIN && payload.length <= ToneDown.MAXMSG) ch = TD;     // see PairCheck
+        if (ch == TD) {
+            float[] f = ToneDown.frame(type, payload, tdLevel);
+            boolean ok = speaker.play(f, true);              // the microphone ignores it: it lies in the handheld's tone band
+            DiagLog.log("send TD " + DiagLog.describe(type, payload) + String.format(java.util.Locale.US, ", loudness %.2f, %d ms", tdLevel, f.length * 1000L / Channel.RATE)
+                    + (ok ? ", " + speaker.queued() + " queued" : ", NOT SENT: the queue is full"));
+            return ok;
+        }
         if (ch == Channel.SD && answersOnFast) ch = Channel.FD;      // see PairCheck
         Channel c = Channel.get(ch);
         float[] f = type == T_TRAIN ? Tx.train(c, level(ch)) : Tx.frame(c, sendMap(ch), type, payload, level(ch));
-        boolean ok = speaker.play(f, ch == Channel.SD);
+        boolean ok = speaker.play(f, ch == Channel.SD, ch == Channel.FD ? FD_GAP_MS : 0);
         DiagLog.log("send " + DiagLog.chan(ch) + " " + DiagLog.describe(type, payload) + String.format(java.util.Locale.US, ", loudness %.2f, %d ms", level(ch), f.length * 1000L / Channel.RATE)
                 + (sendMaps[ch] != null ? ", measured map" : "") + (ok ? ", " + speaker.queued() + " queued" : ", NOT SENT: the queue is full"));
         return ok;
     }
 
     /** A self-test frame: always on the channel named (a quiet silent channel is what the test measures). */
-    public boolean sendTest(int ch, byte[] payload) {
+    public boolean sendTest(int ch, byte[] payload) { return sendTest(ch, payload, level(ch)); }
+
+    public boolean sendTest(int ch, byte[] payload, float level) {
         if (!speakerOk) return false;
-        Channel c = Channel.get(ch);
-        float[] f = Tx.frame(c, sendMap(ch), SelfTest.TYPE, payload, level(ch));
-        boolean ok = speaker.play(f, ch == Channel.SD);
-        DiagLog.log("send " + DiagLog.chan(ch) + " SELFTEST stage " + (payload[1] & 255) + " number " + (payload[2] & 255) + String.format(java.util.Locale.US, ", loudness %.2f, %d ms", level(ch), f.length * 1000L / Channel.RATE)
+        float[] f = ch == TD ? ToneDown.frame(SelfTest.TYPE, payload, level) : Tx.frame(Channel.get(ch), sendMap(ch), SelfTest.TYPE, payload, level);
+        boolean ok = speaker.play(f, ch == Channel.SD || ch == TD, ch == Channel.FD ? FD_GAP_MS : 0);
+        DiagLog.log("send " + DiagLog.chan(ch) + " SELFTEST stage " + (payload[1] & 255) + " number " + (payload[2] & 255) + String.format(java.util.Locale.US, ", loudness %.2f, %d ms", level, f.length * 1000L / Channel.RATE)
                 + (ok ? ", " + speaker.queued() + " queued" : ", NOT SENT: the queue is full"));
         return ok;
     }

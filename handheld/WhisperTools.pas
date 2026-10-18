@@ -19,10 +19,10 @@ program WhisperTools;
 {$ifdef wince}{$define API:=cdecl}{$else}{$define API:=stdcall}{$endif}
 {$packrecords c}
 {$R WhisperTools.res}
-uses Windows, w3core, w3dsp, w3tx, w3rx, waudio, wtext, wfile, wscreen, wwav, wimg, winf, wmodem, wpair, wtest, wlog;
+uses Windows, w3core, w3dsp, w3tx, w3rx, waudio, wtext, wfile, wscreen, wwav, wimg, winf, wmodem, wpair, wtest, wlog, wtone;
 
 const
-  VERSION = '3.9.0';
+  VERSION = '3.9.1';
   CREATOR = 'Kyriakos Christodoulou';
   CLSNAME: UnicodeString = 'WhisperTools';
   APPNAME: UnicodeString = 'Whisper Tools';
@@ -469,8 +469,8 @@ begin
   b[4] := $33; b[5] := Ord(Classic); b[6] := Ord(WideSilent); b[7] := Ord(FastFiles); b[8] := FastLevel; b[9] := Ord(OnCard);
   b[10] := $34; b[11] := Ord(TypingOnFast); b[12] := Ord(FastAlways);
   { this handheld's own measurements: the microphone's rate (x 100) and the silent loudness }
-  { only a rate the phone's sound has settled is kept }
-  if (RateSource = 3) and RateTrusted then r := LongWord(InRate100) else r := 0;
+  { only a rate that Pair calibrated or a minute of listening measured is kept }
+  if (RateSource >= 1) and RateTrusted then r := LongWord(InRate100) else r := 0;
   b[13] := $36; b[14] := r and 255; b[15] := (r shr 8) and 255; b[16] := (r shr 16) and 255; b[17] := r shr 24;
   if r <> 0 then b[18] := 4 else b[18] := 0;
   b[19] := SilentPeak div 128; b[20] := LevelSource;
@@ -1343,7 +1343,7 @@ begin
   { the self test follows the test sound and the loudness steps (TestFeed plays it a piece at a time) }
   TestRun := Integer((GetTickCount shr 5) mod 120) + 1;
   TestStage := 0; TestActive := True; TestReported := False;
-  TallyInit(TestTally);
+  TallyInit(TestTally); AudioTestMark;
   x := PairPattern(TxRate);
   { then the loudness ladder: the phone hears which loudness comes through cleanest, and says so in its report }
   z := PairLadder(CH_SU, PAIR_LADDER);
@@ -1375,7 +1375,7 @@ begin
   if d10 >= 0 then Result := '+' + IU(d10 div 10) + ' dB' else Result := '-' + IU((-d10) div 10) + ' dB';
 end;
 
-const NPIECES = NTONE + NSU + NFU + 2;
+const NPIECES = NTONE + NSU + NFU + 1;
 
 { the next piece of the self test, once the last is about to end: a frame of tones (or three), frames on the silent
   and the fast channel, then the end mark on each }
@@ -1402,15 +1402,12 @@ begin
     TestPayload(TestRun, ST_FU, k - NTONE - NSU, p);
     ok := SendMsg(CH_FU, T_SELFTEST, p, TEST_LEN);
   end
-  else if k = NPIECES - 2 then
-  begin
-    TestPayload(TestRun, ST_END_H, 0, p);
-    ok := SendMsg(CH_SU, T_SELFTEST, p, TEST_LEN);
-  end
   else
   begin
-    TestPayload(TestRun, ST_END_H, 1, p);
-    ok := SendMsg(CH_FU, T_SELFTEST, p, TEST_LEN);
+    { the end mark: tones, which reach the phone however the other formats do }
+    EndToneSound(TestRun, TxRate, Volume, x);
+    ok := AudioSend(x);
+    if ok then Log('self test: end mark (tones)');
   end;
   if not ok then Exit;                            { the queue was full: this piece again next time }
   Inc(TestStage);
@@ -1420,7 +1417,7 @@ end;
 
 { once the phone has played its part (or gone quiet), the handheld tells it what it read, in tones }
 procedure TestReportStep(now: LongWord);
-var b: array[0..15] of Byte; x: TSamples; n, lo, hi: Integer; due: Boolean;
+var b: array[0..REPORT_LEN - 1] of Byte; x: TSamples; n, lo, hi: Integer; due: Boolean; info: TReportInfo;
 begin
   if (not TestActive) or TestReported or (TestStage < NPIECES) or (AudioQueued > 0) then Exit;
   due := False;
@@ -1436,11 +1433,13 @@ begin
   if not due then Exit;
   lo := 0; hi := 0;
   if HaveMine then begin lo := PairBand10(PairMine, 1000, 12000) div 10; hi := PairBand10(PairMine, 20200, 21200) div 10; end;
-  n := ReportMake(TestTally, lo, hi, b);
+  AudioTestInfo(info.micRate, info.peakPct, info.tdStarts, info.tdHdrs, info.sdHdrs, info.fdHdrs, info.fdStarts);
+  info.spkRate := TxRate;
+  n := ReportMake(TestTally, lo, hi, info, b);
   ReportSound(b, n, TxRate, Volume, x);
   AudioSend(x);
   TestReported := True; TestActive := False;
-  Log('self test: heard from the phone: silent down ' + LI(TestTally.sdMask) + ' (of ' + LI((1 shl NSD) - 1) + '), fast down ' + LI(TestTally.fdMask)
+  Log('self test: heard from the phone: tones down ' + LI(TestTally.tdMask) + ' (of ' + LI((1 shl NTD) - 1) + '), silent down ' + LI(TestTally.sdMask) + ' (of ' + LI((1 shl NSD) - 1) + '), fast down ' + LI(TestTally.fdMask)
     + ' (of ' + LI((1 shl NFD) - 1) + '), end mark ' + LI(Ord(TestTally.endP)) + '; told the phone');
   PairNote := 'Self test done. The results are on the phone.';
 end;
@@ -1524,7 +1523,7 @@ begin
   begin ShownPieces := FilePieces; ShownLost := FileLost; changed := True; end;
   while AudioTake(g) do
   begin
-    if g.ch = CH_SD then PhoneHeardSD := GetTickCount;
+    if (g.ch = CH_SD) or (g.ch = TD_CH) then PhoneHeardSD := GetTickCount;
     OnPhone(g);
     if g.msg.typ <> T_SCREEN then changed := True;
   end;
@@ -1560,14 +1559,14 @@ begin
   if Classic and ClassicSamples(cs) then begin AudioSend(cs); InvalidateRect(hMain, nil, False); Exit; end;
   { after each frame the phone may answer: the microphone stays open for it (docs/FORMAT3.md, section 5).
     The window closes early once the phone's answer has arrived. Our own answers do not wait. }
-  if WaitAnswer and ((LongInt(now - LastTurnAt) >= LISTEN_MS) or (LongInt(PhoneHeardSD - LastTurnAt) > 0)) then WaitAnswer := False;
+  if WaitAnswer and (((LongInt(now - LastTurnAt) >= LISTEN_MS) and not AudioTdBusy) or (LongInt(PhoneHeardSD - LastTurnAt) > 0)) then WaitAnswer := False;
   if (AnswerN = 0) and WaitAnswer then
   begin
     if changed then InvalidateRect(hMain, nil, False);
     Exit;
   end;
   { answers first, once the phone has been quiet on the silent channel for a moment }
-  if (AnswerN > 0) and (now - PhoneHeardSD >= 150) then
+  if (AnswerN > 0) and (now - PhoneHeardSD >= 150) and not AudioTdBusy then
   begin
     SendMsg(Answers[0].ch, Answers[0].typ, Answers[0].p, Answers[0].n);
     for i := 0 to AnswerN - 2 do Answers[i] := Answers[i + 1];

@@ -107,7 +107,7 @@ begin
   MakeChan(CH_SU, 200, 212, 2, True);
   MakeChan(CH_SUW, 182, 212, 2, True);
   MakeChan(CH_SD, 200, 212, 2, True);                 { the same band as SU (they take turns): above 20 kHz }
-  MakeChan(CH_FU, 10, 189, 1, False);
+  MakeChan(CH_FU, 10, 95, 1, False);
   MakeChan(CH_FD, 5, 119, 1, False);
   x := 11;
   for i := 0 to 255 do begin PSeq[i] := (x shr 9) and 3; x := (x * 25173 + 13849) and $FFFF; end;

@@ -10,14 +10,17 @@ import java.util.Locale;
  * computer; the same numbers and fill as handheld/wtest.pas).
  *
  * <pre>
- * handheld -> phone: 5 frames of version 2 tones, 3 on the silent channel, 2 on the fast channel, the end mark
- * phone -> handheld: 3 on the silent channel, 3 on the fast channel, the end mark; then the handheld's results
+ * handheld -> phone: 5 frames of version 2 tones, 3 on the silent channel, 2 on the fast channel, the end mark (tones)
+ * phone -> handheld: 3 frames of tones down and 3 on the fast channel (each at another loudness), 3 on the silent
+ *                    channel, the end mark (tones down); then the handheld's results, in a frame of tones
  * </pre>
  */
 public final class SelfTest {
     public static final int TYPE = 0x35, DOC_TONES = 0xFD, DOC_REPORT = 0xFE;
-    public static final int ST_SU = 1, ST_FU = 2, ST_END_H = 3, ST_SD = 10, ST_FD = 11, ST_END_P = 20;
-    public static final int NTONE = 5, NSU = 3, NFU = 2, NSD = 3, NFD = 3, LEN = 24, REPORT_LEN = 9;
+    public static final int ST_SU = 1, ST_FU = 2, ST_END_H = 3, ST_SD = 10, ST_FD = 11, ST_TD = 12, ST_END_P = 20;
+    public static final int NTONE = 5, NSU = 3, NFU = 2, NSD = 3, NFD = 3, NTD = 3, LEN = 24, TD_LEN = 8, REPORT_LEN = 20;
+    /** The loudnesses the phone's frames of tones down and fast down are played at (frame 0, 1, 2). */
+    public static final float[] TD_LEVELS = {0.5f, 0.2f, 0.08f}, FD_LEVELS = {0.35f, 0.15f, 0.06f};
     public static final int[] TONE_HZ = {20000, 20000, 18000, 20000, 20000};
     public static final int[] TONE_MS = {32, 20, 32, 48, 32};
 
@@ -29,26 +32,40 @@ public final class SelfTest {
     private int suN, fuN;
     // the handheld's results about the phone's part
     public boolean reported, endPHeard;
-    public int sdMask, fdMask, framesHeard, lowDb, highDb;
+    public int sdMask, fdMask, tdMask, framesHeard, lowDb, highDb;
+    public int micRate, spkRate, peakPct, tdStarts, tdHdrs, sdHdrs, fdHdrs, fdStarts;
+    public int reportVersion;
 
     public void begin() {
         run = -1; toneMask = suMask = fuMask = 0; endH = false; suSnr = fuSnr = 0; suN = fuN = 0;
-        reported = false; endPHeard = false; sdMask = fdMask = framesHeard = 0; lowDb = highDb = 0;
+        reported = false; endPHeard = false; sdMask = fdMask = tdMask = framesHeard = 0; lowDb = highDb = 0;
+        micRate = spkRate = peakPct = tdStarts = tdHdrs = sdHdrs = fdHdrs = fdStarts = 0; reportVersion = 0;
     }
 
     /** A test frame's payload: run, stage, number, and a fill both sides can recompute. */
-    public static byte[] payload(int run, int stage, int idx) {
-        byte[] p = new byte[LEN];
+    public static byte[] payload(int run, int stage, int idx) { return payload(run, stage, idx, LEN); }
+
+    public static byte[] payload(int run, int stage, int idx, int len) {
+        byte[] p = new byte[len];
         p[0] = (byte) run; p[1] = (byte) stage; p[2] = (byte) idx;
-        for (int i = 3; i < LEN; i++) p[i] = (byte) (stage * 31 + idx * 7 + i * 13 + (run & 255) * 5);
+        for (int i = 3; i < len; i++) p[i] = (byte) (stage * 31 + idx * 7 + i * 13 + (run & 255) * 5);
         return p;
     }
 
     public static boolean payloadOk(byte[] p) {
-        if (p == null || p.length != LEN) return false;
+        if (p == null || (p.length != LEN && p.length != TD_LEN)) return false;
         int run = p[0] & 255, stage = p[1] & 255, idx = p[2] & 255;
-        for (int i = 3; i < LEN; i++) if (p[i] != (byte) (stage * 31 + idx * 7 + i * 13 + run * 5)) return false;
+        for (int i = 3; i < p.length; i++) if (p[i] != (byte) (stage * 31 + idx * 7 + i * 13 + run * 5)) return false;
         return true;
+    }
+
+    /** Of the frames that were read (bit = number, loudest first), the one to play at: the middle one, the quieter of two. */
+    public static int middle(int mask) {
+        int n = Integer.bitCount(mask);
+        if (n == 0) return -1;
+        int skip = n / 2, i = 0;
+        for (; i < 16; i++) if ((mask >> i & 1) != 0) { if (skip == 0) return i; skip--; }
+        return -1;
     }
 
     /** A frame of version 2 tones. True when it was a self-test frame (then it must not reach the keyboard). */
@@ -58,16 +75,23 @@ public final class SelfTest {
             if (b != null && b.length == 4 && b[0] == 'S' && b[1] == 'T') {
                 int i = (b[2] & 255) - 'A';
                 if (i >= 0 && i < NTONE) toneMask |= 1 << i;
+                else if (i == 'Z' - 'A') endH = true;                // the end mark of the handheld's part
                 run = b[3] & 255;
             }
             return true;
         }
         if (f.doc == DOC_REPORT) {
             byte[] b = f.bytes;
-            if (b != null && b.length == REPORT_LEN && b[0] == 1) {
-                reported = true;
+            if (b != null && b.length >= 9 && (b[0] == 1 || (b[0] == 2 && b.length >= REPORT_LEN))) {
+                reported = true; reportVersion = b[0];
                 sdMask = b[2] & 255; fdMask = b[3] & 255; endPHeard = b[4] != 0; framesHeard = b[5] & 255;
                 lowDb = (b[6] & 255) - 20; highDb = (b[7] & 255) - 20;
+                if (b[0] == 2) {
+                    tdMask = b[8] & 255;
+                    micRate = (b[9] & 255) << 8 | (b[10] & 255); spkRate = (b[11] & 255) << 8 | (b[12] & 255);
+                    peakPct = b[13] & 255; tdStarts = b[14] & 255; tdHdrs = b[15] & 255;
+                    sdHdrs = b[16] & 255; fdHdrs = b[17] & 255; fdStarts = b[18] & 255;
+                }
             }
             return true;
         }
@@ -95,7 +119,8 @@ public final class SelfTest {
     public boolean suOk() { return count(suMask) >= 2; }
     public boolean fuOk() { return count(fuMask) >= 1; }
     public boolean sdOk() { return reported && count(sdMask) >= 2; }
-    public boolean fdOk() { return reported && count(fdMask) >= 2; }
+    public boolean fdOk() { return reported && count(fdMask) >= 1; }
+    public boolean tdOk() { return reported && count(tdMask) >= 1; }
 
     /** Nothing at all of the handheld's part was heard. */
     public boolean heardNothing() { return toneMask == 0 && suMask == 0 && fuMask == 0 && !endH; }
@@ -110,9 +135,13 @@ public final class SelfTest {
         s.add(String.format(Locale.US, "  fast channel: %d of %d frames%s", count(fuMask), NFU, fuN > 0 ? String.format(Locale.US, " (%.0f dB)", fuSnr / fuN) : ""));
         s.add("Phone to handheld, as the handheld heard it:");
         if (reported) {
+            if (reportVersion >= 2) s.add(String.format(Locale.US, "  tones: %d of %d frames (%s)", count(tdMask), NTD, levelsRead(tdMask, TD_LEVELS)));
             s.add(String.format(Locale.US, "  silent channel: %d of %d frames", count(sdMask), NSD));
-            s.add(String.format(Locale.US, "  fast channel: %d of %d frames", count(fdMask), NFD));
+            s.add(String.format(Locale.US, "  fast channel: %d of %d frames (%s)", count(fdMask), NFD, levelsRead(fdMask, FD_LEVELS)));
             s.add("  the test sound's silent band reached it at " + highDb + " dB, its middle band at " + lowDb + " dB");
+            if (reportVersion >= 2)
+                s.add(String.format(Locale.US, "  the handheld's own hearing: microphone %d samples/s, speaker %d, loudest input %d %% of full scale; tones started %d, headers %d; "
+                        + "silent headers %d; fast frames found %d, headers %d", micRate, spkRate, peakPct, tdStarts, tdHdrs, sdHdrs, fdStarts, fdHdrs));
         } else s.add("  not reported yet");
         s.add("So:");
         if (heardNothing()) s.add("  Nothing of the handheld's part was heard. Is Whisper Tools running on it, beside the phone?");
@@ -123,16 +152,23 @@ public final class SelfTest {
         }
         if (reported) {
             if (sdOk()) s.add("  This phone can answer silently.");
+            else if (tdOk()) s.add("  The handheld hears this phone's tones: confirmations and requests go as tones" + (fdOk() ? "; files come down the fast channel." : "; files cannot come down yet."));
             else if (fdOk()) s.add("  The handheld hears this phone only on the fast channel: answers go there (a soft hiss).");
-            else s.add("  The handheld heard neither of this phone's channels: it will not hear confirmations, files or the remote; typing goes on tones.");
+            else s.add("  The handheld heard none of this phone's sound: it will not hear confirmations, files or the remote; typing goes on tones.");
         }
         return s;
     }
 
+    private static String levelsRead(int mask, float[] lv) {
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < lv.length; i++) b.append(i > 0 ? ", " : "").append(Math.round(lv[i] * 100)).append(" %: ").append((mask >> i & 1) != 0 ? "read" : "not read");
+        return b.toString();
+    }
+
     /** One line for the log. */
     public String oneLine() {
-        return String.format(Locale.US, "self test: tones %d/%d, silent up %d/%d, fast up %d/%d, silent down %s, fast down %s",
+        return String.format(Locale.US, "self test: tones up %d/%d, silent up %d/%d, fast up %d/%d, tones down %s, silent down %s, fast down %s",
                 count(toneMask), NTONE, count(suMask), NSU, count(fuMask), NFU,
-                reported ? count(sdMask) + "/" + NSD : "?", reported ? count(fdMask) + "/" + NFD : "?");
+                reported && reportVersion >= 2 ? count(tdMask) + "/" + NTD : "?", reported ? count(sdMask) + "/" + NSD : "?", reported ? count(fdMask) + "/" + NFD : "?");
     }
 }

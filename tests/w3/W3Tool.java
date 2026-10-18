@@ -46,6 +46,14 @@ public class W3Tool {
                 writeWav(a[4], rate == 51200 ? f : Resampler.convert(f, 51200, rate), rate);
                 break;
             }
+            case "ttx": {            // tones down: ttx TYPE payload.bin out.wav RATE [LEVEL]
+                int type = Integer.parseInt(a[1]), rate = Integer.parseInt(a[4]);
+                byte[] pl = Files.readAllBytes(Paths.get(a[2]));
+                float lv = a.length > 5 ? Float.parseFloat(a[5]) : 0.5f;
+                float[] f = Sim.pad(ToneDown.frame(type, pl, lv), 4000, 4000);
+                writeWav(a[3], rate == 51200 ? f : Resampler.convert(f, 51200, rate), rate);
+                break;
+            }
             case "rx": {
                 int ch = Integer.parseInt(a[1]); int[] rate = new int[1];
                 float[] x = readWav(a[2], rate);

@@ -63,6 +63,7 @@ begin
     CH_SD: Result := 'SD';
     CH_FU: Result := 'FU';
     CH_FD: Result := 'FD';
+    5: Result := 'TD';
   else Result := 'ch' + LI(ch);
   end;
 end;

@@ -55,18 +55,26 @@ public final class Listener {
     private Rx[][] rx3;
     private Resampler[] rs3;
     public volatile double measuredRate = 0;
-    // The handheld's sound is a little faster or slower than it says (its chip runs at its own rate): each frame's sync
-    // symbol shows by how much, and the conversion to the modem rate follows it (3.8.3). 1 = as it says.
     private volatile double inRate = 0;
-    private double jScale = 1.0, pendingDelta = 0;
-    private boolean pending = false;
-    private int jGood = 0;
-    private boolean pendingBig = false;
-    private long lastReplayAt = -1;                              // ring position of the last replay
+    private double jScale = 1.0;       // the conversion is the microphone's measured rate, times what Pair measured of the handheld's sound
+    private volatile double scaleWanted = 1.0;      // set from outside, taken up by the listening thread
     private Context appCtx;
     /** The handheld's correction is its own (its chip's): kept for the next session, forgotten when Pair is pressed again. */
     public static void forgetCorrection(Context c) {
         try { c.getApplicationContext().getSharedPreferences("pair", Context.MODE_PRIVATE).edit().remove("jScale").apply(); } catch (Exception ignored) { }
+    }
+
+    /**
+     * The handheld's sound runs at its own rate (its chip's): Pair measured it from the pitch of the test sound's markers
+     * (accurate to about 0.01 %). 1 = as it says; a value under 1 means its sound is faster than it says. Nothing else moves
+     * this (3.9.1): a rate taken from the start of a frame had been driven to its limits by steady tones.
+     */
+    public void setScale(double js) {
+        if (js < 0.98 || js > 1.02) return;
+        if (Math.abs(js - 1) < 0.00015) js = 1.0;
+        scaleWanted = js;                                    // the listening thread takes it up before its next block
+        DiagLog.log(String.format(java.util.Locale.US, "the handheld's sound is %+.3f%% off its stated rate (from the pitch of its test sound); reading it at %.4f of the microphone's rate", (1 / js - 1) * 100, js));
+        try { if (appCtx != null) appCtx.getSharedPreferences("pair", Context.MODE_PRIVATE).edit().putFloat("jScale", (float) jScale).apply(); } catch (Exception ignored) { }
     }
     public volatile int framesW3 = 0, failsW3 = 0;
     private volatile int noiseStarts = 0;                             // fast receivers that started on noise (diagnostics)
@@ -163,8 +171,9 @@ public final class Listener {
         appCtx = ctx.getApplicationContext();
         try {
             float js = appCtx.getSharedPreferences("pair", Context.MODE_PRIVATE).getFloat("jScale", 1f);
-            jScale = (js >= 0.985f && js <= 1.015f) ? js : 1.0;
+            jScale = (js >= 0.98f && js <= 1.02f) ? js : 1.0;
         } catch (Exception e) { jScale = 1.0; }
+        scaleWanted = jScale;
         final int ch = rec.getChannelCount();
         rx = new Receiver[ch];
         for (int c = 0; c < ch; c++) {
@@ -199,11 +208,6 @@ public final class Listener {
                         if (r.ch.silent && !why.equals("header")) failsW3++;      // a frame that began (its header read) and was lost
                         if (r.ch.silent || !why.equals("header")) DiagLog.log(DiagLog.chan(r.ch.id) + " (mic " + mic + ") frame lost: " + why);
                         else noiseStarts++;
-                    }
-                    @Override public void onRateOffset(Rx r, double delta, double quality) {
-                        if (quality < 0.8 || Math.abs(delta) > 0.015) return;
-                        pendingDelta = delta; pending = true;
-                        pendingBig = Math.abs(delta) > 0.0004;     // too far off for this frame to be read
                     }
                     @Override public void onHeader(Rx r, int type, int len, int symbols) {
                         DiagLog.log(DiagLog.chan(r.ch.id) + " (mic " + mic + ") frame coming: " + DiagLog.typeName(type) + ", " + len
@@ -276,45 +280,6 @@ public final class Listener {
         return null;
     }
 
-    /** The conversion follows what the sync symbols said. If the sound is d too high, the rate to convert from was d too
-     *  high. A small correction waits for the end of a frame; a large one (the frame in hand cannot be read as it is)
-     *  is made at once, and the last half second of sound is given again with it, so that frame is read after all. */
-    private void applyRateOffset(int newFrames) {
-        if (!pending) return;
-        boolean big = pendingBig;
-        if (!big) for (Rx[] row : rx3) for (Rx r : row) if (r.busy()) return;
-        pending = false; pendingBig = false;
-        double d = pendingDelta;
-        if (Math.abs(d) < 0.00003) { jGood++; return; }
-        // the first correction of a large error is whole; small ones are taken gently
-        double k = Math.abs(d) > 0.001 ? 1.0 : 0.9;
-        jScale *= 1 - k * d;
-        if (jScale < 0.97) jScale = 0.97; else if (jScale > 1.03) jScale = 1.03;
-        for (Resampler q : rs3) q.setRates(inRate * jScale, Channel.RATE);
-        DiagLog.log(String.format(java.util.Locale.US, "the handheld's sound is %+.3f%% off its stated rate; reading it at %.4f of the phone's rate", d * 100, jScale));
-        jGood = Math.abs(d) < 0.00025 ? jGood + 1 : 0;
-        if (jGood >= 2 && appCtx != null) {
-            try { appCtx.getSharedPreferences("pair", Context.MODE_PRIVATE).edit().putFloat("jScale", (float) jScale).apply(); } catch (Exception ignored) { }
-        }
-        if (big && (lastReplayAt < 0 || ringPos - lastReplayAt > rate)) {
-            lastReplayAt = ringPos;
-            long end = ringPos - newFrames, from = Math.max(Math.max(0, end - rate / 2), ringPos - ring.length + 1);
-            for (int c = 0; c < rs3.length; c++) {
-                rs3[c] = new Resampler(inRate * jScale, Channel.RATE);
-                for (Rx r : rx3[c]) r.reset();
-                float[] blk = new float[2048], out = new float[rs3[c].maxOut(2048) + 8];
-                for (long pos = from; pos < end; ) {
-                    int n = (int) Math.min(2048, end - pos);
-                    for (int i = 0; i < n; i++) blk[i] = ring[(int) ((pos + i) % ring.length)];
-                    int m = rs3[c].process(blk, 0, n, out, 0);
-                    for (Rx r : rx3[c]) r.push(out, 0, m);
-                    pos += n;
-                }
-            }
-            DiagLog.log("the sound just heard was read again at the corrected rate");
-        }
-    }
-
     private void loop(AudioRecord rec, int ch, Callback cb) {
         short[] buf = new short[2048 * ch];
         float[] f = new float[2048 * ch];
@@ -364,7 +329,7 @@ public final class Listener {
                 }
                 BitMap nm;
                 while ((nm = newMaps.poll()) != null) for (Rx[] row : rx3) for (Rx r : row) r.addMap(nm);
-                applyRateOffset(frames);
+                if (scaleWanted != jScale) { jScale = scaleWanted; for (Resampler q : rs3) q.setRates(inRate * jScale, Channel.RATE); }
                 for (int c = 0; c < rs3.length; c++) {
                     if (mono.length < frames) mono = new float[frames];
                     for (int i = 0; i < frames; i++) mono[i] = f[i * ch + c];

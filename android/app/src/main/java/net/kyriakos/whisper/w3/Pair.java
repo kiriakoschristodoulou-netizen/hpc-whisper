@@ -19,7 +19,7 @@ public final class Pair {
     public static final class Result {
         public boolean found, clipped;
         public final int[] snr10 = new int[N];   // tenths of a dB above the background
-        public int scale10k, peak, aAt;
+        public int scale10k, peak, aAt, bAt;
         public int ladder = -1, ladderQ;          // the loudness the other side should use (its ladder step), and how clean it was
         public String why = "";                   // why it was not found
         public int band10(int loHz, int hiHz) {
@@ -84,7 +84,7 @@ public final class Pair {
         if (b < 0) { r.why = "its second beep was not found (the sound stopped, or was too faint)"; return r; }
         double s = (b - a) * 1000.0 / ((double) AB_MS * rate);
         if (s < 0.95 || s > 1.05) { r.why = String.format(java.util.Locale.US, "its two beeps were %.2f s apart, not 2.69", (b - a) / (double) rate); return r; }
-        r.scale10k = (int) Math.round(s * 10000); r.aAt = a;
+        r.scale10k = (int) Math.round(s * 10000); r.aAt = a; r.bAt = b;
         int bg1 = a - (LEAD_MS + 40) * rate / 1000, bg0 = Math.max(0, bg1 - 300 * rate / 1000);
         int half = 25 * rate / 1000;
         for (int i = 0; i < N; i++) {
@@ -99,6 +99,44 @@ public final class Pair {
         r.peak = Math.round(pk * 100); r.clipped = pk >= 0.976f;
         r.found = true;
         return r;
+    }
+
+    /**
+     * How much slower the sender's sound runs than it says (1.003 = 0.3 % slower), from the pitch of the two 2 kHz markers: a
+     * steady tone gives its frequency to about 0.01 %, which nothing in a frame can (3.9.1: a rate taken from frame starts had
+     * been driven to its limits by the steady tones of the test sound). x is recorded at rate (the microphone's real rate).
+     * NaN when the markers do not give a clear peak.
+     */
+    public static double pitchScale(float[] x, int n, double rate, int a, int b) {
+        int len = MARK_MS * (int) rate / 1000, cut = len / 10;
+        double best = Double.NaN, bestP = 0;
+        double[] ps = new double[2001];
+        for (int pass = 0; pass < 2; pass++) {
+            double lo = pass == 0 ? 0.97 : best - 0.0004, step = pass == 0 ? 0.0002 : 0.00002;
+            int cnt = pass == 0 ? 301 : 41;
+            bestP = 0; int bi = -1;
+            for (int i = 0; i < cnt; i++) {
+                double s = lo + i * step, hz = MARK_HZ / s;
+                double v = gPower(x, n, a + cut, a + len - cut, hz, rate) + gPower(x, n, b + cut, b + len - cut, hz, rate);
+                ps[i] = v;
+                if (v > bestP) { bestP = v; bi = i; }
+            }
+            if (bi < 0) return Double.NaN;
+            best = lo + bi * step;
+            if (pass == 1 && bi > 0 && bi < cnt - 1) {                       // the top of the peak, between the steps
+                double y0 = ps[bi - 1], y1 = ps[bi], y2 = ps[bi + 1], d = y0 - 2 * y1 + y2;
+                if (d < 0) best += step * 0.5 * (y0 - y2) / d;
+            }
+        }
+        return best;
+    }
+
+    private static double gPower(float[] x, int n, int a, int b, double hz, double rate) {
+        a = Math.max(0, a); b = Math.min(n, b);
+        if (b - a < 64) return 0;
+        double c = 2 * Math.cos(2 * Math.PI * hz / rate), s1 = 0, s2 = 0;
+        for (int i = a; i < b; i++) { double s0 = x[i] + c * s1 - s2; s2 = s1; s1 = s0; }
+        return (s1 * s1 + s2 * s2 - c * s1 * s2) / (b - a);
     }
 
     public static byte[] report(Result r) {

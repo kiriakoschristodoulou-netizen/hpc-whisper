@@ -39,7 +39,7 @@ public final class Channel {
             make(SU_NARROW, 200, 212, 2, true),
             make(SU_WIDE, 182, 212, 2, true),
             make(SD, 200, 212, 2, true),            // the same band as SU (they take turns): above 20 kHz
-            make(FU, 10, 189, 1, false),
+            make(FU, 10, 95, 1, false),
             make(FD, 5, 119, 1, false),
     };
 

@@ -277,7 +277,7 @@ public final class Rx {
         if (cnt == 0 || sum <= 0) return false;
         for (int c = 0; c < n; c++) if (p[c] >= 0 && p[c] * 10 * cnt >= sum) on++;
         if (on * 2 < cnt) return false;
-        return ch.silent || hi * 100 >= lo;
+        return true;     // (3.9.1) the fast up channel lies where the speaker is loud: no upper half to demand
     }
 
     /**

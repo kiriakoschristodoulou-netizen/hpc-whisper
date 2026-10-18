@@ -33,7 +33,7 @@ import java.util.concurrent.TimeUnit;
 final class Speaker {
     interface Mute { void muteBetween(long fromNanos, long untilNanos); }
 
-    private static final class Item { final float[] f; final boolean mute; Item(float[] f, boolean m) { this.f = f; mute = m; } }
+    private static final class Item { final float[] f; final boolean mute; final int gapMs; Item(float[] f, boolean m, int g) { this.f = f; mute = m; gapMs = g; } }
     private final ArrayBlockingQueue<Item> queue = new ArrayBlockingQueue<>(64);
     private volatile boolean running;
     private Thread thread;
@@ -135,7 +135,10 @@ final class Speaker {
      * silent channel), so the microphone is ignored while it sounds. The fast
      * channel lies in another band: the phone keeps listening through it.
      */
-    boolean play(float[] frame51, boolean mute) { return running && queue.offer(new Item(frame51, mute)); }
+    boolean play(float[] frame51, boolean mute) { return play(frame51, mute, 0); }
+
+    /** gapMs: the quiet after the frame (0 = the usual 33 ms). The fast channel down leaves more: the handheld's receiver needs the time. */
+    boolean play(float[] frame51, boolean mute, int gapMs) { return running && queue.offer(new Item(frame51, mute, gapMs)); }
 
     /** When what is queued now will have finished sounding (ms, currentTimeMillis). */
     long endMs() {
@@ -214,8 +217,8 @@ final class Speaker {
             if (pk > 0.97f) { float g = 0.97f / pk; for (int i = 0; i < x.length; i++) x[i] *= g; }
             boolean wake = !playing && System.nanoTime() - quietSince > 300_000_000L;
             int pre = wake ? lead.length : 0;
-            // a little silence after each frame (format 3 asks for 25 ms between frames)
-            int n = pre + x.length + rate / 30;
+            // a little silence after each frame (format 3 asks for 25 ms between frames; the fast channel down, more)
+            int n = pre + x.length + (it.gapMs > 0 ? rate * it.gapMs / 1000 : rate / 30);
             if (pcm.length < n) pcm = new short[n];
             for (int i = 0; i < pre; i++) pcm[i] = lead[i];
             for (int i = pre; i < n; i++) {

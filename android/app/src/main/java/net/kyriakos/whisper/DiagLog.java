@@ -176,6 +176,7 @@ public final class DiagLog {
             case net.kyriakos.whisper.w3.Channel.SD: return "SD";
             case net.kyriakos.whisper.w3.Channel.FU: return "FU";
             case net.kyriakos.whisper.w3.Channel.FD: return "FD";
+            case 5: return "TD";                      // tones down (Link.TD)
             default: return "ch" + ch;
         }
     }

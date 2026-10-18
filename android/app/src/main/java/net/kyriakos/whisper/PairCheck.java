@@ -73,12 +73,18 @@ public final class PairCheck {
         SharedPreferences p = app.getSharedPreferences("pair", Context.MODE_PRIVATE);
         Link.get().answersOnFast = p.getBoolean("answersOnFast", false);
         Link.get().silentLevel = p.getFloat("silentLevel", 0.45f);
+        Link.get().answersOnTones = p.getBoolean("answersOnTones", true);
+        Link.get().tdLevel = p.getFloat("tdLevel", 0.3f);
+        Link.get().fdLevel = p.getFloat("fdLevel", 0.35f);
     }
 
     private void save() {
         if (app == null) return;
         app.getSharedPreferences("pair", Context.MODE_PRIVATE).edit()
                 .putBoolean("answersOnFast", Link.get().answersOnFast)
+                .putBoolean("answersOnTones", Link.get().answersOnTones)
+                .putFloat("tdLevel", Link.get().tdLevel)
+                .putFloat("fdLevel", Link.get().fdLevel)
                 .putFloat("silentLevel", Link.get().silentLevel).apply();
     }
 
@@ -154,7 +160,7 @@ public final class PairCheck {
             }
             if (mine != null && played && ladderDone && pStarted && !reported) {
                 reported = true;
-                Link.get().send(Channel.FD, Pair.REPORT, Pair.report(mine));
+                Link.get().send(Link.get().answersOnTones ? Channel.SD : Channel.FD, Pair.REPORT, Pair.report(mine));
                 step("Sent the handheld how this phone heard it");
                 if (state == DONE) note = theirs != null ? "Done." : "Done here; waiting for the handheld's results...";
                 changed();
@@ -185,6 +191,14 @@ public final class PairCheck {
         Pair.Result r = Pair.analyze(x, n, rate);
         if (!r.found) { step("It was not a whole test sound: " + r.why + ". (Share it with the button below.)"); changed(); return; }
         mine = r; lastMineAt = System.currentTimeMillis();
+        // the handheld's own clock, from the pitch of its markers (against this microphone's real rate)
+        double eff = l.measuredRate > 0 ? l.measuredRate : rate;
+        double sc = Pair.pitchScale(x, n, eff, r.aAt, r.bAt);
+        if (Double.isNaN(sc)) step("The pitch of the handheld's markers could not be measured; its sound is taken as it says");
+        else {
+            step(String.format(Locale.US, "The handheld's sound runs %+.3f %% against what it says", (sc - 1) * 100));
+            l.setScale(1.0 / sc);
+        }
         ladderDone = false;
         step("Measured the handheld's test sound; now its loudness steps...");
         main.removeCallbacks(fallbackP);
@@ -235,6 +249,7 @@ public final class PairCheck {
     /** A frame of tones of the self test was read (or the handheld's results). */
     public void onTestTones() {
         if (test.reported) finish();
+        else if (test.endH && !pStarted && (mine != null || ownPatternPending || state == LISTENING || state == DONE)) main.postDelayed(this::startBlockP, 500);
         changed();
     }
 
@@ -250,10 +265,11 @@ public final class PairCheck {
         }
         int run = Math.max(0, test.run);
         step("Playing this phone's part of the self test");
+        // tones down and fast down each at three loudnesses (the handheld's microphone has no gain control and may clip)
+        for (int i = 0; i < SelfTest.NTD; i++) link.sendTest(Link.TD, SelfTest.payload(run, SelfTest.ST_TD, i, SelfTest.TD_LEN), SelfTest.TD_LEVELS[i]);
         for (int i = 0; i < SelfTest.NSD; i++) link.sendTest(Channel.SD, SelfTest.payload(run, SelfTest.ST_SD, i));
-        for (int i = 0; i < SelfTest.NFD; i++) link.sendTest(Channel.FD, SelfTest.payload(run, SelfTest.ST_FD, i));
-        link.sendTest(Channel.SD, SelfTest.payload(run, SelfTest.ST_END_P, 0));
-        link.sendTest(Channel.FD, SelfTest.payload(run, SelfTest.ST_END_P, 1));
+        for (int i = 0; i < SelfTest.NFD; i++) link.sendTest(Channel.FD, SelfTest.payload(run, SelfTest.ST_FD, i), SelfTest.FD_LEVELS[i]);
+        link.sendTest(Link.TD, SelfTest.payload(run, SelfTest.ST_END_P, 0, SelfTest.TD_LEN), link.tdLevel);       // the end mark: tones
         pEndAt = link.playEndMs();
         note = "Self test: this phone is playing its part; then the handheld tells what it heard (about a minute in all)...";
         main.removeCallbacks(testTick);
@@ -281,10 +297,18 @@ public final class PairCheck {
         for (String l : test.lines()) DiagLog.log("self test: " + l.trim());
         step(test.oneLine().replace("self test: ", "Self test: "));
         if (test.reported) {
-            // what the handheld really read of this phone decides the channel for answers (the test sound's bands only guessed)
-            boolean sd = SelfTest.count(test.sdMask) >= 2, fd = SelfTest.count(test.fdMask) >= 2;
-            if (!sd && fd) Link.get().answersOnFast = true;
-            else if (sd) Link.get().answersOnFast = false;
+            // what the handheld really read of this phone decides how answers go (the test sound's bands only guessed)
+            Link link = Link.get();
+            boolean sd = test.sdOk(), td = test.tdOk(), fd = test.fdOk();
+            link.answersOnTones = !sd && td;                                    // short messages: silent if it works, else tones
+            link.answersOnFast = !sd && fd;                                      // the long ones: silent if it works, else fast
+            if (!sd && !td && !fd) link.answersOnTones = true;                   // nothing worked: tones are the best chance
+            int i = SelfTest.middle(test.tdMask);
+            if (i >= 0) link.tdLevel = SelfTest.TD_LEVELS[i];
+            i = SelfTest.middle(test.fdMask);
+            if (i >= 0) link.fdLevel = SelfTest.FD_LEVELS[i];
+            DiagLog.log(String.format(java.util.Locale.US, "self test decided: short answers on %s, long ones on %s, tones at %.2f, fast at %.2f",
+                    link.answersOnTones ? "tones" : "the silent channel", link.answersOnFast ? "the fast channel" : "the silent channel", link.tdLevel, link.fdLevel));
             save();
             note = "Self test done. The results are below.";
         } else note = "Self test: this phone's part was played, but the handheld's results did not arrive (an older Whisper Tools on the handheld, or it did not hear the end of this phone's part).";
@@ -296,9 +320,11 @@ public final class PairCheck {
         Pair.Result r = Pair.read(p);
         if (!r.found) return;
         theirs = r;
-        // this phone's silent band does not reach the handheld (but the fast one does): answer on the fast one
-        Link.get().answersOnFast = r.band10(20000, 21200) < 120 && r.band10(500, 12000) >= 150;
-        save();
+        // (the self test, when it runs, has the last word on how answers go; this is its guess from the test sound's bands)
+        if (!test.reported) {
+            Link.get().answersOnFast = r.band10(20000, 21200) < 120 && r.band10(500, 12000) >= 150;
+            save();
+        }
         step("The handheld's results arrived");
         if (state == DONE || state == IDLE) note = "Done.";
         changed();

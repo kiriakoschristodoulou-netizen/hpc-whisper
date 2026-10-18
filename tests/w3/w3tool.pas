@@ -5,7 +5,7 @@ program w3tool;
     w3tool rx CH in.wav RATE100 [map.bin]          read frames; RATE100 = the true rate x 100
   Prints one line per message: "msg TYPE LEN SNR10 FIXED HEX", and "train SNR10..." }
 {$mode objfpc}{$H+}
-uses SysUtils, w3core, w3dsp, w3tx, w3rx;
+uses SysUtils, w3core, w3dsp, w3tx, w3rx, wtone;
 
 function ReadFileBytes(const p: string): TBytes;
 var f: File; n: Int64;
@@ -78,7 +78,7 @@ end;
 var
   dumpN: Integer = 0;
   cmd: string; ch, typ, code, i, n, rate: LongInt; m: TBitMap; pl, mb: TBytes; x, y: TSamples;
-  r: TRx; rs: TResampler; msg: TRxMsg; rate100: Int64; s: string;
+  r: TRx; td: TTdRx; rs: TResampler; msg: TRxMsg; rate100: Int64; s: string;
 begin
   if GetEnvironmentVariable('TRIG') <> '' then Val(GetEnvironmentVariable('TRIG'), RxTrig, code);
   cmd := ParamStr(1);
@@ -143,6 +143,31 @@ begin
     end;
     WriteLn('cfo ', r.cfoPpm, ' q ', r.cfoQ, ' n ', r.cfoN);
     WriteLn('frames ', r.frames, ' fails ', r.fails, ' ', r.lastFail, ' | triggers ', r.trigs, ' passed the look ', r.starts + r.fails, ' not ours ', r.gated);
+  end
+  else if cmd = 'trx' then
+  begin
+    { tones down (wtone.pas): read frames of tones from a recording }
+    x := ReadWav(ParamStr(3), rate);
+    Val(ParamStr(4), rate100, code);
+    TdInit(td);
+    if rate100 = 5120000 then y := x
+    else
+    begin
+      RsInit(rs, rate100, 5120000, True);
+      SetLength(y, Int64(Length(x)) * 5120000 div rate100 + 64);
+      n := RsProcess(rs, x, 0, Length(x), y, 0);
+      SetLength(y, n);
+    end;
+    i := 0;
+    while i < Length(y) do
+    begin
+      n := Length(y) - i; if n > 4096 then n := 4096;
+      TdPush(td, y, i, n);
+      Inc(i, n);
+      while TdTake(td, msg) do
+        WriteLn('msg ', msg.typ, ' ', msg.len, ' ', msg.snr10, ' ', msg.fixed, ' ', Hex(msg.data, msg.len));
+    end;
+    WriteLn('frames ', td.frames, ' fails ', td.fails, ' ', td.lastWhy, ' | starts ', td.starts, ' headers ', td.hdrs);
   end
   else if cmd = 'afc' then
   begin

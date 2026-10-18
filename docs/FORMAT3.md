@@ -46,7 +46,7 @@ off costs little (0.02 %: 32 dB; 0.1 %: 17 dB, as bad as the conversion).
 | SU narrow (default) | handheld → phone | even bins 200–212 (20.0–21.2 kHz) | 7 | 0, 6 | 1 |
 | SU wide | handheld → phone | even bins 182–212 (18.2–21.2 kHz) | 16 | 0, 15 | 1 |
 | SD | phone → handheld | even bins 200–212 (20.0–21.2 kHz) | 7 | 0, 6 | 1 |
-| FU | handheld → phone | bins 10–189 (1.0–18.9 kHz) | 180 | every 10th, and the last | 1 |
+| FU | handheld → phone | bins 10–95 (1.0–9.5 kHz, where the Jornada's speaker is loud; it gives almost nothing above that) | 86 | every 10th, and the last | 1 |
 | FD | phone → handheld | bins 5–119 (0.5–11.9 kHz) | 115 | every 10th, and the last | 1 |
 
 Silent carriers are 200 Hz apart so that a handheld's ghost tones (the
@@ -411,17 +411,20 @@ most once in 4 s, up to 0.6), and keeps that level.
 **Markers on the phone.** For 8 s after marker A the phone takes no other
 marker (the handheld's ladder would otherwise look like a new start).
 
-## Rate correction (3.8.3)
+## The rate of the other side's sound (3.9.1)
 
-The silent channels need the receiver's conversion to the modem rate to be accurate to about 0.05%. Every receiver therefore measures the carrier offset from the start (S) of each frame: S repeats every `lag` samples, so the phase turn between consecutive windows is 2π·δ·m per carrier (m = bin / syncStep). A least-squares fit gives δ to about 0.01–0.05%. The receiver corrects its own conversion (new rate = old / (1+δ)); the capture range is about ±0.3%. A frame is accepted as ours when the comb of S carriers is coherent (Σ|z| / Σe ≥ 0.45), which does not depend on the carriers sitting in exact bins.
+The silent channels need the receiver's conversion to the modem rate to be right to about 0.1 %. The conversion uses
+the receiver's own microphone rate (measured against the clock over ten seconds or more) and, on the phone, one number
+for the handheld's chip: Pair measures it from the **pitch of the two 2 kHz markers** of the test sound (a steady tone
+gives its frequency to about 0.01 %; the real Jornada's test sound gave -0.0094 %), and the phone converts the
+handheld's sound at that rate from then on (kept between runs, forgotten when Pair is pressed again). The handheld
+does the same with the phone's markers. Nothing moves the conversion at any other time.
 
-### Finding S when the rate is off (3.8.4)
-
-A rate error stretches the repeat of S by lag·δ samples and turns each carrier, so the correlation at exactly one lag loses its real part (for the silent channel at 0.5 % off it is a quarter turn). The receivers also correlate at lag±1 and lag±2 and use the largest: whichever is nearest the true repeat still finds S, for errors up to about ±1 %. On the handheld the extra sums use every fourth sample and only run while no frame is being read. The estimate of δ starts from the difference of neighbouring sync carriers (unambiguous until 100 % off) and is then refined with all of them.
-
-When a large error (over 0.04 %) is measured, the receiver does not wait for the next frame: the conversion is corrected at once, all receivers are reset and the last half second of microphone sound is converted again and given to them, so the frame that showed the error is read.
-
-A reading of the rate is trusted only when the repeats of S are alike to within 0.85 (a true S gives 1.0, noise at most about 0.8), the fit leaves little over, and the rate is within 1.5 %: with a few sync carriers and a wide search some rate always fits noise, and 3.8.4 moved the conversion by it (a phone tape of room noise gave 76 corrections of about ±1 %). A start is looked at further only when the alikeness is at least 0.85 on the handheld (0.65 on the phone).
+Why not from the start (S) of every frame, as 3.8.3 and 3.8.4 did: the repeat of S is also what a steady tone looks
+like, and the beeps and the tones of the test sound are steady tones. Live, the phone made 229 "corrections" from them,
+each up to 3 %, and read none of the handheld's silent frames, which it reads at 19-20 dB with no correction at all
+(tests/w3/livetest.sh, from the recording of that run). The receivers still look at the alikeness of the repeats of S,
+as a test of whether a start is a frame of ours, but they report no rate.
 
 ## 8. The self test and typing with tones
 
@@ -452,13 +455,40 @@ computed from them so that a frame read wrongly is never counted) or a frame of 
 
 | Part | From | Content |
 | --- | --- | --- |
-| H | handheld | after its test sound and loudness steps: 5 frames of tones (20.0 kHz at 32 ms a symbol, 20.0 kHz at 20 ms, 18.0 kHz at 32 ms, 20.0 kHz at 48 ms, 20.0 kHz at 32 ms again), 3 frames on SU (stage 1), 2 on FU (stage 2), then the end mark (stage 3) once on SU and once on FU |
-| P | phone | on the end mark (or 50 s after the handheld's test sound, if it never came): 3 frames on SD (stage 10), 3 on FD (stage 11), the end mark (stage 20) on SD and on FD |
-| report | handheld | on the end mark of P (or 9 s after the last frame of it): one frame of tones, document $FE: 1, run, SD mask, FD mask, end mark read, test frames read, the test sound's 1-12 kHz and 20.2-21.2 kHz levels in dB + 20 |
+| H | handheld | after its test sound and loudness steps: 5 frames of tones (20.0 kHz at 32 ms a symbol, 20.0 kHz at 20 ms, 18.0 kHz at 32 ms, 20.0 kHz at 48 ms, 20.0 kHz at 32 ms again), 3 frames on SU (stage 1), 2 on FU (stage 2), then the end mark as a frame of tones (document $FD, "STZ") |
+| P | phone | on the end mark (or 50 s after the handheld's test sound, if it never came): 3 frames of tones down (stage 12, 8 bytes, at loudness 50 %, 20 %, 8 %), 3 on SD (stage 10), 3 on FD (stage 11, at 35 %, 15 %, 6 %), the end mark (stage 20) as tones down |
+| report | handheld | on the end mark of P (or 9 s after the last frame of it): one frame of tones, document $FE, 20 bytes: version 2, run, SD mask, FD mask, end mark read, test frames read, the test sound's 1-12 kHz and 20.2-21.2 kHz levels in dB + 20, TD mask, microphone rate (2 bytes), speaker rate (2), loudest input in % of full scale, tone starts, tone headers, SD headers, FD headers, FD frames found |
 
 When the handheld started the test, the phone plays its own test sound and then P; when the phone started it, P
 follows H directly. The handheld's own pairing report (PAIR_REPORT) is sent after the report of the self test, so
 the two never talk over each other. The phone writes the result in words on its Pair card and in its diagnostics,
-and decides from the frames the handheld really read (not from the test sound's bands) whether its answers go on
-the silent or the fast channel. Nothing is ever sent for the handheld's part if the phone is an older version (the
+and decides from the frames the handheld really read (not from the test sound's bands) how its answers go: short
+messages (up to 60 bytes: confirmations, requests, taps) silently if the silent channel was read, otherwise as tones
+down; long ones silently, or on the fast channel if only that was read. The loudness of tones down and of the fast
+channel down is the middle one of the loudnesses that were read (the quieter of two): the handheld's microphone has no
+gain control and clips a phone that is too loud. Nothing is ever sent for the handheld's part if the phone is an older version (the
 handheld waits 70 s for any test frame, then gives up).
+
+## 9. Tones down (3.9.1)
+
+How the phone reaches the handheld without the modem, for what is short. The handheld's microphone and sound chip
+carry plain tones where the modem's frames were lost to distortion, packet spacing and the chip's rate.
+
+* 16 tones, 100 Hz apart, 17.8-19.3 kHz (inside the codec's flat range, which ends near 19.4 kHz): tone k is
+  (178 + k) x 100 Hz, k = 0..15 is a nibble. One tone a symbol, **1536 samples (30 ms)** at the modem rate, with
+  raised-cosine edges of 64 samples.
+* Frame: a preamble of 8 symbols, tones 2, 13, 2, 13, 9, 6, 9, 6; then the **coded header** (3 bytes + 6 check) and
+  the **coded message** of format 3 (section 2), each scrambled as on SD (from 2048 of the scrambling sequence), a
+  byte at a time, high nibble first. The message is at most 60 bytes; a 4 byte message sounds for about 1.6 s.
+* The sound is made at the modem rate and played like any other frame; the phone's microphone is ignored while it
+  sounds (the tones share the handheld's tone band).
+* Receiver (`handheld/wtone.pas`, whole numbers): for each tone the input (>> 3) is multiplied by a sine and a
+  cosine from tables of 512 steps and summed over blocks of 128 samples; running sums of the blocks give the energy
+  of every tone in any 12-block window at once. The preamble is looked for at every block (7 of 8 symbols must have
+  the right tone with more than half the window's energy); the best of the next 14 blocks fixes the frame's start;
+  each following symbol is the strongest tone of its window. The header and the message are then decoded and
+  checked as in format 3. No search for a rate is needed (a clock 100 ppm off moves a frame by 15 samples in
+  3 s). About 14 % of the Jornada's processor.
+* Tested (tests/w3/tonedown.sh): messages of 1, 4, 24 and 60 bytes at 50 % and 10 % loudness, directly and through the
+  room, the phone's 48,000 and the chip's 43,229.6, noise to 20 times the usual; 24 of 24 read, and a minute of
+  noise starts and reads nothing.

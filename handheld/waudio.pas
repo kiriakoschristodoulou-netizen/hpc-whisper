@@ -21,7 +21,7 @@ unit waudio;
 {$ifdef wince}{$define API:=cdecl}{$else}{$define API:=stdcall}{$endif}
 interface
 
-uses Windows, w3core, w3dsp, w3rx, w3tx, wlog;
+uses Windows, w3core, w3dsp, w3rx, w3tx, wlog, wtone;
 
 const
   OUT_RATE = 44100;
@@ -67,6 +67,7 @@ var
   OutErr, InErr: UnicodeString;
   OutPlaying: Boolean;                 { a turn of sound is going }
   InPeak: Integer;                     { loudest sample of the last half second }
+  PeakMax: Integer = 0;                { loudest sample since AudioTestMark }
   RateMeasured: Boolean;
   FramesOut, FramesIn, FramesBad: Integer;
   Overruns: Integer;                   { buffers not listened to: the processor fell behind }
@@ -107,6 +108,12 @@ procedure AudioAddMap(const m: TBitMap);             { a map for what the phone 
   returns how many were still there }
 function AudioRingCopy(pos: Int64; var x: array of SmallInt; n: Integer): Integer;
 function AudioRingPos: Int64;
+
+{ the self test: start counting what this handheld hears, and what it heard since (for its results) }
+{ a frame of tones down is coming in: the phone is speaking }
+function AudioTdBusy: Boolean;
+procedure AudioTestMark;
+procedure AudioTestInfo(var micRate, peakPct, tdStarts, tdHdrs, sdHdrs, fdHdrs, fdStarts: Integer);
 
 implementation
 
@@ -154,6 +161,7 @@ var
   Cur: TSamplesArr; CurPos: Integer;
   Sounding: Boolean;                   { main thread's view: a turn is going or about to }
   RxSD, RxFD: TRx;
+  RxTD: TTdRx;                         { tones down (wtone.pas) }
   Rs: TResampler;
   Got: array[0..RXQ - 1] of TGotMsg;
   GotHead, GotTail: Integer;
@@ -327,6 +335,43 @@ begin
     LeaveCriticalSection(Lock);
     c := 0; for k := 0 to Chans[r.ch].n - 1 do c := c + r.trainSnr10[k];
     Log('heard ' + LChan(r.ch) + ' TRAIN, average quality ' + LI(c div Chans[r.ch].n div 10) + ' dB');
+    Notify;
+  end;
+end;
+
+var TestBase: array[0..4] of Integer;
+
+function AudioTdBusy: Boolean;
+begin
+  Result := RxTD.state <> 0;
+end;
+
+procedure AudioTestMark;
+begin
+  PeakMax := 0;
+  TestBase[0] := RxTD.starts; TestBase[1] := RxTD.hdrs; TestBase[2] := RxSD.hdrs; TestBase[3] := RxFD.hdrs; TestBase[4] := RxFD.starts;
+end;
+
+procedure AudioTestInfo(var micRate, peakPct, tdStarts, tdHdrs, sdHdrs, fdHdrs, fdStarts: Integer);
+begin
+  micRate := Integer((InRate100 + 50) div 100);
+  peakPct := PeakMax * 100 div 32768;
+  tdStarts := RxTD.starts - TestBase[0]; tdHdrs := RxTD.hdrs - TestBase[1];
+  sdHdrs := RxSD.hdrs - TestBase[2]; fdHdrs := RxFD.hdrs - TestBase[3]; fdStarts := RxFD.starts - TestBase[4];
+end;
+
+procedure CollectTd;
+var m: TRxMsg;
+begin
+  while TdTake(RxTD, m) do
+  begin
+    EnterCriticalSection(Lock);
+    Got[GotHead].ch := TD_CH; Got[GotHead].msg := m;
+    GotHead := (GotHead + 1) mod RXQ;
+    if GotHead = GotTail then GotTail := (GotTail + 1) mod RXQ;
+    LeaveCriticalSection(Lock);
+    Inc(FramesIn);
+    Log('heard TD ' + LDescribe(m.typ, m.data, m.len) + ', quality ' + LI(m.snr10 div 10) + ' dB, ' + LI(m.fixed) + ' bytes corrected');
     Notify;
   end;
 end;
@@ -515,7 +560,9 @@ begin
   if r.cfoN = AfcSeen[i] then Exit;
   AfcSeen[i] := r.cfoN;
   if (r.cfoQ < 80) or (r.cfoCoh < 85) or (Abs(r.cfoPpm) > 15000) then Exit;
-  AfcPpm := r.cfoPpm; AfcPending := True;
+  { (3.9.1) only noted: the rate is the microphone's own, measured against the clock and by Pair's beeps. A reading from a
+    frame start is no better than a guess, and steady tones had driven it to its limits. }
+  AfcPpm := r.cfoPpm;
   Log(LChan(r.ch) + ' sync heard: the carriers are ' + LI(r.cfoPpm) + ' ppm off (quality ' + LI(r.cfoQ) + ', alike ' + LI(r.cfoCoh) + ')');
 end;
 
@@ -556,6 +603,7 @@ var
   StFastBufs: Integer = 0; PrevFast: Boolean = False;
   FastPauseUntil: LongWord = 0; FastWinAt: LongWord = 0; FastMs: Integer = 0;
   PrevHdrs, PrevFails, PrevTrigs, PrevStarts, PrevFrames, PrevGated: array[0..1] of Integer;
+  PrevTd: array[0..3] of Integer;
   LastHdrFile: array[0..1] of Boolean;
 
 procedure LogRx(var r: TRx; i: Integer);
@@ -585,10 +633,11 @@ begin
       + LI(StBusy div StBufs) + '% busy (worst buffer ' + LI(StMax) + ' ms of 100), skipped ' + LI(StBehind)
       + ', fast receiver on for ' + LI(StFastBufs) + ', loudest ' + LI(InPeak * 100 div 32768) + '%; SD seen '
       + LI(RxSD.trigs - PrevTrigs[0]) + ' found ' + LI(RxSD.starts - PrevStarts[0]) + ' read ' + LI(RxSD.frames - PrevFrames[0])
-      + ', not ours ' + LI(RxSD.gated - PrevGated[0]) + '; FD seen ' + LI(RxFD.trigs - PrevTrigs[1]) + ' found ' + LI(RxFD.starts - PrevStarts[1]) + ' read ' + LI(RxFD.frames - PrevFrames[1]) + ', not ours ' + LI(RxFD.gated - PrevGated[1]));
+      + ', not ours ' + LI(RxSD.gated - PrevGated[0]) + '; TD starts ' + LI(RxTD.starts - PrevTd[0]) + ' headers ' + LI(RxTD.hdrs - PrevTd[1]) + ' read ' + LI(RxTD.frames - PrevTd[2]) + ' lost ' + LI(RxTD.fails - PrevTd[3]) + '; FD seen ' + LI(RxFD.trigs - PrevTrigs[1]) + ' found ' + LI(RxFD.starts - PrevStarts[1]) + ' read ' + LI(RxFD.frames - PrevFrames[1]) + ', not ours ' + LI(RxFD.gated - PrevGated[1]));
   PrevTrigs[0] := RxSD.trigs; PrevStarts[0] := RxSD.starts; PrevFrames[0] := RxSD.frames;
   PrevTrigs[1] := RxFD.trigs; PrevStarts[1] := RxFD.starts; PrevFrames[1] := RxFD.frames;
   PrevGated[0] := RxSD.gated; PrevGated[1] := RxFD.gated;
+  PrevTd[0] := RxTD.starts; PrevTd[1] := RxTD.hdrs; PrevTd[2] := RxTD.frames; PrevTd[3] := RxTD.fails;
   StAt := now; StBufs := 0; StBusy := 0; StMax := 0; StBehind := 0; StFastBufs := 0;
 end;
 
@@ -692,7 +741,7 @@ begin
     end;
   end;
   { loudness for the screen }
-  for i := 0 to n - 1 do begin v := Abs(InBuf[k][i]); if v > Pk then Pk := v; end;
+  for i := 0 to n - 1 do begin v := Abs(InBuf[k][i]); if v > Pk then Pk := v; if v > PeakMax then PeakMax := v; end;
   if now - PeakAt >= 500 then begin InPeak := Pk; Pk := 0; PeakAt := now; Notify; end;
   { the ring and the marker watch }
   EnterCriticalSection(Lock);
@@ -710,6 +759,7 @@ begin
   begin
     t1 := GetTickCount;
     i := RsProcess(Rs, InBuf[k], 0, n, Conv, 0);
+    TdPush(RxTD, Conv, 0, i); CollectTd;
     { one down channel at a time: while a frame is being read on the fast one, the silent receiver does not look (it
       would use a sixth of the processor), and the other way round }
     if not RxBusy(RxFD) then begin RxPush(RxSD, Conv, 0, i); Collect(RxSD); AfcCheck(RxSD, 0); end;
@@ -966,7 +1016,7 @@ var rtid: TThreadID;
 begin
   if not InitDone then begin InitializeCriticalSection(Lock); InitDone := True; end;
   Quit := False;
-  RxInit(RxSD, CH_SD); RxInit(RxFD, CH_FD);
+  RxInit(RxSD, CH_SD); RxInit(RxFD, CH_FD); TdInit(RxTD);
   if InRate100 <= 0 then InRate100 := Int64(IN_RATE) * 100;     { not known yet: what it claims }
   RsInit(Rs, InRate100, Int64(MRATE) * 100, True);
   LastSet := InRate100;

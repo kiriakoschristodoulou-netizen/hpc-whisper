@@ -2,13 +2,13 @@ program cost;
 { What listening costs the Jornada's processor, counted in ARM instructions (ARMv4 code, as for the
   device) under an emulator: run as  cost MODE TENTHS-OF-A-SECOND TONE  and count the instructions; the difference
   between modes is each part's cost. Mode 0: making the test sound only; 1: + the rate converter;
-  2: + the silent receiver; 3: + the fast receiver; 6 minus 16: making a text frame;
+  2: + the silent receiver; 3: + the fast receiver; 8: + the tone receiver (tones down); 6 minus 16: making a text frame;
   7 minus 17: the pairing analysis; 9: the probe's integer step, 1,000,000 times
   (the device did 6,556,291 a second: this calibrates instructions a second). }
 {$mode objfpc}{$H+}
-uses w3core, w3dsp, w3rx, w3tx, wpair;
+uses w3core, w3dsp, w3rx, w3tx, wpair, wtone;
 var re, im: TCpx;
-    x, y: array of SmallInt; rs: TResampler; r: TRx; i, n, k, mode, secs, code: Integer;
+    x, y: array of SmallInt; rs: TResampler; r: TRx; td: TTdRx; i, n, k, mode, secs, code: Integer;
     a: array[0..255] of LongInt; s: LongInt; seed: LongWord; tone: Integer;
     m: TBitMap; msg: array[0..39] of Byte; fr: TSamples; pat: TSmallArr; pr: TPairResult; pm: array of Byte;
 function Rnd: Integer; begin seed := seed * 1103515245 + 12345; Result := Integer((seed shr 16) and 2047) - 1024; end;
@@ -78,6 +78,12 @@ begin
   n := 0;
   for i := 0 to secs - 1 do n := n + RsProcess(rs, x, i * 4410, 4410, y, n);
   if mode = 1 then Exit;
+  if mode = 8 then
+  begin
+    TdInit(td);
+    for i := 0 to n div 4096 - 1 do TdPush(td, y, i * 4096, 4096);
+    Exit;
+  end;
   if mode = 2 then RxInit(r, CH_SD) else RxInit(r, CH_FD);
   for i := 0 to n div 4096 - 1 do RxPush(r, y, i * 4096, 4096);
   WriteLn('frames ', r.frames, ' fails ', r.fails);

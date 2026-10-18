@@ -8,10 +8,10 @@ $F -Tlinux -CpARMV4 -CaEABI -CfSOFT -XParm-linux-gnueabi- -Fu/root/j720/fpcsrc/r
 ins() { qemu-arm -one-insn-per-tb -d nochain,exec -D /dev/stdout ./cost "$@" | grep -c "^Trace"; }
 T=${TENTHS:-3}; TONE=${TONE:-0}
 s9=$(ins 9 0 0); s0=$(ins 0 0 0)
-b0=$(ins 0 $T $TONE); b1=$(ins 1 $T $TONE); b2=$(ins 2 $T $TONE); b3=$(ins 3 $T $TONE)
+b0=$(ins 0 $T $TONE); b1=$(ins 1 $T $TONE); b2=$(ins 2 $T $TONE); b3=$(ins 3 $T $TONE); b8=$(ins 8 $T $TONE)
 python3 - <<P
 ips=($s9-$s0)/1e6*6556291; s=$T/10
-for name,a,b in [("rate converter",$b0,$b1),("silent receiver",$b1,$b2),("fast receiver",$b1,$b3)]:
+for name,a,b in [("rate converter",$b0,$b1),("silent receiver",$b1,$b2),("fast receiver",$b1,$b3),("tone receiver",$b1,$b8)]:
     print(f"{name:16s} {(b-a)/s/1e6:6.1f} M instructions a second = {100*(b-a)/s/ips:5.0f}% of the Jornada")
 print(f"(the Jornada does about {ips/1e6:.0f} M instructions a second: the probe's integer step is {($s9-$s0)/1e6:.1f} instructions)")
 P
