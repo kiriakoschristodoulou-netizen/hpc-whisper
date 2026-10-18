@@ -114,6 +114,9 @@ function AudioRingPos: Int64;
 function AudioTdBusy: Boolean;
 procedure AudioTestMark;
 procedure AudioTestInfo(var micRate, peakPct, tdStarts, tdHdrs, sdHdrs, fdHdrs, fdStarts: Integer);
+{ how this handheld is doing (3.9.2): the processor's share used and the share of the sound heard in the last 5 s, where the
+  microphone's rate came from (0 claimed, 1 clock, 2 Pair, 3 the phone's sound), whether it is trusted, pilots of tones heard }
+procedure AudioHealth(var busyPct, heardPct, rateSource, pilots: Integer; var trusted: Boolean);
 
 implementation
 
@@ -339,7 +342,8 @@ begin
   end;
 end;
 
-var TestBase: array[0..4] of Integer;
+var TestBase: array[0..4] of Integer; TestBasePilots: Integer = 0;
+    LastBusyPct: Integer = 0; HeardPct: Integer = 100;
 
 function AudioTdBusy: Boolean;
 begin
@@ -349,6 +353,7 @@ end;
 procedure AudioTestMark;
 begin
   PeakMax := 0;
+  TestBasePilots := RxTD.pilots;
   TestBase[0] := RxTD.starts; TestBase[1] := RxTD.hdrs; TestBase[2] := RxSD.hdrs; TestBase[3] := RxFD.hdrs; TestBase[4] := RxFD.starts;
 end;
 
@@ -358,6 +363,11 @@ begin
   peakPct := PeakMax * 100 div 32768;
   tdStarts := RxTD.starts - TestBase[0]; tdHdrs := RxTD.hdrs - TestBase[1];
   sdHdrs := RxSD.hdrs - TestBase[2]; fdHdrs := RxFD.hdrs - TestBase[3]; fdStarts := RxFD.starts - TestBase[4];
+end;
+
+procedure AudioHealth(var busyPct, heardPct, rateSource, pilots: Integer; var trusted: Boolean);
+begin
+  busyPct := LastBusyPct; heardPct := HeardPct; rateSource := RateSource; pilots := RxTD.pilots - TestBasePilots; trusted := RateTrusted;
 end;
 
 procedure CollectTd;
@@ -546,12 +556,49 @@ begin
   Log('microphone rate now ' + LI(InRate100 div 100) + '.' + LI((InRate100 mod 100) div 10) + ' (over ' + LI(spanMs div 1000) + ' s of listening)');
 end;
 
-{ Pair measured the rate against the phone's clock: it wins, whatever was measured }
+var CalReq: LongInt = 0;               { a rate (x 100) to take up, asked for by the main thread, done by the listening thread }
+
+{ Pair measured the rate against the phone's clock: it wins, whatever was measured (the converter belongs to the
+  listening thread, which makes the change at its next buffer) }
 procedure AudioCalibrate(r100: Int64);
 begin
+  CalReq := LongInt(r100);
+end;
+
+procedure TakeCalibration;
+var r100: Int64;
+begin
+  if CalReq = 0 then Exit;
+  r100 := CalReq; CalReq := 0;
   InRate100 := r100; RateSource := 2; RateOdd := 0; RateTrusted := True;
-  Log('microphone rate calibrated by Pair: ' + LI(r100 div 100));
+  Log('microphone rate calibrated by Pair: ' + LI(r100 div 100) + '.' + LI((r100 mod 100) div 10));
   LastSet := r100; RsSetRates(Rs, InRate100, Int64(MRATE) * 100);
+end;
+
+{ A frame of tones from the phone was read (3.9.2): the pitch of its pilot said how far the sound was stretched
+  (RxTD.epsPpm, + = too high, so the rate we converted from was that much too high). A good frame is as good a measure as
+  Pair's beeps and keeps the rate right while the days go by (temperature); the first one makes it trusted. }
+procedure TdTuneRate;
+var nw: Int64; e: Integer;
+begin
+  if not RxTD.gotEps then Exit;
+  RxTD.gotEps := False;
+  e := RxTD.epsPpm;
+  if Abs(e) > 40000 then Exit;
+  Inc(AfcN);                                      { the phone's sound sets the rate now: the clock does not }
+  if (Abs(e) >= 40) or not RateTrusted then
+  begin
+    nw := InRate100 * 1000000 div (1000000 + e);
+    Log('microphone rate from the pilot of the phone''s tones: ' + LI(nw div 100) + '.' + LI((nw mod 100) div 10) + ' (they sounded ' + LI(e) + ' ppm too high)');
+    InRate100 := nw; LastSet := nw; RsSetRates(Rs, InRate100, Int64(MRATE) * 100);
+  end;
+  if RateSource < 3 then RateSource := 3;
+  RateOdd := 0;
+  if not RateTrusted then
+  begin
+    RateTrusted := True;
+    Log('microphone rate settled (the pilot of a frame of tones)');
+  end;
 end;
 
 { the newest measurement of a receiver, kept if it was a clean one }
@@ -600,7 +647,7 @@ end;
 var
   { the diagnostics log: how busy listening keeps the processor, over each 5 s }
   StAt: LongWord = 0; StBufs: Integer = 0; StBusy: Integer = 0; StMax: Integer = 0; StBehind: Integer = 0;
-  StFastBufs: Integer = 0; PrevFast: Boolean = False;
+  StFastBufs: Integer = 0; PrevFast: Boolean = False; StSamples: Int64 = 0;
   FastPauseUntil: LongWord = 0; FastWinAt: LongWord = 0; FastMs: Integer = 0;
   PrevHdrs, PrevFails, PrevTrigs, PrevStarts, PrevFrames, PrevGated: array[0..1] of Integer;
   PrevTd: array[0..3] of Integer;
@@ -627,18 +674,30 @@ begin
 end;
 
 procedure LogStats(now: LongWord);
+var expect: Int64;
 begin
+  { the share of the sound that was really heard (3.9.1: 40 % was lost with "skipped 0": the driver drops sound when the
+    program is too slow to take it back) }
+  expect := Int64(now - StAt) * InRate100 div 100000;
+  if (expect > 0) and (InRate100 > 0) then HeardPct := Integer(StSamples * 100 div expect) else HeardPct := 100;
+  if HeardPct > 100 then HeardPct := 100;
+  if (HeardPct < 90) and (LongInt(now - FastPauseUntil) >= 0) then
+  begin
+    FastPauseUntil := now + 10000; Inc(FastPauses);
+    Log('fast receiver paused for 10 s: only ' + LI(HeardPct) + ' % of the sound was heard (the processor is too busy)');
+  end;
+  if StBufs > 0 then LastBusyPct := StBusy div StBufs;
   if StBufs > 0 then
     Log('listening ' + LI((now - StAt) div 100 div 10) + '.' + LI((now - StAt) div 100 mod 10) + ' s: ' + LI(StBufs) + ' buffers, processor '
       + LI(StBusy div StBufs) + '% busy (worst buffer ' + LI(StMax) + ' ms of 100), skipped ' + LI(StBehind)
-      + ', fast receiver on for ' + LI(StFastBufs) + ', loudest ' + LI(InPeak * 100 div 32768) + '%; SD seen '
+      + ', heard ' + LI(HeardPct) + ' % of the sound, fast receiver on for ' + LI(StFastBufs) + ', loudest ' + LI(InPeak * 100 div 32768) + '%; SD seen '
       + LI(RxSD.trigs - PrevTrigs[0]) + ' found ' + LI(RxSD.starts - PrevStarts[0]) + ' read ' + LI(RxSD.frames - PrevFrames[0])
       + ', not ours ' + LI(RxSD.gated - PrevGated[0]) + '; TD starts ' + LI(RxTD.starts - PrevTd[0]) + ' headers ' + LI(RxTD.hdrs - PrevTd[1]) + ' read ' + LI(RxTD.frames - PrevTd[2]) + ' lost ' + LI(RxTD.fails - PrevTd[3]) + '; FD seen ' + LI(RxFD.trigs - PrevTrigs[1]) + ' found ' + LI(RxFD.starts - PrevStarts[1]) + ' read ' + LI(RxFD.frames - PrevFrames[1]) + ', not ours ' + LI(RxFD.gated - PrevGated[1]));
   PrevTrigs[0] := RxSD.trigs; PrevStarts[0] := RxSD.starts; PrevFrames[0] := RxSD.frames;
   PrevTrigs[1] := RxFD.trigs; PrevStarts[1] := RxFD.starts; PrevFrames[1] := RxFD.frames;
   PrevGated[0] := RxSD.gated; PrevGated[1] := RxFD.gated;
   PrevTd[0] := RxTD.starts; PrevTd[1] := RxTD.hdrs; PrevTd[2] := RxTD.frames; PrevTd[3] := RxTD.fails;
-  StAt := now; StBufs := 0; StBusy := 0; StMax := 0; StBehind := 0; StFastBufs := 0;
+  StAt := now; StBufs := 0; StBusy := 0; StMax := 0; StBehind := 0; StFastBufs := 0; StSamples := 0;
 end;
 
 var
@@ -740,6 +799,7 @@ begin
       else RateOdd := r100;
     end;
   end;
+  Inc(StSamples, n);
   { loudness for the screen }
   for i := 0 to n - 1 do begin v := Abs(InBuf[k][i]); if v > Pk then Pk := v; if v > PeakMax then PeakMax := v; end;
   if now - PeakAt >= 500 then begin InPeak := Pk; Pk := 0; PeakAt := now; Notify; end;
@@ -758,8 +818,10 @@ begin
   if not behind then
   begin
     t1 := GetTickCount;
+    TakeCalibration;
+    RxWide := not RateTrusted;
     i := RsProcess(Rs, InBuf[k], 0, n, Conv, 0);
-    TdPush(RxTD, Conv, 0, i); CollectTd;
+    TdPush(RxTD, Conv, 0, i); CollectTd; TdTuneRate;
     { one down channel at a time: while a frame is being read on the fast one, the silent receiver does not look (it
       would use a sixth of the processor), and the other way round }
     if not RxBusy(RxFD) then begin RxPush(RxSD, Conv, 0, i); Collect(RxSD); AfcCheck(RxSD, 0); end;

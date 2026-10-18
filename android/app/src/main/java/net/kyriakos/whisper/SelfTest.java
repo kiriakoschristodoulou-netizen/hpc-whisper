@@ -18,7 +18,7 @@ import java.util.Locale;
 public final class SelfTest {
     public static final int TYPE = 0x35, DOC_TONES = 0xFD, DOC_REPORT = 0xFE;
     public static final int ST_SU = 1, ST_FU = 2, ST_END_H = 3, ST_SD = 10, ST_FD = 11, ST_TD = 12, ST_END_P = 20;
-    public static final int NTONE = 5, NSU = 3, NFU = 2, NSD = 3, NFD = 3, NTD = 3, LEN = 24, TD_LEN = 8, REPORT_LEN = 20;
+    public static final int NTONE = 5, NSU = 3, NFU = 2, NSD = 3, NFD = 3, NTD = 3, LEN = 24, TD_LEN = 8, REPORT_LEN = 20, REPORT3_LEN = 24;
     /** The loudnesses the phone's frames of tones down and fast down are played at (frame 0, 1, 2). */
     public static final float[] TD_LEVELS = {0.5f, 0.2f, 0.08f}, FD_LEVELS = {0.35f, 0.15f, 0.06f};
     public static final int[] TONE_HZ = {20000, 20000, 18000, 20000, 20000};
@@ -35,11 +35,15 @@ public final class SelfTest {
     public int sdMask, fdMask, tdMask, framesHeard, lowDb, highDb;
     public int micRate, spkRate, peakPct, tdStarts, tdHdrs, sdHdrs, fdHdrs, fdStarts;
     public int reportVersion;
+    /** (report version 3) how the handheld was doing */
+    public int busyPct, heardPct, rateSource, pilots;
+    public boolean rateTrusted, handheldHeardNothing;
 
     public void begin() {
         run = -1; toneMask = suMask = fuMask = 0; endH = false; suSnr = fuSnr = 0; suN = fuN = 0;
         reported = false; endPHeard = false; sdMask = fdMask = tdMask = framesHeard = 0; lowDb = highDb = 0;
         micRate = spkRate = peakPct = tdStarts = tdHdrs = sdHdrs = fdHdrs = fdStarts = 0; reportVersion = 0;
+        busyPct = heardPct = rateSource = pilots = 0; rateTrusted = handheldHeardNothing = false;
     }
 
     /** A test frame's payload: run, stage, number, and a fill both sides can recompute. */
@@ -82,15 +86,19 @@ public final class SelfTest {
         }
         if (f.doc == DOC_REPORT) {
             byte[] b = f.bytes;
-            if (b != null && b.length >= 9 && (b[0] == 1 || (b[0] == 2 && b.length >= REPORT_LEN))) {
+            if (b != null && b.length >= 9 && (b[0] == 1 || (b[0] == 2 && b.length >= REPORT_LEN) || (b[0] == 3 && b.length >= REPORT3_LEN))) {
                 reported = true; reportVersion = b[0];
                 sdMask = b[2] & 255; fdMask = b[3] & 255; endPHeard = b[4] != 0; framesHeard = b[5] & 255;
                 lowDb = (b[6] & 255) - 20; highDb = (b[7] & 255) - 20;
-                if (b[0] == 2) {
+                if (b[0] >= 2) {
                     tdMask = b[8] & 255;
                     micRate = (b[9] & 255) << 8 | (b[10] & 255); spkRate = (b[11] & 255) << 8 | (b[12] & 255);
                     peakPct = b[13] & 255; tdStarts = b[14] & 255; tdHdrs = b[15] & 255;
                     sdHdrs = b[16] & 255; fdHdrs = b[17] & 255; fdStarts = b[18] & 255;
+                }
+                if (b[0] >= 3) {
+                    rateTrusted = (b[19] & 1) != 0; handheldHeardNothing = (b[19] & 2) != 0;
+                    busyPct = b[20] & 255; heardPct = b[21] & 255; rateSource = b[22] & 255; pilots = b[23] & 255;
                 }
             }
             return true;
@@ -142,6 +150,11 @@ public final class SelfTest {
             if (reportVersion >= 2)
                 s.add(String.format(Locale.US, "  the handheld's own hearing: microphone %d samples/s, speaker %d, loudest input %d %% of full scale; tones started %d, headers %d; "
                         + "silent headers %d; fast frames found %d, headers %d", micRate, spkRate, peakPct, tdStarts, tdHdrs, sdHdrs, fdStarts, fdHdrs));
+            if (reportVersion >= 3) {
+                String[] src = {"what the sound chip claims", "timed against the clock", "this phone's test sound", "this phone's sound"};
+                s.add(String.format(Locale.US, "  the handheld's load: processor %d %% busy, %d %% of the sound heard; microphone rate from %s (%s); %d tone pilots heard",
+                        busyPct, heardPct, src[Math.min(rateSource, 3)], rateTrusted ? "trusted" : "not trusted yet", pilots));
+            }
         } else s.add("  not reported yet");
         s.add("So:");
         if (heardNothing()) s.add("  Nothing of the handheld's part was heard. Is Whisper Tools running on it, beside the phone?");
@@ -150,7 +163,8 @@ public final class SelfTest {
             else s.add("  Even the tones did not get through well: the handheld's volume (Tones volume in Settings) or the distance.");
             if (suOk()) s.add("  The silent format reaches this phone: typing can be silent."); else s.add("  The silent format does not reach this phone: typing stays on tones" + (fuOk() ? " (the fast format does reach it)." : "."));
         }
-        if (reported) {
+        if (reported && handheldHeardNothing) s.add("  The handheld heard nothing of this phone's part (is this phone's speaker on, and the volume up?).");
+        else if (reported) {
             if (sdOk()) s.add("  This phone can answer silently.");
             else if (tdOk()) s.add("  The handheld hears this phone's tones: confirmations and requests go as tones" + (fdOk() ? "; files come down the fast channel." : "; files cannot come down yet."));
             else if (fdOk()) s.add("  The handheld hears this phone only on the fast channel: answers go there (a soft hiss).");

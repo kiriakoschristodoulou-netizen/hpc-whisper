@@ -22,7 +22,7 @@ program WhisperTools;
 uses Windows, w3core, w3dsp, w3tx, w3rx, waudio, wtext, wfile, wscreen, wwav, wimg, winf, wmodem, wpair, wtest, wlog, wtone;
 
 const
-  VERSION = '3.9.1';
+  VERSION = '3.9.2';
   CREATOR = 'Kyriakos Christodoulou';
   CLSNAME: UnicodeString = 'WhisperTools';
   APPNAME: UnicodeString = 'Whisper Tools';
@@ -653,6 +653,8 @@ begin
   Inc(AnswerN);
 end;
 
+var AnswerHoldUntil: LongWord = 0;   { (3.9.2) our answers wait until this time: the phone's MAP to our TRAIN comes first }
+
 procedure SayHello(reply: Boolean);
 var p: array[0..3] of Byte;
 begin
@@ -945,6 +947,7 @@ begin
   SayHello(False);
   { the fast channel up: TRAIN, the phone answers with a map; the fast channel down: the phone sends TRAIN when asked }
   SendMsg(CH_FU, T_TRAIN, p, 0);
+  AnswerHoldUntil := GetTickCount + 5000;           { the phone answers the TRAIN with a MAP: let it be heard before HELLO and CHECK }
   p[0] := CH_FD;
   Answer(T_CHECK, p, 1);
   CheckState := 'Checking: a soft hiss from each side, for a few seconds...';
@@ -1004,6 +1007,7 @@ begin
       begin
         FuMap := m; HaveFuMap := True;
         FuSpeed := SpeedText(m);
+        if LongInt(AnswerHoldUntil - GetTickCount) > 200 then AnswerHoldUntil := GetTickCount + 200;
       end;
     T_HELLO:
       begin
@@ -1417,23 +1421,24 @@ end;
 
 { once the phone has played its part (or gone quiet), the handheld tells it what it read, in tones }
 procedure TestReportStep(now: LongWord);
-var b: array[0..REPORT_LEN - 1] of Byte; x: TSamples; n, lo, hi: Integer; due: Boolean; info: TReportInfo;
+var b: array[0..REPORT_LEN - 1] of Byte; x: TSamples; n, lo, hi: Integer; due, nothing: Boolean; info: TReportInfo;
 begin
+  nothing := False;
   if (not TestActive) or TestReported or (TestStage < NPIECES) or (AudioQueued > 0) then Exit;
   due := False;
-  if TestTally.endP and (LongInt(now - TestTally.endAt) >= 400) then due := True
+  if TestTally.endP and (LongInt(now - TestTally.endAt) >= 1500) then due := True
   else if (TestTally.frames > 0) and (LongInt(now - TestTally.lastAt) >= 9000) then due := True
   else if (TestTally.frames = 0) and (LongInt(now - TestPlayedAt) >= 70000) then
   begin
-    TestReported := True; TestActive := False;
-    Log('self test: nothing was heard of the phone''s part (an older Whisper Tools on the phone, or it did not hear the end of this handheld''s part)');
-    PairNote := 'The phone did not play its part of the self test.';
-    Exit;
+    due := True; nothing := True;
+    Log('self test: nothing was heard of the phone''s part (an older Whisper Tools on the phone, or it did not hear the end of this handheld''s part); telling the phone so');
   end;
   if not due then Exit;
   lo := 0; hi := 0;
   if HaveMine then begin lo := PairBand10(PairMine, 1000, 12000) div 10; hi := PairBand10(PairMine, 20200, 21200) div 10; end;
   AudioTestInfo(info.micRate, info.peakPct, info.tdStarts, info.tdHdrs, info.sdHdrs, info.fdHdrs, info.fdStarts);
+  AudioHealth(info.busyPct, info.heardPct, info.rateSource, info.pilots, info.rateTrusted);
+  info.nothing := nothing;
   info.spkRate := TxRate;
   n := ReportMake(TestTally, lo, hi, info, b);
   ReportSound(b, n, TxRate, Volume, x);
@@ -1441,7 +1446,8 @@ begin
   TestReported := True; TestActive := False;
   Log('self test: heard from the phone: tones down ' + LI(TestTally.tdMask) + ' (of ' + LI((1 shl NTD) - 1) + '), silent down ' + LI(TestTally.sdMask) + ' (of ' + LI((1 shl NSD) - 1) + '), fast down ' + LI(TestTally.fdMask)
     + ' (of ' + LI((1 shl NFD) - 1) + '), end mark ' + LI(Ord(TestTally.endP)) + '; told the phone');
-  PairNote := 'Self test done. The results are on the phone.';
+  if nothing then PairNote := 'The phone did not play its part of the self test.'
+  else PairNote := 'Self test done. The results are on the phone.';
 end;
 
 procedure PairStep(now: LongWord);
@@ -1454,10 +1460,17 @@ begin
     pos := PairMarkPos - Int64(700) * IN_RATE div 1000;
     SetLength(x, Int64(4200) * IN_RATE div 1000);
     n := AudioRingCopy(pos, x, Length(x));
-    if not PairAnalyze(x, n, IN_RATE, PairMine) then Log('pair: the marker was not the phone''s test sound (or it could not be read)')
+    if not PairAnalyze(x, n, IN_RATE, PairMine) then Log('pair: the marker was not the phone''s test sound (or it could not be read): ' + PairWhy)
     else
     begin
       Log('pair: the phone''s test sound read, scale ' + LI(PairMine.scale10k) + ', its silent band ' + LI(PairBand10(PairMine, 20000, 21200) div 10) + ' dB');
+      { the pitch of its 2 kHz markers says how fast this microphone really runs (the phone's clock is right to 0.004 %) }
+      if PairMine.pitchOk then
+      begin
+        Log('pair: the markers sound ' + LI(PairMine.pitchPpm) + ' ppm too high: the microphone runs at ' + LI(Int64(IN_RATE) * 1000000 div (1000000 + PairMine.pitchPpm)) + ' samples/s');
+        AudioCalibrate(Int64(IN_RATE) * 100 * 1000000 div (1000000 + PairMine.pitchPpm));
+      end
+      else Log('pair: the pitch of the markers could not be measured (too much noise?); the microphone''s rate is left as it is');
       HaveMine := True;
       { the phone's silent band too weak here: it will answer on the fast channel, so that one stays on }
       FastAlways := PairBand10(PairMine, 20000, 21200) < 120;
@@ -1566,7 +1579,7 @@ begin
     Exit;
   end;
   { answers first, once the phone has been quiet on the silent channel for a moment }
-  if (AnswerN > 0) and (now - PhoneHeardSD >= 150) and not AudioTdBusy then
+  if (AnswerN > 0) and (now - PhoneHeardSD >= 150) and not AudioTdBusy and (LongInt(now - AnswerHoldUntil) >= 0) then
   begin
     SendMsg(Answers[0].ch, Answers[0].typ, Answers[0].p, Answers[0].n);
     for i := 0 to AnswerN - 2 do Answers[i] := Answers[i + 1];

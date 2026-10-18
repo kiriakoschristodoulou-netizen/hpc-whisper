@@ -38,11 +38,15 @@ type
     aAt: Integer;                             { where marker A starts, in samples }
     ladder: Integer;                          { the loudness ladder step the other side should use, -1 = none }
     ladderQ: Integer;                         { how clean it arrived (dB) }
+    pitchOk: Boolean;                         { the markers' pitch was measured (3.9.2) }
+    pitchPpm: Integer;                        { how much higher than 2 kHz the markers sound, ppm: the sound card's rate is that much slower than it claims }
   end;
   TSmallArr = array of SmallInt;
 
 { the pattern at this rate (Hz); peak loudness: markers half of full scale, tones a third }
 function PairPattern(rate: Integer): TSmallArr;
+{ why the last analysis found nothing (for the log) }
+var PairWhy: string = '';
 { looks for the pattern in x[0..n-1] (recorded at rate, as the sound card says) }
 function PairAnalyze(const x: array of SmallInt; n, rate: Integer; var res: TPairResult): Boolean;
 function PairReportMake(const res: TPairResult; var b: array of Byte): Integer;
@@ -57,6 +61,11 @@ implementation
 uses w3dsp, w3core, w3tx;
 
 const Q = 16384;
+
+function NS(v: Int64): string;
+begin
+  Str(v, Result);
+end;
 
 { cos of a (1/65536 of a turn), Q14, between the table's 4096 points }
 function CosF(a: LongInt): LongInt;
@@ -162,17 +171,84 @@ begin
   end;
 end;
 
+{ The pitch of the marker that starts at sample `at`: the times the sound (without its constant part) rises through zero are
+  fitted by a straight line, one period apart. A tone of 2 kHz at 44,100 has 22 samples to a period and 85 periods are used:
+  a few ppm (3.9.2). The recording's rate against the phone's clock is this, much finer than the markers' spacing can say. }
+function MarkerPitch(const x: array of SmallInt; n, rate, at: Integer; out ppm: Integer): Boolean;
+const MAXC = 160;
+var i, a, b, k, cnt, bad, c1: Integer; v0, y0, y1, y2, a1, a2: Int64; t: array[0..MAXC - 1] of Int64;
+    sx, sy, sxx, sxy, den, slope, icpt, r, worst: Int64;
+begin
+  Result := False; ppm := 0;
+  a := at + Integer(Int64(40) * rate div 1000);
+  b := at + Integer(Int64(PAIR_MARK_MS - 40) * rate div 1000);
+  if (at < 8) or (b + 8 >= n) or (b - a < rate div 10) then Exit;
+  { a narrow band-pass round 2 kHz first (two poles at radius 0.97, a zero at 0 Hz: it also takes away the microphone's constant
+    offset and the room's noise): the noise would otherwise move the times the sound crosses zero }
+  c1 := CosF(Int64(PAIR_MARK_HZ) * 65536 div rate);
+  a1 := -(Int64(2) * 15888 * c1) div 16384;              { -2 x 0.97 cos w, Q14 }
+  a2 := 15417;                                            { 0.97^2, Q14 }
+  y1 := 0; y2 := 0; v0 := 0; cnt := 0;
+  for i := at to b do
+  begin
+    y0 := ((Int64(x[i]) - x[i - 2]) * 1024 - a1 * y1 - a2 * y2) div 16384;
+    y2 := y1; y1 := y0;
+    if i >= a then
+    begin
+      if (v0 < 0) and (y0 >= 0) and (cnt < MAXC) then
+      begin
+        t[cnt] := Int64(i - 1) * 4096 + (-v0 * 4096) div (y0 - v0);        { the crossing, in 1/4096 sample }
+        Inc(cnt);
+      end;
+    end;
+    v0 := y0;
+  end;
+  if cnt < 40 then Exit;
+  { the line t = icpt + slope k }
+  sx := 0; sy := 0; sxx := 0; sxy := 0;
+  for k := 0 to cnt - 1 do
+  begin
+    sx := sx + k; sy := sy + (t[k] - t[0]); sxx := sxx + Int64(k) * k; sxy := sxy + Int64(k) * (t[k] - t[0]);
+  end;
+  den := cnt * sxx - sx * sx;
+  if den = 0 then Exit;
+  slope := (cnt * sxy - sx * sy) * 1024 div den;                          { x 1024 }
+  icpt := (sy * 1024 - slope * sx) div cnt;                               { x 1024 }
+  worst := 0; bad := 0;
+  for k := 0 to cnt - 1 do
+  begin
+    r := (t[k] - t[0]) * 1024 - icpt - slope * k;
+    if r < 0 then r := -r;
+    if r > worst then worst := r;
+    if r > Int64(4096) * 1024 * 3 div 10 then Inc(bad);                   { more than 0.3 sample off the line }
+  end;
+  if bad > cnt div 10 then Exit;                                           { not a clean tone }
+  { period in samples x 4096 = slope / 1024; the tone's pitch against 2 kHz: (rate / period) / 2000 }
+  { ppm = 10^6 (rate x 4096 x 1024 / (slope x 2000) - 1) }
+  if slope < 1 then Exit;
+  ppm := Integer((Int64(rate) * 4096 * 1024 * 1000000) div (slope * PAIR_MARK_HZ) - 1000000);
+  if (ppm < -50000) or (ppm > 50000) then begin ppm := 0; Exit; end;
+  Result := True;
+end;
+
 function PairAnalyze(const x: array of SmallInt; n, rate: Integer; var res: TPairResult): Boolean;
-var a, b, dummy, i, c, half, bg0, bg1, pk: Integer; s10k: Int64; ps, pn: Int64; hz100: Int64; db: Integer;
+var a, b, dummy, i, c, half, bg0, bg1, pk, pa, pb: Integer; s10k: Int64; ps, pn: Int64; hz100: Int64; db: Integer;
 begin
   FillChar(res, SizeOf(res), 0);
   res.ladder := -1;
   Result := False;
-  if not FindMarker(x, n, rate, 0, a, dummy) then Exit;
-  if not FindMarker(x, n, rate, a + Int64(PAIR_AB_MS - 300) * rate div 1000, b, dummy) then Exit;
+  PairWhy := '';
+  if not FindMarker(x, n, rate, 0, a, dummy) then begin PairWhy := 'no marker (a 2 kHz tone of 120 ms, clearly above the rest) in ' + NS(Int64(n) * 1000 div rate) + ' ms of sound'; Exit; end;
+  if not FindMarker(x, n, rate, a + Int64(PAIR_AB_MS - 300) * rate div 1000, b, dummy) then begin PairWhy := 'the first marker at ' + NS(Int64(a) * 1000 div rate) + ' ms, but no second one after it (' + NS(Int64(n - a) * 1000 div rate) + ' ms of sound after the first)'; Exit; end;
   s10k := Int64(b - a) * 10000 * 1000 div (Int64(PAIR_AB_MS) * rate);
-  if (s10k < 9500) or (s10k > 10500) then Exit;              { not our two markers }
+  if (s10k < 9500) or (s10k > 10500) then begin PairWhy := 'two markers ' + NS(Int64(b - a) * 1000 div rate) + ' ms apart, not 2,690'; Exit; end;              { not our two markers }
   res.scale10k := s10k; res.aAt := a;
+  { the pitch of the two markers, if they agree with each other and with the spacing }
+  if MarkerPitch(x, n, rate, a, pa) and MarkerPitch(x, n, rate, b, pb) then
+    if (Abs(pa - pb) < 300) and (Abs((pa + pb) div 2 - Integer(Int64(10000000000) div s10k - 1000000)) < 3000) then
+    begin
+      res.pitchOk := True; res.pitchPpm := (pa + pb) div 2;
+    end;
   { the background: just before the lead-in (or as much of it as there is) }
   bg1 := a - Int64(PAIR_LEAD_MS + 40) * rate div 1000;
   bg0 := bg1 - Int64(300) * rate div 1000;

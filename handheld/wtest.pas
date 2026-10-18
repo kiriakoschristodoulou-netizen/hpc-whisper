@@ -27,7 +27,7 @@ const
   TONE_SPEED: array[0..NTONE - 1] of Integer = (1, 2, 1, 0, 1);    { Normal, Fast, Normal, Slow, Normal }
   TEST_LEN = 24;                        { a test frame of the modem }
   TD_TEST_LEN = 8;                      { and of the tones down: shorter, they are slow }
-  REPORT_LEN = 20;
+  REPORT_LEN = 24;
 
 type
   TTally = record
@@ -45,6 +45,10 @@ type
     peakPct: Integer;                   { the loudest input during the test, % of full scale }
     tdStarts, tdHdrs: Integer;          { tones down: preambles seen, headers read }
     sdHdrs, fdHdrs, fdStarts: Integer;  { the modem receivers: headers read, frames found }
+    { (3.9.2) how the handheld was doing }
+    busyPct, heardPct: Integer;         { the processor's share used, and the share of the sound heard }
+    rateSource, pilots: Integer;        { where the microphone's rate came from (0 claimed .. 3 the phone's sound); pilots of tones heard }
+    rateTrusted, nothing: Boolean;      { the rate is trusted; nothing at all was heard of the phone's part }
   end;
 
 procedure TestPayload(run, stage, idx: Integer; var p: array of Byte);
@@ -55,7 +59,7 @@ procedure TallyAdd(var t: TTally; const p: array of Byte; n: Integer; now: LongW
 { one frame of tones of the test (number idx), then a short silence, at this rate }
 procedure ToneTestSound(idx, run, rate, volume: Integer; var x: TSamples);
 procedure EndToneSound(run, rate, volume: Integer; var x: TSamples);
-{ the handheld's results: 20 bytes }
+{ the handheld's results: 24 bytes }
 function ReportMake(const t: TTally; snrLow, snrHigh: Integer; const info: TReportInfo; var b: array of Byte): Integer;
 { the results as a frame of tones }
 procedure ReportSound(const b: array of Byte; n, rate, volume: Integer; var x: TSamples);
@@ -155,7 +159,7 @@ end;
 
 function ReportMake(const t: TTally; snrLow, snrHigh: Integer; const info: TReportInfo; var b: array of Byte): Integer;
 begin
-  b[0] := 2;
+  b[0] := 3;
   if t.run >= 0 then b[1] := t.run else b[1] := 0;
   b[2] := t.sdMask; b[3] := t.fdMask;
   b[4] := Ord(t.endP);
@@ -167,7 +171,8 @@ begin
   b[13] := Cl(info.peakPct);
   b[14] := Cl(info.tdStarts); b[15] := Cl(info.tdHdrs);
   b[16] := Cl(info.sdHdrs); b[17] := Cl(info.fdHdrs); b[18] := Cl(info.fdStarts);
-  b[19] := 0;
+  b[19] := Ord(info.rateTrusted) or (Ord(info.nothing) shl 1);
+  b[20] := Cl(info.busyPct); b[21] := Cl(info.heardPct); b[22] := Cl(info.rateSource); b[23] := Cl(info.pilots);
   Result := REPORT_LEN;
 end;
 

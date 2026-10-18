@@ -10,7 +10,7 @@ uses w3core, w3dsp, w3rx, w3tx, wpair, wtone;
 var re, im: TCpx;
     x, y: array of SmallInt; rs: TResampler; r: TRx; td: TTdRx; i, n, k, mode, secs, code: Integer;
     a: array[0..255] of LongInt; s: LongInt; seed: LongWord; tone: Integer;
-    m: TBitMap; msg: array[0..39] of Byte; fr: TSamples; pat: TSmallArr; pr: TPairResult; pm: array of Byte;
+    m: TBitMap; msg: array[0..39] of Byte; fr: TSamples; pat: TSmallArr; pr: TPairResult; pm: array of Byte; wf: File;
 function Rnd: Integer; begin seed := seed * 1103515245 + 12345; Result := Integer((seed shr 16) and 2047) - 1024; end;
 begin
   Val(ParamStr(1), mode, code); Val(ParamStr(2), secs, code); Val(ParamStr(3), tone, code);
@@ -72,6 +72,12 @@ begin
   end;
   SetLength(x, 4410 * secs);   { secs is in tenths of a second } seed := 1;
   for i := 0 to High(x) do x[i] := Rnd + (tone * COS4K[((i * 20000 * 4096) div 44100) and 4095]) div 16384;
+  if ParamCount >= 4 then                     { a recording instead: 16-bit mono at 44,100, from its 44th byte }
+  begin
+    AssignFile(wf, ParamStr(4)); Reset(wf, 1); Seek(wf, 44);
+    SetLength(x, (FileSize(wf) - 44) div 2); BlockRead(wf, x[0], Length(x) * 2); CloseFile(wf);
+    secs := Length(x) div 4410; SetLength(x, secs * 4410);
+  end;
   SetLength(y, Length(x) * 2);
   if mode = 0 then Exit;
   RsInit(rs, 4323000, Int64(MRATE) * 100, True);
@@ -86,5 +92,5 @@ begin
   end;
   if mode = 2 then RxInit(r, CH_SD) else RxInit(r, CH_FD);
   for i := 0 to n div 4096 - 1 do RxPush(r, y, i * 4096, 4096);
-  WriteLn('frames ', r.frames, ' fails ', r.fails);
+  WriteLn('frames ', r.frames, ' fails ', r.fails, ' seen ', r.trigs, ' found ', r.starts);
 end.

@@ -2,21 +2,24 @@ package net.kyriakos.whisper.w3;
 
 /**
  * Tones down (docs/FORMAT3.md, section 9): how the phone reaches the handheld without the modem. 16 tones, 100 Hz
- * apart from 17.8 kHz, one tone a symbol (4 bits), 30 ms a symbol. A frame is a preamble of 8 symbols, then the
+ * apart from 17.8 kHz, one tone a symbol (4 bits), 30 ms a symbol. A frame is a pilot of 8 symbols (a steady 18.5 kHz,
+ * from whose pitch the handheld learns how far its microphone's rate is off), a preamble of 8 symbols, then the
  * coded header and message of format 3, scrambled as on the silent channel down, a nibble (high first) at a time.
  * The handheld's receiver is handheld/wtone.pas.
  */
 public final class ToneDown {
     public static final int NT = 16, FIRST = 178, SYM = 1536, MAXMSG = 60, FADE = 64;
     public static final int[] PREAMBLE = {2, 13, 2, 13, 9, 6, 9, 6};
+    public static final int PILOT = 7, PILOT_N = 8;
 
     /** The symbols of a frame. */
     public static int[] symbols(int type, byte[] msg) {
         byte[] hdr = Codec.header(type, msg.length, 0);
         byte[] body = Codec.encode(msg);
         Channel.scramble(hdr, Channel.get(Channel.SD)); Channel.scramble(body, Channel.get(Channel.SD));
-        int[] s = new int[PREAMBLE.length + 2 * (hdr.length + body.length)];
+        int[] s = new int[PILOT_N + PREAMBLE.length + 2 * (hdr.length + body.length)];
         int n = 0;
+        for (int i = 0; i < PILOT_N; i++) s[n++] = PILOT;
         for (int p : PREAMBLE) s[n++] = p;
         for (byte b : hdr) { s[n++] = (b >> 4) & 15; s[n++] = b & 15; }
         for (byte b : body) { s[n++] = (b >> 4) & 15; s[n++] = b & 15; }
@@ -42,6 +45,6 @@ public final class ToneDown {
 
     /** How long a frame sounds (ms). */
     public static int ms(int msgLen) {
-        return (PREAMBLE.length + 2 * (Codec.HEADER + Codec.HEADER_CHECK + Codec.codedLength(msgLen))) * SYM * 1000 / Channel.RATE;
+        return (PILOT_N + PREAMBLE.length + 2 * (Codec.HEADER + Codec.HEADER_CHECK + Codec.codedLength(msgLen))) * SYM * 1000 / Channel.RATE;
     }
 }

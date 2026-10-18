@@ -51,6 +51,7 @@ public class SelfToolTest {
         read(load(d + "/report.wav"), 0.002, st2, new int[]{0});
         check("the handheld's results frame is read: silent down 5, fast down 3, tones down 7, end mark", st2.reported && st2.sdMask == 5 && st2.fdMask == 3 && st2.tdMask == 7 && st2.endPHeard);
         check("and its own readings: microphone 43,200, speaker 44,100, loudest input 61 %", st2.micRate == 43200 && st2.spkRate == 44100 && st2.peakPct == 61 && st2.tdStarts == 4 && st2.tdHdrs == 3 && st2.fdStarts == 5);
+        check("and the report's health (version 3): 37 % busy, 96 % heard, rate from the phone's sound, trusted, 9 pilots", st2.reportVersion == 3 && st2.busyPct == 37 && st2.heardPct == 96 && st2.rateSource == 3 && st2.rateTrusted && st2.pilots == 9 && !st2.handheldHeardNothing);
         SelfTest st3 = new SelfTest();
         read(load(d + "/end.wav"), 0.002, st3, new int[]{0});
         check("the end mark of the handheld's part is read as tones, and counts for no tone frame", st3.endH && st3.toneMask == 0);

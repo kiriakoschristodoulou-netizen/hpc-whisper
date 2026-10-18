@@ -44,6 +44,7 @@ type
     floor: LongInt;
     state: Integer;
     scan, trig, sym0: Int64;
+    seekDS: Int64; seekHave: Boolean;       { the frame start found for this trigger (3.9.2: looked for once, not at every step while waiting) }
     s, hsym, psym, adjust, moved: Integer;
     tau8: LongInt;                     { drift, in 1/256 sample }
     typ, len, mapNo: Integer;
@@ -72,6 +73,9 @@ type
   PRx = ^TRx;
 
 var RxTrig: Integer = 1843;       { the metric that starts a look at a frame (Q12): 0.45 }
+    { also look at the lags either side of the sync lag (a rate up to 1 % off): only while the microphone's rate is not known well
+      (3.9.2: they tripled the false starts on room noise) }
+    RxWide: Boolean = True;
 
 procedure RxInit(var r: TRx; ch: Integer);
 { forget all sound heard, keep the maps: the same sound is about to be given again, converted with a better rate }
@@ -586,7 +590,7 @@ begin
       if (r.metric[k] > RxTrig) and ((e shr 1) > r.floor) and (e > 2) then
       begin
         {$ifdef RXDEBUG}WriteLn('trigger at ', r.scan, ' e ', e, ' floor ', r.floor, ' metric ', r.metric[k]);{$endif}
-        r.state := SEEK; r.trig := r.scan; Inc(r.trigs); Exit;
+        r.state := SEEK; r.trig := r.scan; r.seekHave := False; Inc(r.trigs); Exit;
       end;
       r.floor := r.floor + SarLongint(e - r.floor, 10);     { about 80 ms }
       if r.floor < 1 then r.floor := 1;
@@ -596,20 +600,24 @@ begin
   end;
   if r.state = SEEK then
   begin
-    if r.t - 2 * r.lag < r.trig + 256 + r.lag then Exit;
-    mx := -32768;
-    for k := 0 to 255 + r.lag do
+    if not r.seekHave then
     begin
-      mv := r.metric[(r.trig + k) and RMASK];
-      if mv > mx then mx := mv;
+      if r.t - 2 * r.lag < r.trig + 256 + r.lag then Exit;
+      mx := -32768;
+      for k := 0 to 255 + r.lag do
+      begin
+        mv := r.metric[(r.trig + k) and RMASK];
+        if mv > mx then mx := mv;
+      end;
+      if mx < 2048 then begin {$ifdef RXDEBUG}WriteLn('seek: low metric ', mx, ' at ', r.trig);{$endif} r.state := IDLE; r.scan := r.trig + 1; Exit; end;
+      { the metric climbs in a straight line for one lag as the window enters S and is level while it
+        stays inside: the frame starts half a lag after it is half way up }
+      dS := r.trig;
+      while (dS > r.trig - 2 * r.lag) and (dS > 0) and (r.metric[(dS - 1) and RMASK] >= mx div 2) do Dec(dS);
+      while r.metric[dS and RMASK] < mx div 2 do Inc(dS);
+      r.seekDS := dS + r.lag div 2; r.seekHave := True;
     end;
-    if mx < 2048 then begin {$ifdef RXDEBUG}WriteLn('seek: low metric ', mx, ' at ', r.trig);{$endif} r.state := IDLE; r.scan := r.trig + 1; Exit; end;
-    { the metric climbs in a straight line for one lag as the window enters S and is level while it
-      stays inside: the frame starts half a lag after it is half way up }
-    dS := r.trig;
-    while (dS > r.trig - 2 * r.lag) and (dS > 0) and (r.metric[(dS - 1) and RMASK] >= mx div 2) do Dec(dS);
-    while r.metric[dS and RMASK] < mx div 2 do Inc(dS);
-    dS := dS + r.lag div 2;
+    dS := r.seekDS;
     w := dS + NSYM + NCP - RBACK;
     if w + NFFT + 2 * NSYM > r.t then Exit;            { wait for R (and some margin) }
     { first a cheap look at S: does its sound lie on our carriers, spread over the band? A voice repeats
@@ -712,7 +720,7 @@ begin
     a := r.fb[(d + m) and RMASK]; b := r.fb[(d + m + r.lag) and RMASK];
     r.P := r.P + a * b; r.E1 := r.E1 + a * a; r.E2 := r.E2 + b * b;
   end;
-  if r.state <> DECODE then
+  if (r.state <> DECODE) and RxWide then
   begin
     for q := 1 to 4 do r.pj[q] := 0;
     for m := 0 to r.lag - 1 do
@@ -748,7 +756,7 @@ begin
     r.E2 := r.E2 + f * f - a * a;
     r.E1 := r.E1 + a * a - o * o;
     Inc(r.resum);
-    if r.state = DECODE then r.pjOk := False
+    if (r.state = DECODE) or not RxWide then r.pjOk := False
     else if r.pjOk then
     begin
       { the sums either side of the lag use every eighth sample (an eighth of the work); the sound repeats, so an
@@ -762,7 +770,7 @@ begin
         r.pj[4] := r.pj[4] + r.fb[(i1 + 2) and RMASK] * f - r.fb[(i2 + 2) and RMASK] * a;
       end;
     end
-    else r.resum := 8192;                    { the sums either side are made again (a frame was being read) }
+    else if RxWide then r.resum := 8192;     { the sums either side are made again (a frame was being read) }
     if r.resum >= 8192 then begin r.resum := 0; Recompute(r); end;
     { the metric and the energy, every DECIM samples (the processor of a handheld has no time for more) }
     if ((r.t and (DECIM - 1)) = 0) and (r.t >= 2 * r.lag) then

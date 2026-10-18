@@ -167,7 +167,7 @@ begin
       while TdTake(td, msg) do
         WriteLn('msg ', msg.typ, ' ', msg.len, ' ', msg.snr10, ' ', msg.fixed, ' ', Hex(msg.data, msg.len));
     end;
-    WriteLn('frames ', td.frames, ' fails ', td.fails, ' ', td.lastWhy, ' | starts ', td.starts, ' headers ', td.hdrs);
+    WriteLn('frames ', td.frames, ' fails ', td.fails, ' ', td.lastWhy, ' | starts ', td.starts, ' headers ', td.hdrs, ' pilots ', td.pilots, ' eps ', td.epsPpm);
   end
   else if cmd = 'afc' then
   begin

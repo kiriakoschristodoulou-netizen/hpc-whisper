@@ -48,6 +48,7 @@ begin
     TallyInit(t); t.run := 7; t.sdMask := StrToInt(ParamStr(2)); t.fdMask := StrToInt(ParamStr(3)); t.endP := ParamStr(4) = '1'; t.frames := 9;
     t.tdMask := StrToInt(ParamStr(7));
     info.micRate := 43200; info.spkRate := 44100; info.peakPct := 61; info.tdStarts := 4; info.tdHdrs := 3; info.sdHdrs := 1; info.fdHdrs := 2; info.fdStarts := 5;
+    info.busyPct := 37; info.heardPct := 96; info.rateSource := 3; info.pilots := 9; info.rateTrusted := True; info.nothing := False;
     n := ReportMake(t, 23, -4, info, b);
     ReportSound(b, n, rate, 50, x);
     WriteWav(ParamStr(6), x, rate);

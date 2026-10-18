@@ -31,9 +31,9 @@ begin
     begin
       s := '';
       for i := 0 to PAIR_N - 1 do s := s + ' ' + IntToStr(r.snr10[i] div 10);
-      WriteLn('found scale ', r.scale10k, ' peak ', r.peak, ' clipped ', r.clipped, ' at ', r.aAt);
+      WriteLn('found scale ', r.scale10k, ' peak ', r.peak, ' clipped ', r.clipped, ' at ', r.aAt, ' pitch ', r.pitchOk, ' ', r.pitchPpm);
       WriteLn('snr', s);
     end
-    else WriteLn('not found');
+    else WriteLn('not found: ', PairWhy);
   end;
 end.

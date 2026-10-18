@@ -457,7 +457,7 @@ computed from them so that a frame read wrongly is never counted) or a frame of 
 | --- | --- | --- |
 | H | handheld | after its test sound and loudness steps: 5 frames of tones (20.0 kHz at 32 ms a symbol, 20.0 kHz at 20 ms, 18.0 kHz at 32 ms, 20.0 kHz at 48 ms, 20.0 kHz at 32 ms again), 3 frames on SU (stage 1), 2 on FU (stage 2), then the end mark as a frame of tones (document $FD, "STZ") |
 | P | phone | on the end mark (or 50 s after the handheld's test sound, if it never came): 3 frames of tones down (stage 12, 8 bytes, at loudness 50 %, 20 %, 8 %), 3 on SD (stage 10), 3 on FD (stage 11, at 35 %, 15 %, 6 %), the end mark (stage 20) as tones down |
-| report | handheld | on the end mark of P (or 9 s after the last frame of it): one frame of tones, document $FE, 20 bytes: version 2, run, SD mask, FD mask, end mark read, test frames read, the test sound's 1-12 kHz and 20.2-21.2 kHz levels in dB + 20, TD mask, microphone rate (2 bytes), speaker rate (2), loudest input in % of full scale, tone starts, tone headers, SD headers, FD headers, FD frames found |
+| report | handheld | 1.5 s after the end mark of P (or 9 s after the last frame of it; after 70 s even if nothing was heard, with the "heard nothing" bit set): one frame of tones, document $FE, 24 bytes: version 3, run, SD mask, FD mask, end mark read, test frames read, the test sound's 1-12 kHz and 20.2-21.2 kHz levels in dB + 20, TD mask, microphone rate (2 bytes), speaker rate (2), loudest input in % of full scale, tone starts, tone headers, SD headers, FD headers, FD frames found, flags (bit 0 the microphone's rate is trusted, bit 1 nothing of P was heard), the processor's share used (%), the share of the sound heard (%), where the microphone's rate came from (0 claimed, 1 clock, 2 Pair, 3 the phone's sound), pilots of tones heard. The phone also reads version 1 and 2 (20 bytes) |
 
 When the handheld started the test, the phone plays its own test sound and then P; when the phone started it, P
 follows H directly. The handheld's own pairing report (PAIR_REPORT) is sent after the report of the self test, so
@@ -469,7 +469,7 @@ channel down is the middle one of the loudnesses that were read (the quieter of 
 gain control and clips a phone that is too loud. Nothing is ever sent for the handheld's part if the phone is an older version (the
 handheld waits 70 s for any test frame, then gives up).
 
-## 9. Tones down (3.9.1)
+## 9. Tones down (3.9.1, pilot and baseband receiver 3.9.2)
 
 How the phone reaches the handheld without the modem, for what is short. The handheld's microphone and sound chip
 carry plain tones where the modem's frames were lost to distortion, packet spacing and the chip's rate.
@@ -477,18 +477,22 @@ carry plain tones where the modem's frames were lost to distortion, packet spaci
 * 16 tones, 100 Hz apart, 17.8-19.3 kHz (inside the codec's flat range, which ends near 19.4 kHz): tone k is
   (178 + k) x 100 Hz, k = 0..15 is a nibble. One tone a symbol, **1536 samples (30 ms)** at the modem rate, with
   raised-cosine edges of 64 samples.
-* Frame: a preamble of 8 symbols, tones 2, 13, 2, 13, 9, 6, 9, 6; then the **coded header** (3 bytes + 6 check) and
+* Frame: a **pilot** of 8 symbols of tone 7 (18.5 kHz, a steady tone 240 ms long), then a preamble of 8 symbols, tones 2, 13, 2, 13, 9, 6, 9, 6; then the **coded header** (3 bytes + 6 check) and
   the **coded message** of format 3 (section 2), each scrambled as on SD (from 2048 of the scrambling sequence), a
   byte at a time, high nibble first. The message is at most 60 bytes; a 4 byte message sounds for about 1.6 s.
 * The sound is made at the modem rate and played like any other frame; the phone's microphone is ignored while it
   sounds (the tones share the handheld's tone band).
-* Receiver (`handheld/wtone.pas`, whole numbers): for each tone the input (>> 3) is multiplied by a sine and a
-  cosine from tables of 512 steps and summed over blocks of 128 samples; running sums of the blocks give the energy
-  of every tone in any 12-block window at once. The preamble is looked for at every block (7 of 8 symbols must have
-  the right tone with more than half the window's energy); the best of the next 14 blocks fixes the frame's start;
-  each following symbol is the strongest tone of its window. The header and the message are then decoded and
-  checked as in format 3. No search for a rate is needed (a clock 100 ppm off moves a frame by 15 samples in
-  3 s). About 14 % of the Jornada's processor.
+* Receiver (`handheld/wtone.pas`, whole numbers, 3.9.2): the input is high-passed at 14 kHz, mixed down with 18.5 kHz and
+  summed 16 samples at a time into a complex signal of 3,200 samples/s that holds 16.9-20.1 kHz. A bank of 25 bins of
+  100 Hz over cumulative block sums looks for the pilot (a steady tone at 18.5 kHz); its fine pitch gives how far the
+  receiver's sample rate is off (epsilon, in ppm), and the tones and the symbol length are then scaled by it, so a
+  microphone at 43,200 samples/s that claims 44,100 reads tones (needed: within +-0.15 %). The same epsilon tunes the
+  microphone's rate (R_true = R_assumed / (1 + eps)), which is what the silent and fast receivers then use. After
+  the pilot the preamble is looked for at the expected place, the best of the next blocks fixes the frame's start, each
+  following symbol is the strongest tone of its window, and the header and the message are decoded and checked as in
+  format 3. About a tenth of the work of 3.9.1's receiver, which multiplied every tone separately.
+* Turn-taking (3.9.2): after the handheld's TRAIN it holds its own answers (HELLO, CHECK) until the phone's MAP has
+  arrived (at most 5 s, released 200 ms after the MAP), so the two do not talk over each other.
 * Tested (tests/w3/tonedown.sh): messages of 1, 4, 24 and 60 bytes at 50 % and 10 % loudness, directly and through the
-  room, the phone's 48,000 and the chip's 43,229.6, noise to 20 times the usual; 24 of 24 read, and a minute of
-  noise starts and reads nothing.
+  room, the phone's 48,000 and the chip's 43,229.6, noise to 20 times the usual; 24 of 24 read, with the receiver's rate wrong by up to 2 % (epsilon measured within 200 ppm), and a minute of
+  noise starts and reads nothing; the recording of a real 3.9.1 run is read by the silent receivers at their old cost.
