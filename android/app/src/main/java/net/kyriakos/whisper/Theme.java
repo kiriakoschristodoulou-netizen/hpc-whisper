@@ -7,6 +7,9 @@ import android.content.res.Configuration;
 public final class Theme {
 
     public static boolean dark(Context c) {
+        int m = Prefs.theme(c);
+        if (m == 1) return false;
+        if (m == 2) return true;
         return (c.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
     }
 

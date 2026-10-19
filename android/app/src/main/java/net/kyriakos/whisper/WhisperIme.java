@@ -33,6 +33,7 @@ public class WhisperIme extends InputMethodService implements Hub.Client {
     private View root, dot;
     private TextView status, detail;
     private MeterView meter;
+    private View toolsRow;
     private EditorInfo editor;
     private boolean listening, haveMic;
     private long lastUnreadable = 0;
@@ -133,6 +134,7 @@ public class WhisperIme extends InputMethodService implements Hub.Client {
         send.setBackground(round(ACCENT, 10));
         send.setTextColor(0xFFFFFFFF);
         scroll.addView(tools);
+        toolsRow = scroll;
         col.addView(scroll);
         return col;
     }
@@ -227,12 +229,13 @@ public class WhisperIme extends InputMethodService implements Hub.Client {
     public void onStartInputView(EditorInfo info, boolean restarting) {
         super.onStartInputView(info, restarting);
         editor = info;
-        if (!restarting) writer.startField(info);
+        if (!restarting) { writer.startField(info); Sessions.begin(this, info.packageName, Hub.get().mirror); }
+        if (toolsRow != null) toolsRow.setVisibility(Prefs.editKeys(this) ? View.VISIBLE : View.GONE);
         haveMic = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
         if (haveMic && !listening) {
             listening = Hub.get().attach(this, this);
             // you are typing on the handheld, not touching the phone: keep the screen on
-            if (root != null) root.setKeepScreenOn(true);
+            if (root != null) root.setKeepScreenOn(Prefs.screenOn(this));
         }
         showState();
         handler.removeCallbacks(tick);
@@ -242,6 +245,7 @@ public class WhisperIme extends InputMethodService implements Hub.Client {
     @Override
     public void onFinishInputView(boolean finishing) {
         writer.finish(getCurrentInputConnection());
+        Sessions.end(this);
         handler.removeCallbacks(tick);
         stopListening();
         if (meter != null) meter.clear();

@@ -133,4 +133,106 @@ final class Ui {
         c.addView(row);
         return state;
     }
+    /** A box that opens when tapped: the header (title, a short note, an arrow) is always there; returns the hidden content. */
+    LinearLayout fold(LinearLayout card, String title, String note) {
+        LinearLayout head = new LinearLayout(a);
+        head.setOrientation(LinearLayout.HORIZONTAL);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        TextView h = text(head, title, 17, t.ink, true);
+        h.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        TextView n = text(head, note == null ? "" : note, 13, t.muted, false);
+        n.setPadding(0, 0, dp(10), 0);
+        TextView arrow = text(head, "▾", 18, t.muted, false);
+        card.addView(head);
+        LinearLayout body = new LinearLayout(a);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setVisibility(View.GONE);
+        card.addView(body);
+        View.OnClickListener l = v -> {
+            boolean open = body.getVisibility() != View.VISIBLE;
+            body.setVisibility(open ? View.VISIBLE : View.GONE);
+            arrow.setText(open ? "▴" : "▾");
+        };
+        head.setOnClickListener(l);
+        head.setMinimumHeight(dp(36));
+        return body;
+    }
+
+    /** The note on a fold's header, so a screen can change it ("3 sessions"). */
+    TextView noteOf(LinearLayout body) {
+        LinearLayout head = (LinearLayout) ((LinearLayout) body.getParent()).getChildAt(((LinearLayout) body.getParent()).indexOfChild(body) - 1);
+        return (TextView) head.getChildAt(1);
+    }
+
+    /** A round icon with a small label under it, green when on. */
+    TextView statusIcon(LinearLayout row, String glyph, String label) {
+        LinearLayout col = new LinearLayout(a);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setGravity(Gravity.CENTER_HORIZONTAL);
+        TextView g = new TextView(a);
+        g.setText(glyph);
+        g.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+        g.setGravity(Gravity.CENTER);
+        col.addView(g, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        TextView l = text(col, label, 11.5f, t.muted, false);
+        l.setGravity(Gravity.CENTER);
+        row.addView(col, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        return g;
+    }
+
+    /** Colours a status icon: green with a light glyph when on, grey when off. */
+    void lamp(TextView g, boolean on) {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setShape(GradientDrawable.OVAL);
+        bg.setColor(on ? t.green : t.button);
+        g.setBackground(bg);
+        g.setTextColor(on ? 0xFFFFFFFF : t.muted);
+        g.setAlpha(on ? 1f : 0.7f);
+    }
+
+    /** An on/off line: title, a small note, and a switch. */
+    android.widget.Switch toggle(LinearLayout into, String title, String note, boolean on, java.util.function.Consumer<Boolean> change) {
+        LinearLayout row = new LinearLayout(a);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(10), 0, 0);
+        LinearLayout col = new LinearLayout(a);
+        col.setOrientation(LinearLayout.VERTICAL);
+        text(col, title, 15, t.ink, true);
+        if (note != null) text(col, note, 13, t.muted, false);
+        row.addView(col, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        android.widget.Switch sw = new android.widget.Switch(a);
+        sw.setChecked(on);
+        sw.setOnCheckedChangeListener((b, v) -> change.accept(v));
+        row.addView(sw);
+        into.addView(row);
+        return sw;
+    }
+
+    /** A line with a value that changes to the next choice when tapped. */
+    TextView choice(LinearLayout into, String title, String note, String[] options, int sel, java.util.function.IntConsumer change) {
+        LinearLayout row = new LinearLayout(a);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(10), 0, 0);
+        LinearLayout col = new LinearLayout(a);
+        col.setOrientation(LinearLayout.VERTICAL);
+        text(col, title, 15, t.ink, true);
+        if (note != null) text(col, note, 13, t.muted, false);
+        row.addView(col, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        TextView val = new TextView(a);
+        val.setText(options[sel]);
+        val.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        val.setTextColor(t.ink);
+        val.setGravity(Gravity.CENTER);
+        val.setPadding(dp(14), 0, dp(14), 0);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(t.button); bg.setCornerRadius(dp(10));
+        val.setBackground(bg);
+        final int[] cur = {sel};
+        val.setOnClickListener(v -> { cur[0] = (cur[0] + 1) % options.length; val.setText(options[cur[0]]); change.accept(cur[0]); });
+        row.addView(val, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(40)));
+        into.addView(row);
+        return val;
+    }
 }

@@ -15,7 +15,9 @@ Made on, and for, the HP Jornada 720. Created by Kyriakos Christodoulou.
 - **Android:** install `HPC-Whisper.apk` from the [latest release](../../releases/latest).
   Open the app and follow the three steps (microphone, turn on the keyboard,
   choose it). Then, in any app, tap a text field and switch to the HPC Whisper
-  keyboard. It listens only while that keyboard is open. The app has no
+  keyboard. It listens only while that keyboard is open. Everything that arrives
+  is kept on the phone as dated sessions (app and date; the newest 25 by default,
+  never fewer than 10), hidden until you tap them. The app has no
   internet access. Its keyboard also has touch edit keys (arrows, select,
   copy, paste, undo...).
 - **The helper (optional):** turned on once in the phone's accessibility
@@ -23,7 +25,7 @@ Made on, and for, the HP Jornada 720. Created by Kyriakos Christodoulou.
 - **iPhone, or any phone:** the receiver page,
   <https://kiriakoschristodoulou-netizen.github.io/hpc-whisper/>, with Copy and Share.
   (Apple does not let keyboards use the microphone, so no iPhone keyboard.)
-- **Handheld:** `HPC-Whisper-40.zip` from the same release. Copy the folder to
+- **Handheld:** `HPC-Whisper-10.zip` from the same release. Copy the folder to
   the handheld and run `HPCWhisper.exe`.
 
 ## Which handhelds
@@ -47,8 +49,9 @@ own shortcuts are on Alt, so every Ctrl key reaches the phone:
 | Alt+N | A new page: the phone starts fresh |
 | Alt+K, Alt+O, Alt+Q | Keys list, Settings, Quit |
 
-Settings: repeats (2 to 8, default 6), second band, volume, speed, band, and the
-sound rate. The phone finds band and speed by itself.
+Settings (defaults are the ones that worked best: 6 repeats, Fast, band 19.0 to 20.5 kHz,
+sound rate 43,200): repeats (2 to 8), second band, volume, speed, band, sound rate, and an
+About page. The phone finds band and speed by itself.
 
 ## How it works
 

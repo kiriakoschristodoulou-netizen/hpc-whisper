@@ -1,4 +1,4 @@
-HPC Whisper 4.0
+HPC Whisper 1.0
 by Kyriakos Christodoulou
 
 Type on this handheld and the text appears in any app on your phone,

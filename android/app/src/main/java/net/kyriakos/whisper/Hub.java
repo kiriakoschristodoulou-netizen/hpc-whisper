@@ -58,14 +58,28 @@ public final class Hub implements Listener.Callback {
 
     @Override public void onFrame(Receiver.Frame f) {
         long now = System.currentTimeMillis();
+        long prev = lastFrameAt;
         boolean fresh = mirror.apply(f, now);
         frames++;
         lastFrameAt = now;
         DiagLog.log("heard: page " + f.doc + (fresh ? " (new)" : "") + ", length " + f.L + ", from " + f.o + ", " + f.bytes.length
                 + " bytes, " + f.bandHz + " Hz, " + f.ms + " ms a symbol, " + f.fixed + " corrected");
-        if (app != null) Recent.add(app, mirror);
+        if (app != null) {
+            Sessions.update(app, mirror);
+            if (Prefs.cue(app) && prev != 0 && now - prev > 5000) cue();
+        }
         for (Client c : copy()) c.onFrame(f);
     }
+    /** A short buzz when text arrives after a pause (a setting). */
+    private void cue() {
+        try {
+            android.os.Vibrator v = (android.os.Vibrator) app.getSystemService(Context.VIBRATOR_SERVICE);
+            if (v == null) return;
+            if (android.os.Build.VERSION.SDK_INT >= 26) v.vibrate(android.os.VibrationEffect.createOneShot(40, android.os.VibrationEffect.DEFAULT_AMPLITUDE));
+            else v.vibrate(40);
+        } catch (Exception ignored) { }
+    }
+
     @Override public void onUnreadable() { for (Client c : copy()) c.onUnreadable(); }
     @Override public void onLevels(float[] l) { for (Client c : copy()) c.onLevels(l); }
     @Override public void onProblem(String m) { problem = m; DiagLog.log("problem: " + m); for (Client c : copy()) c.onProblem(m); }

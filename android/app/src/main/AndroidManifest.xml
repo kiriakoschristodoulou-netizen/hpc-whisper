@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- the microphone, to hear the handheld; there is no internet permission at all -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- a short buzz when text arrives, if you turn that on -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <application
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
@@ -18,7 +20,8 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <activity android:name=".HelpActivity" android:exported="false" android:parentActivityName=".MainActivity" />
+        <activity android:name=".InfoActivity" android:exported="false" android:parentActivityName=".MainActivity" />
+        <activity android:name=".SettingsActivity" android:exported="false" android:parentActivityName=".MainActivity" />
         <service
             android:name=".WhisperIme"
             android:label="@string/app_name"
