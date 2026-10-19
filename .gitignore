@@ -27,3 +27,5 @@ tests/w3/*-payload.bin
 tests/w3/afc.wav
 tests/w3/mis.wav
 tests/w3/rep.wav
+tests/writer/cls/
+tests/losssim

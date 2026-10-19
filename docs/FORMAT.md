@@ -65,17 +65,32 @@ length to *L* (forgetting anything beyond) and writes the bytes at *o*.
 Bytes it has never received are missing, not wrong. A new document id means
 a new page: the previous one is finished.
 
-The handheld sends:
+The handheld counts, for every byte, how many times it has gone out, and sends:
 
-- **new text at once**, starting a little earlier when there is room, so
-  that text which went out once goes out a second time with it;
-- in a **pause of 0.4 s**, anything that went out only once, again;
-- in a **pause of 1.5 s**, everything a third time;
-- in a **pause of 3 s**, the last 22 bytes once more;
-- in a **rest of 5 s**, one sweep over the last 300 bytes.
+- **new text at once**, riding along the bytes that have been sent fewer than
+  twice, so while you type every character goes out twice anyway;
+- in pauses, the **least-sent bytes of the last 300**, again, in frames of at
+  most 22 bytes (shorter frames get through more often). The 2nd send waits
+  0.4 s, then 1.5, 3, 6, 10, 15 and 22 s for the 3rd to 8th;
+- every second send on a **second band**, one kHz away, so a weak spot or a
+  noise at one band does not hit all the copies;
+- on **Resend** (Alt+R), all of the last 300 bytes again from the start.
 
-So a frame lost on the way leaves a gap that fills in a moment later. Repeat
-frames carry at most 22 bytes: shorter frames get through more often.
+The default is 6 sends. In a simulation (tests/losssim.pas) where every frame
+is lost with some probability, the text arrives complete in all runs at up to
+10 % loss and in about 96 % of the runs at 30 % loss.
+
+The phone types a byte only after every earlier byte is known. A hole that is
+not filled within 30 seconds is shown as a mark ("·") and then given up, so
+one lost piece cannot block the text behind it for ever.
+
+## Keys
+
+Keys travel inside the text as private-use characters U+E000 + *code* (UTF-8
+`EE 80..8F xx`). The code is 10 bits: the low 8 bits name the key (arrows,
+Home, End, Delete, Tab, Esc, Ctrl+A/C/X/V/Z/Y as their own codes, Send, Back,
+phone Home, Recents), and 0x100 and 0x200 add Shift and Ctrl for movement and
+delete keys. A key is pressed once, when the bytes before it are known.
 
 ## Receiving, in brief
 

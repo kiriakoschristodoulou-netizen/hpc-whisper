@@ -141,8 +141,14 @@
   // edits; new text then continues after them.
   const mirror = new Whisper.Mirror();
   let base = text.value, committed = 0;
+  // keys the handheld sent (arrows, Ctrl+C...) have no meaning in a text box: show them as [Name]
+  const KEYN = { 0x08: 'Bksp', 0x09: 'Tab', 0x1B: 'Esc', 0x21: 'PgUp', 0x22: 'PgDn', 0x23: 'End', 0x24: 'Home', 0x25: 'Left', 0x26: 'Up', 0x27: 'Right', 0x28: 'Down', 0x2E: 'Del',
+                 0x41: 'Ctrl+A', 0x43: 'Ctrl+C', 0x56: 'Ctrl+V', 0x58: 'Ctrl+X', 0x5A: 'Ctrl+Z', 0x59: 'Ctrl+Y' };
+  function keyNames(t) {
+    return t.replace(/[\uE000-\uE3FF]/g, c => { const k = c.charCodeAt(0) - 0xE000; const n = KEYN[k & 0xFF] || 'Key'; return '[' + ((k & 0x200) ? 'Ctrl+' : '') + ((k & 0x100) ? 'Shift+' : '') + n + ']'; });
+  }
   function render() {
-    text.value = base + mirror.text(committed, mirror.L, '·');
+    text.value = base + keyNames(mirror.text(committed, mirror.L, '·'));
     text.scrollTop = text.scrollHeight;
     save();
   }

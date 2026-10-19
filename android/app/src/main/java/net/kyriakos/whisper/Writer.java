@@ -24,6 +24,8 @@ import java.nio.charset.StandardCharsets;
  */
 public final class Writer {
     private static final long SETTLE_MS = 2000;
+    /** A gap in the text that has not filled for this long (while later text is waiting behind it) is given up. */
+    public static final long GAP_GIVEUP_MS = 30000;
     private static final int LONGEST_UNDERLINE = 160;      // bytes; older text is written even with a gap
     private static final String GAP = "·";
 
@@ -33,9 +35,18 @@ public final class Writer {
     private byte[] done = new byte[0];                      // a copy of them, to know how much a Backspace takes back
     private String shown = "";                              // the underlined text in the field now
     private boolean singleLine = false;
-    public int keysPressed = 0;
+    public int keysPressed = 0, gapsGivenUp = 0;
 
     public Writer(Mirror shared) { mirror = shared; }
+
+    /** Bytes of the page that the handheld announced and that have not arrived (and not been given up). */
+    public int missing() {
+        Mirror m = mirror;
+        if (m.doc != doc) return 0;
+        int n = 0;
+        for (int i = committed; i < m.L; i++) if (!m.known[i] && !m.skipped[i]) n++;
+        return n;
+    }
 
     /** A new field: only what is typed from now on goes into it. */
     public void startField(EditorInfo info) {
@@ -79,7 +90,7 @@ public final class Writer {
         }
         // the handheld's Backspace went past text already written: take it back
         if (m.L < committed && ic != null) {
-            int chars = Keys.strip(new String(done, m.L, committed - m.L, StandardCharsets.UTF_8)).length();
+            int chars = Keys.strip(new String(done, m.L, committed - m.L, StandardCharsets.UTF_8)).replace("\0", "").replace("\uFFFD", "").length();
             ic.beginBatchEdit();
             if (!shown.isEmpty()) { ic.setComposingText("", 1); ic.finishComposingText(); shown = ""; }
             ic.deleteSurroundingText(chars, 0);
@@ -97,6 +108,18 @@ public final class Writer {
         if (m.doc != doc) return;                           // frame() handles a new page
         if (committed > m.L) committed = m.L;
         int fu = m.firstUnknown(committed);
+        while (fu < m.L) {
+            // the handheld repeats its text for a while; a piece that is still missing long after the text behind it
+            // arrived is given up, so that one lost piece cannot hold back everything typed after it
+            int k2 = fu;
+            while (k2 < m.L && !m.known[k2]) k2++;
+            if (k2 < m.L && now - m.since[k2] > GAP_GIVEUP_MS) {
+                DiagLog.log("keyboard: page bytes " + fu + " to " + (k2 - 1) + " never arrived: given up");
+                m.skipGap(fu);
+                gapsGivenUp++;
+                fu = m.firstUnknown(committed);
+            } else break;
+        }
         if (fu < m.L) DiagLog.log("keyboard: page byte " + fu + " not heard yet (page " + m.L + " bytes): what follows waits");
         // keys: the text before a key is written at once, then the key is pressed
         int k;
@@ -149,40 +172,47 @@ public final class Writer {
         return info == null ? EditorInfo.IME_ACTION_DONE : info.imeOptions & EditorInfo.IME_MASK_ACTION;
     }
 
-    private static void key(InputConnection ic, int code, int meta) {
+    public static void key(InputConnection ic, int code, int meta) {
         long t = SystemClock.uptimeMillis();
         ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, code, 0, meta));
         ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP, code, 0, meta));
     }
 
-    /** Presses one key in the open field (or, for Send, Back, Home and Recent apps, through the helper). */
+    /**
+     * Presses one key in the open field (or, for Send, Back, Home and Recent apps, through the helper).
+     * code is a key of Keys, with Keys.SHIFT and Keys.CTRL added when the handheld's key was held with them.
+     */
     public void press(InputConnection ic, EditorInfo info, int code) {
-        switch (code) {
+        int meta = 0;
+        if ((code & Keys.SHIFT) != 0) meta |= KeyEvent.META_SHIFT_ON | KeyEvent.META_SHIFT_LEFT_ON;
+        if ((code & Keys.CTRL) != 0) meta |= KeyEvent.META_CTRL_ON | KeyEvent.META_CTRL_LEFT_ON;
+        switch (code & 0xFF) {
             case Keys.TAB:
                 // a one-line field that has a "next" action moves on with it; elsewhere Tab moves the focus
                 if (singleLine && action(info) == EditorInfo.IME_ACTION_NEXT) ic.performEditorAction(EditorInfo.IME_ACTION_NEXT);
-                else key(ic, KeyEvent.KEYCODE_TAB, 0);
+                else key(ic, KeyEvent.KEYCODE_TAB, meta);
                 break;
             case Keys.SHIFT_TAB:
                 if (singleLine && action(info) == EditorInfo.IME_ACTION_PREVIOUS) ic.performEditorAction(EditorInfo.IME_ACTION_PREVIOUS);
                 else key(ic, KeyEvent.KEYCODE_TAB, KeyEvent.META_SHIFT_ON | KeyEvent.META_SHIFT_LEFT_ON);
                 break;
-            case Keys.BACKSPACE: key(ic, KeyEvent.KEYCODE_DEL, 0); break;
-            case Keys.DELETE: key(ic, KeyEvent.KEYCODE_FORWARD_DEL, 0); break;
+            case Keys.BACKSPACE: key(ic, KeyEvent.KEYCODE_DEL, meta); break;
+            case Keys.DELETE: key(ic, KeyEvent.KEYCODE_FORWARD_DEL, meta); break;
             case Keys.ESC: key(ic, KeyEvent.KEYCODE_ESCAPE, 0); break;
-            case Keys.LEFT: key(ic, KeyEvent.KEYCODE_DPAD_LEFT, 0); break;
-            case Keys.RIGHT: key(ic, KeyEvent.KEYCODE_DPAD_RIGHT, 0); break;
-            case Keys.UP: key(ic, KeyEvent.KEYCODE_DPAD_UP, 0); break;
-            case Keys.DOWN: key(ic, KeyEvent.KEYCODE_DPAD_DOWN, 0); break;
-            case Keys.HOME: key(ic, KeyEvent.KEYCODE_MOVE_HOME, 0); break;
-            case Keys.END: key(ic, KeyEvent.KEYCODE_MOVE_END, 0); break;
-            case Keys.PAGE_UP: key(ic, KeyEvent.KEYCODE_PAGE_UP, 0); break;
-            case Keys.PAGE_DOWN: key(ic, KeyEvent.KEYCODE_PAGE_DOWN, 0); break;
+            case Keys.LEFT: key(ic, KeyEvent.KEYCODE_DPAD_LEFT, meta); break;
+            case Keys.RIGHT: key(ic, KeyEvent.KEYCODE_DPAD_RIGHT, meta); break;
+            case Keys.UP: key(ic, KeyEvent.KEYCODE_DPAD_UP, meta); break;
+            case Keys.DOWN: key(ic, KeyEvent.KEYCODE_DPAD_DOWN, meta); break;
+            case Keys.HOME: key(ic, KeyEvent.KEYCODE_MOVE_HOME, meta); break;
+            case Keys.END: key(ic, KeyEvent.KEYCODE_MOVE_END, meta); break;
+            case Keys.PAGE_UP: key(ic, KeyEvent.KEYCODE_PAGE_UP, meta); break;
+            case Keys.PAGE_DOWN: key(ic, KeyEvent.KEYCODE_PAGE_DOWN, meta); break;
             case Keys.SELECT_ALL: ic.performContextMenuAction(android.R.id.selectAll); break;
             case Keys.COPY: ic.performContextMenuAction(android.R.id.copy); break;
             case Keys.PASTE: ic.performContextMenuAction(android.R.id.paste); break;
             case Keys.CUT: ic.performContextMenuAction(android.R.id.cut); break;
             case Keys.UNDO: key(ic, KeyEvent.KEYCODE_Z, KeyEvent.META_CTRL_ON | KeyEvent.META_CTRL_LEFT_ON); break;
+            case Keys.REDO: key(ic, KeyEvent.KEYCODE_Z, KeyEvent.META_CTRL_ON | KeyEvent.META_CTRL_LEFT_ON | KeyEvent.META_SHIFT_ON | KeyEvent.META_SHIFT_LEFT_ON); break;
             case Keys.SEND: {
                 int a = action(info);
                 if (a == EditorInfo.IME_ACTION_SEND || a == EditorInfo.IME_ACTION_GO || a == EditorInfo.IME_ACTION_SEARCH) ic.performEditorAction(a);

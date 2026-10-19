@@ -11,7 +11,7 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
-/** Whisper Tools' few building blocks: pages, tiles, cards, text, buttons, in light or dark. */
+/** The app's few building blocks: pages, cards, text, buttons, steps, in light or dark. */
 final class Ui {
     final Activity a;
     final Theme t;
@@ -38,7 +38,7 @@ final class Ui {
                 arrow.setTextSize(TypedValue.COMPLEX_UNIT_SP, 24);
                 arrow.setTextColor(0xFFFFFFFF);
                 arrow.setGravity(Gravity.CENTER);
-                arrow.setContentDescription("Back to Whisper Tools");
+                arrow.setContentDescription("Back");
                 arrow.setOnClickListener(v -> back.run());
                 bar.addView(arrow, new LinearLayout.LayoutParams(dp(52), dp(56)));
             } else bar.setPadding(dp(16), 0, dp(16), 0);
@@ -65,38 +65,6 @@ final class Ui {
     }
 
     LinearLayout page() { return page(null, null); }
-
-    /** A tile for the home screen: a sign, a name, and a line that says how it is. Returns the line. */
-    TextView tile(LinearLayout row, String sign, String name, String what, View.OnClickListener l) {
-        LinearLayout c = new LinearLayout(a);
-        c.setOrientation(LinearLayout.VERTICAL);
-        c.setPadding(dp(14), dp(14), dp(14), dp(14));
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(t.card); bg.setCornerRadius(dp(14)); bg.setStroke(dp(1), t.line);
-        c.setBackground(bg);
-        c.setClickable(true);
-        c.setFocusable(true);
-        c.setOnClickListener(l);
-        c.setContentDescription(name + ". " + what);
-        TextView s = text(c, sign, 30, t.ink, false);
-        s.setPadding(0, 0, 0, dp(6));
-        text(c, name, 17, t.ink, true);
-        text(c, what, 13, t.muted, false);
-        TextView state = text(c, "", 13, t.green, true);
-        state.setPadding(0, dp(6), 0, 0);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1);
-        lp.setMargins(dp(5), dp(5), dp(5), dp(5));
-        row.addView(c, lp);
-        return state;
-    }
-
-    LinearLayout row() {
-        LinearLayout r = new LinearLayout(a);
-        r.setOrientation(LinearLayout.HORIZONTAL);
-        r.setPadding(-dp(5), 0, -dp(5), 0);
-        root.addView(r, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
-        return r;
-    }
 
     TextView text(LinearLayout into, String s, float sp, int color, boolean bold) {
         TextView v = new TextView(a);
@@ -164,17 +132,5 @@ final class Ui {
         row.addView(col, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
         c.addView(row);
         return state;
-    }
-
-    static String time(int seconds) {
-        if (seconds < 60) return seconds + " s";
-        int m = (seconds + 30) / 60;
-        return m < 60 ? "about " + m + " min" : "about " + (m / 60) + " h " + (m % 60) + " min";
-    }
-
-    static String size(long bytes) {
-        if (bytes < 1024) return bytes + " bytes";
-        if (bytes < 1024 * 1024) return (bytes + 512) / 1024 + " KB";
-        return String.format(java.util.Locale.US, "%.1f MB", bytes / 1048576.0);
     }
 }

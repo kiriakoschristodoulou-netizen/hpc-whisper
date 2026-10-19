@@ -8,9 +8,16 @@ unit wmodem;
   Reed-Solomon (15,11) code word over GF(16).
 
   A frame carries a piece of the document: "the document is L bytes long,
-  and from offset o it reads ...". The sender (TSender) sends new text at
-  once and repeats it during pauses, so a frame lost on the way only leaves
-  a gap on the phone that fills in a moment later.
+  and from offset o it reads ...". The sender (TSender) counts how many times
+  every byte has gone out: new text goes at once (with the last bytes that
+  went out only once), and in every pause the text is sent again, the least
+  sent first, spaced further and further apart, until each byte has gone out
+  as often as the repeats setting says. Odd and even sends can use different
+  bands. A frame lost on the way only leaves a gap on the phone that fills in
+  a moment later.
+
+  Keys that are not letters (arrows, Tab, Ctrl+C...) go into the document as
+  characters from Unicode's private area, U+E000 + code (docs/FORMAT.md).
 
   The tone maker works in whole numbers only (the StrongARM has no floating
   point): a phase counter and a 4096-step sine table. }
@@ -29,18 +36,28 @@ const
   PREAMBLE: array[0..7] of Byte = (0, 15, 0, 15, 11, 4, 11, 4);
   FORMAT_VERSION = 2;
   DOCMAX = 16000;                    { bytes in one document; then a new one starts }
-  REPAIR_IDLE_MS = 400;              { a pause this long: repeat what went out once }
-  REPAIR2_IDLE_MS = 1500;            { a longer pause: a third time }
-  TAIL_IDLE_MS = 3000;               { a long pause: the last words once more }
-  REPAIR_MAX = 22;
   LIVE_MAX = 12;                     { while typing, frames stay short: less lag }
-  SWEEP_IDLE_MS = 5000;              { a long rest: the recent text goes over once more, }
-  SWEEP_BACK = 300;                  { this far back, so any gap left on the phone fills }                   { repeats go in shorter frames: more of them get through }
+  REPAIR_MAX = 22;                   { repeats go in shorter frames: more of them get through }
+  RECENT_BACK = 300;                 { only this much of the end of the document is sent again }
+  MAX_SENDS = 8;                     { the most times a byte can be asked to go out }
+  DEFAULT_SENDS = 6;
+  { how long the text must have been left alone before it goes out for the 2nd, 3rd... time }
+  SEND_AFTER_MS: array[1..MAX_SENDS - 1] of LongWord = (400, 1500, 3000, 6000, 10000, 15000, 22000);
+
+  { keys (docs/FORMAT.md): U+E000 + code; Shift and Ctrl add $100 and $200 to the movement and delete keys }
+  KEY_BASE = $E000;
+  KEY_SHIFT = $100; KEY_CTRL = $200;
+  K_BACKSPACE = $08; K_TAB = $09; K_SHIFT_TAB = $0A; K_ESC = $1B; K_PGUP = $21; K_PGDN = $22;
+  K_END = $23; K_HOME = $24; K_LEFT = $25; K_UP = $26; K_RIGHT = $27; K_DOWN = $28; K_DELETE = $2E;
+  K_SELALL = $41; K_COPY = $43; K_PASTE = $56; K_CUT = $58; K_REDO = $59; K_UNDO = $5A;
+  K_SEND = $80; K_BACK = $81; K_HOMESCREEN = $82; K_RECENTS = $83;
 
 type
   TFrame = record
     sym: array[0..MAXSYM - 1] of Byte;
     n: Integer;
+    alt: Boolean;                    { this send goes on the second band }
+    off, len, docL: Integer;         { what the frame says: bytes off..off+len of a document of docL bytes }
   end;
 
   { the tone maker: plays one frame, then silence }
@@ -67,24 +84,29 @@ type
   { the document and what still has to go out }
   TSender = record
     doc: array[0..DOCMAX - 1] of Byte;
+    sends: array[0..DOCMAX - 1] of Byte;   { how many times each byte has gone out }
     L: Integer;                      { document length, bytes (UTF-8) }
     docId: Byte;
     seq: Byte;
     sentL: Integer;                  { the length the phone was last told }
     liveFrom: Integer;               { from here on, never sent }
-    repairFrom: Integer;             { from here to liveFrom: sent once only }
-    repair2From: Integer;            { from here to repairFrom: sent twice only }
-    tailDone: Boolean;               { the last words were sent a third time }
-    sweepPos: Integer;               { the sweep over the recent text: next offset, or -1 when done }
+    keyEnd: Integer;                 { just after the last key: Backspace cannot go back past it }
+    target: Integer;                 { every byte goes out this many times }
     lastEdit: LongWord;              { tick of the last change }
   end;
 
 procedure SnInit(var s: TSender; docId: Byte);
 procedure SnNewDoc(var s: TSender);
 procedure SnType(var s: TSender; c: WideChar; now: LongWord);    { add a character (UTF-8) }
-procedure SnBackspace(var s: TSender; now: LongWord);           { remove the last character }
+procedure SnKey(var s: TSender; code: Integer; now: LongWord);   { add a key (a code from the K_ list, plus KEY_SHIFT/KEY_CTRL) }
+procedure SnBackspace(var s: TSender; now: LongWord);           { remove the last typed character; or, if none was typed since the last key, add the key Backspace }
+procedure SnDeleteWord(var s: TSender; now: LongWord);          { Ctrl+Backspace: the same, a word at a time }
+procedure SnResend(var s: TSender; now: LongWord);              { send the end of the document again, as if it was new }
 { the next frame to send, if any; now is GetTickCount }
 function SnNext(var s: TSender; now: LongWord; var f: TFrame): Boolean;
+function SnWaiting(const s: TSender): Integer;                  { bytes typed that have not gone out even once }
+{ how many times the end of the document (the last RECENT_BACK bytes) has gone out, at least; 0 when something is waiting }
+function SnSent(const s: TSender): Integer;
 
 procedure TmInit(var t: TToneMaker; rate: Integer);
 procedure TmStart(var t: TToneMaker; const f: TFrame);
@@ -220,8 +242,8 @@ begin
   FillChar(s, SizeOf(s), 0);
   s.docId := docId;
   if s.docId >= $FD then s.docId := 0;
-  s.tailDone := True;
-  s.sweepPos := -1;
+  s.sentL := -1;
+  s.target := DEFAULT_SENDS;
 end;
 
 procedure SnNewDoc(var s: TSender);
@@ -229,58 +251,119 @@ var id: Byte;
 begin
   id := Byte(s.docId + 1);
   if id >= $FD then id := 0;
-  s.L := 0; s.sentL := -1; s.liveFrom := 0; s.repairFrom := 0; s.repair2From := 0;
-  s.docId := id; s.tailDone := True; s.sweepPos := -1;
+  s.L := 0; s.sentL := -1; s.liveFrom := 0; s.keyEnd := 0;
+  s.docId := id;
 end;
 
 procedure Changed(var s: TSender; now: LongWord);
 begin
   if s.liveFrom > s.L then s.liveFrom := s.L;
-  if s.repairFrom > s.L then s.repairFrom := s.L;
-  if s.repair2From > s.L then s.repair2From := s.L;
-  s.tailDone := False;
-  s.sweepPos := s.L - SWEEP_BACK;
-  if s.sweepPos < 0 then s.sweepPos := 0;
+  if s.keyEnd > s.L then s.keyEnd := s.L;
   s.lastEdit := now;
 end;
 
-procedure SnType(var s: TSender; c: WideChar; now: LongWord);
-var u: Integer;
+procedure PutChar(var s: TSender; u: Integer);
+var n, i: Integer;
 begin
-  if s.L + 3 > DOCMAX then SnNewDoc(s);
-  u := Ord(c);
-  if u < $80 then begin s.doc[s.L] := u; Inc(s.L); end
+  if u < $80 then begin s.doc[s.L] := u; n := 1; end
   else if u < $800 then
   begin
-    s.doc[s.L] := $C0 or (u shr 6); s.doc[s.L + 1] := $80 or (u and $3F); Inc(s.L, 2);
+    s.doc[s.L] := $C0 or (u shr 6); s.doc[s.L + 1] := $80 or (u and $3F); n := 2;
   end
   else
   begin
     s.doc[s.L] := $E0 or (u shr 12); s.doc[s.L + 1] := $80 or ((u shr 6) and $3F);
-    s.doc[s.L + 2] := $80 or (u and $3F); Inc(s.L, 3);
+    s.doc[s.L + 2] := $80 or (u and $3F); n := 3;
   end;
+  for i := 0 to n - 1 do s.sends[s.L + i] := 0;
+  Inc(s.L, n);
+end;
+
+procedure SnType(var s: TSender; c: WideChar; now: LongWord);
+begin
+  if s.L + 3 > DOCMAX then SnNewDoc(s);
+  PutChar(s, Ord(c));
+  Changed(s, now);
+end;
+
+procedure SnKey(var s: TSender; code: Integer; now: LongWord);
+begin
+  if s.L + 3 > DOCMAX then SnNewDoc(s);
+  PutChar(s, KEY_BASE + code);
+  s.keyEnd := s.L;
   Changed(s, now);
 end;
 
 procedure SnBackspace(var s: TSender; now: LongWord);
 begin
-  if s.L = 0 then Exit;
+  if s.L <= s.keyEnd then
+  begin
+    { nothing typed since the last key (or at all): the phone deletes in its own field }
+    SnKey(s, K_BACKSPACE, now);
+    Exit;
+  end;
   Dec(s.L);
-  while (s.L > 0) and ((s.doc[s.L] and $C0) = $80) do Dec(s.L);   { a whole UTF-8 character }
+  while (s.L > s.keyEnd) and ((s.doc[s.L] and $C0) = $80) do Dec(s.L);   { a whole UTF-8 character }
   Changed(s, now);
 end;
 
-procedure MakeFrame(var s: TSender; o, n: Integer; var f: TFrame);
+procedure SnDeleteWord(var s: TSender; now: LongWord);
+begin
+  if s.L <= s.keyEnd then
+  begin
+    SnKey(s, K_BACKSPACE or KEY_CTRL, now);
+    Exit;
+  end;
+  { spaces and line ends first, then the letters of the word }
+  while (s.L > s.keyEnd) and ((s.doc[s.L - 1] = 32) or (s.doc[s.L - 1] = 10)) do Dec(s.L);
+  while (s.L > s.keyEnd) and (s.doc[s.L - 1] <> 32) and (s.doc[s.L - 1] <> 10) do Dec(s.L);
+  Changed(s, now);
+end;
+
+procedure SnResend(var s: TSender; now: LongWord);
+var lo, i: Integer;
+begin
+  lo := s.L - RECENT_BACK;
+  if lo < 0 then lo := 0;
+  for i := lo to s.L - 1 do s.sends[i] := 0;
+  if s.liveFrom > lo then s.liveFrom := lo;
+  s.sentL := -1;
+  s.lastEdit := now;
+end;
+
+function SnWaiting(const s: TSender): Integer;
+begin
+  Result := s.L - s.liveFrom;
+end;
+
+function SnSent(const s: TSender): Integer;
+var i, lo, m: Integer;
+begin
+  if (s.L = 0) or (s.L - s.liveFrom > 0) then begin Result := 0; Exit; end;
+  lo := s.L - RECENT_BACK;
+  if lo < 0 then lo := 0;
+  m := MAX_SENDS;
+  for i := lo to s.L - 1 do if s.sends[i] < m then m := s.sends[i];
+  Result := m;
+end;
+
+procedure MakeFrame(var s: TSender; o, n: Integer; alt: Boolean; var f: TFrame);
 var i: Integer; tb: array[0..MAXLEN - 1] of Byte;
 begin
-  for i := 0 to n - 1 do tb[i] := s.doc[o + i];
+  for i := 0 to n - 1 do
+  begin
+    tb[i] := s.doc[o + i];
+    if s.sends[o + i] < 255 then Inc(s.sends[o + i]);
+  end;
   EncodeFrame(tb, n, s.seq, s.docId, s.L, o, f);
+  f.alt := alt;
+  f.off := o; f.len := n; f.docL := s.L;
   s.seq := Byte(s.seq + 1);
   s.sentL := s.L;
 end;
 
 function SnNext(var s: TSender; now: LongWord; var f: TFrame): Boolean;
-var o, n: Integer; idle: LongWord;
+var o, n, i, lo, m: Integer; idle: LongWord;
 begin
   Result := False;
   idle := now - s.lastEdit;
@@ -298,54 +381,30 @@ begin
     end
     else
     begin
-      { a short frame (they arrive sooner): the new text, and older text up to LIVE_MAX }
-      o := s.repairFrom;
-      if s.L - o > LIVE_MAX then o := s.L - LIVE_MAX;
+      { a short frame (they arrive sooner): the new text, and older text that went out once, up to LIVE_MAX }
+      o := s.L - LIVE_MAX;
+      if o < 0 then o := 0;
+      while (o < s.liveFrom) and (s.sends[o] >= 2) do Inc(o);
       n := s.L - o;
     end;
-    MakeFrame(s, o, n, f);
-    if o <= s.repairFrom then s.repairFrom := s.liveFrom;     { what went out once has now gone twice }
-    s.liveFrom := o + n;
+    MakeFrame(s, o, n, False, f);
+    if o + n > s.liveFrom then s.liveFrom := o + n;
     Result := True;
     Exit;
   end;
-  { a pause: repeat what went out only once }
-  if (s.repairFrom < s.L) and (idle >= REPAIR_IDLE_MS) then
+  { a pause: the text that has gone out the fewest times goes out again, if it has been left alone long
+    enough for that many sends (the 2nd after 0.4 s, the 3rd after 1.5 s, ...) }
+  lo := s.L - RECENT_BACK;
+  if lo < 0 then lo := 0;
+  m := 255;
+  for i := lo to s.L - 1 do if s.sends[i] < m then m := s.sends[i];
+  if (m >= 1) and (m < s.target) and (m < MAX_SENDS) and (idle >= SEND_AFTER_MS[m]) then
   begin
-    o := s.repairFrom; n := s.L - o;
-    if n > REPAIR_MAX then n := REPAIR_MAX;
-    MakeFrame(s, o, n, f);
-    s.repairFrom := o + n;
-    Result := True;
-    Exit;
-  end;
-  { a longer pause: what went out twice, a third time }
-  if (s.repair2From < s.repairFrom) and (idle >= REPAIR2_IDLE_MS) then
-  begin
-    o := s.repair2From; n := s.repairFrom - o;
-    if n > REPAIR_MAX then n := REPAIR_MAX;
-    MakeFrame(s, o, n, f);
-    s.repair2From := o + n;
-    Result := True;
-    Exit;
-  end;
-  { a long pause: the last words once more (and an empty document is announced too) }
-  if (not s.tailDone) and (idle >= TAIL_IDLE_MS) then
-  begin
-    o := s.L - REPAIR_MAX; if o < 0 then o := 0;
-    MakeFrame(s, o, s.L - o, f);
-    s.tailDone := True;
-    Result := True;
-    Exit;
-  end;
-  { a long rest: one sweep over the recent text }
-  if (s.sweepPos >= 0) and (s.sweepPos < s.L) and (idle >= SWEEP_IDLE_MS) then
-  begin
-    o := s.sweepPos; n := s.L - o;
-    if n > REPAIR_MAX then n := REPAIR_MAX;
-    MakeFrame(s, o, n, f);
-    s.sweepPos := o + n;
-    if s.sweepPos >= s.L then s.sweepPos := -1;
+    o := lo;
+    while s.sends[o] <> m do Inc(o);
+    n := 1;
+    while (o + n < s.L) and (n < REPAIR_MAX) and (s.sends[o + n] <= m + 1) do Inc(n);
+    MakeFrame(s, o, n, not Odd(m + 1), f);              { the 2nd, 4th... send on the second band }
     Result := True;
   end;
 end;

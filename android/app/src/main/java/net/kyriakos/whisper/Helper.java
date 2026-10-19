@@ -1,10 +1,7 @@
 package net.kyriakos.whisper;
 
 import android.accessibilityservice.AccessibilityService;
-import android.accessibilityservice.GestureDescription;
-import android.graphics.Path;
 import android.graphics.Rect;
-import android.os.Bundle;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 
@@ -13,10 +10,10 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * The optional Whisper Tools helper (an accessibility service, off until you
+ * The optional HPC Whisper helper (an accessibility service, off until you
  * turn it on in the phone's settings). It does only what you ask from the
- * handheld: press Send, go Back, Home or to Recent apps, and, for the remote,
- * tap, long-press, swipe and type. It reads nothing and keeps nothing.
+ * handheld: press Send, go Back, Home or to Recent apps. It reads nothing and
+ * keeps nothing.
  */
 public class Helper extends AccessibilityService {
     public static final int BACK = 1, HOME = 2, RECENTS = 3;
@@ -80,31 +77,4 @@ public class Helper extends AccessibilityService {
     }
 
     private static String str(CharSequence s) { return s == null ? "" : s.toString(); }
-
-    /** A tap (ms = 50), a long press (ms = 700), or a swipe, at screen pixels. */
-    public static boolean gesture(float x1, float y1, float x2, float y2, long ms) {
-        Helper h = instance;
-        if (h == null) return false;
-        Path p = new Path();
-        p.moveTo(Math.max(0, x1), Math.max(0, y1));
-        if (x2 != x1 || y2 != y1) p.lineTo(Math.max(0, x2), Math.max(0, y2));
-        GestureDescription g = new GestureDescription.Builder().addStroke(new GestureDescription.StrokeDescription(p, 0, Math.max(1, ms))).build();
-        return h.dispatchGesture(g, null, null);
-    }
-
-    /** Adds text to the field that has the focus (for the remote, when the Whisper Tools keyboard is not open). */
-    public static boolean type(String s) {
-        Helper h = instance;
-        if (h == null) return false;
-        AccessibilityNodeInfo root = h.getRootInActiveWindow();
-        if (root == null) return false;
-        AccessibilityNodeInfo f = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
-        if (f == null || !f.isEditable()) return false;
-        CharSequence cur = f.getText();
-        String now = cur == null ? "" : cur.toString();
-        if (android.os.Build.VERSION.SDK_INT >= 26 && f.isShowingHintText()) now = "";
-        Bundle b = new Bundle();
-        b.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, now + s);
-        return f.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, b);
-    }
 }

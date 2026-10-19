@@ -1,11 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- the microphone and the speaker; there is no internet permission at all -->
+    <!-- the microphone, to hear the handheld; there is no internet permission at all -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
@@ -22,27 +18,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <activity android:name=".KeyboardActivity" android:exported="false" android:parentActivityName=".MainActivity" />
-        <activity android:name=".LinkActivity" android:exported="false" android:parentActivityName=".MainActivity" />
-        <activity android:name=".FilesActivity" android:exported="false" android:parentActivityName=".MainActivity" />
-        <activity android:name=".RemoteActivity" android:exported="false" android:parentActivityName=".MainActivity" />
-        <activity android:name=".RecentActivity" android:exported="false" android:parentActivityName=".MainActivity" />
-        <activity android:name=".AboutActivity" android:exported="false" android:parentActivityName=".MainActivity" />
-        <activity
-            android:name=".ShareActivity"
-            android:label="Whisper Tools: to the handheld"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.SEND" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="*/*" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.SEND_MULTIPLE" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="*/*" />
-            </intent-filter>
-        </activity>
+        <activity android:name=".HelpActivity" android:exported="false" android:parentActivityName=".MainActivity" />
         <service
             android:name=".WhisperIme"
             android:label="@string/app_name"
@@ -63,10 +39,6 @@
             </intent-filter>
             <meta-data android:name="android.accessibilityservice" android:resource="@xml/helper" />
         </service>
-        <service
-            android:name=".LinkService"
-            android:exported="false"
-            android:foregroundServiceType="microphone|mediaProjection" />
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.files"

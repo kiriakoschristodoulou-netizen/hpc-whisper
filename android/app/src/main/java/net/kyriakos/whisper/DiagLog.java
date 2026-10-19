@@ -13,7 +13,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 /**
- * The phone's diagnostics: every event of the link as one line with the time of day (to the millisecond), in
+ * The phone's diagnostics: every event of the keyboard as one line with the time of day (to the millisecond), in
  * a log file kept on the phone, and the last 30 seconds of what the microphone heard (the first microphone,
  * before anything is muted). Lines collect in memory and go to the file once a second from a thread of
  * their own. Past 2 MB the log moves to an old file and starts again (the two together are shared).
@@ -70,8 +70,8 @@ public final class DiagLog {
         }
     }
 
-    private static File file() { return new File(dir, "whisper-tools-log.txt"); }
-    private static File oldFile() { return new File(dir, "whisper-tools-log-old.txt"); }
+    private static File file() { return new File(dir, "hpc-whisper-log.txt"); }
+    private static File oldFile() { return new File(dir, "hpc-whisper-log-old.txt"); }
 
     private static void writer() {
         while (true) {
@@ -165,72 +165,5 @@ public final class DiagLog {
         synchronized (DiagLog.class) { file().delete(); oldFile().delete(); }
         synchronized (tapeLock) { tapePos = 0; }
         log("log cleared");
-    }
-
-    // ---------- messages in words ----------
-
-    public static String chan(int ch) {
-        switch (ch) {
-            case net.kyriakos.whisper.w3.Channel.SU_NARROW: return "SU";
-            case net.kyriakos.whisper.w3.Channel.SU_WIDE: return "SUW";
-            case net.kyriakos.whisper.w3.Channel.SD: return "SD";
-            case net.kyriakos.whisper.w3.Channel.FU: return "FU";
-            case net.kyriakos.whisper.w3.Channel.FD: return "FD";
-            case 5: return "TD";                      // tones down (Link.TD)
-            default: return "ch" + ch;
-        }
-    }
-
-    private static int w16(byte[] p, int i) { return ((p[i] & 255) << 8) | (p[i + 1] & 255); }
-
-    /** A message of format 3, in words: its type, length and what matters in it. */
-    public static String describe(int type, byte[] p) {
-        int n = p == null ? 0 : p.length;
-        StringBuilder s = new StringBuilder();
-        switch (type) {
-            case 0x01:
-                s.append("TEXT");
-                if (n >= 6) {
-                    s.append(" doc ").append(p[0] & 255).append(" seq ").append(p[1] & 255).append(" length ").append(w16(p, 2))
-                            .append(" from ").append(w16(p, 4)).append(" \"");
-                    for (int i = 6; i < n; i++) {
-                        int c = p[i] & 255;
-                        if (c >= 32 && c < 127 && c != '"') s.append((char) c); else s.append('<').append(c).append('>');
-                    }
-                    s.append('"');
-                }
-                break;
-            case 0x02: s.append("TEXT_ACK"); if (n >= 5) s.append(" doc ").append(p[0] & 255).append(" known ").append(w16(p, 1)).append(" of length ").append(w16(p, 3)); break;
-            case 0x10:
-                s.append("FILE_OFFER");
-                if (n >= 9) s.append(" id ").append(w16(p, 0)).append(" size ").append(((p[2] & 255) << 24) | ((p[3] & 255) << 16) | ((p[4] & 255) << 8) | (p[5] & 255))
-                        .append(" packets ").append(w16(p, 6)).append(" kind ").append(p[8] & 255);
-                break;
-            case 0x11: s.append("FILE_DATA"); if (n >= 4) s.append(" id ").append(w16(p, 0)).append(" packet ").append(w16(p, 2)).append(" bytes ").append(n - 4); break;
-            case 0x12:
-                s.append("FILE_NEED");
-                if (n >= 5) {
-                    s.append(" id ").append(w16(p, 0)).append(" flag ").append(p[2] & 255).append(" have ").append(w16(p, 3)).append(" missing ").append((n - 5) / 2);
-                    for (int i = 5, k = 0; i + 1 < n && k < 8; i += 2, k++) s.append(k == 0 ? ": " : " ").append(w16(p, i));
-                    if ((n - 5) / 2 > 8) s.append(" ...");
-                }
-                break;
-            case 0x13: s.append("FILE_CANCEL"); if (n >= 2) s.append(" id ").append(w16(p, 0)); break;
-            case 0x20: s.append("SCREEN"); break;
-            case 0x21: s.append("INPUT"); if (n >= 1) s.append(" kind ").append(p[0] & 255); break;
-            case 0x30: s.append("TRAIN"); break;
-            case 0x31: s.append("MAP"); if (n >= 2) s.append(" ch ").append(p[0] & 255).append(" number ").append(p[1] & 255); break;
-            case 0x32: s.append("HELLO"); if (n >= 4) s.append(" version ").append(p[0] & 255).append(" reply ").append(p[3] & 1); break;
-            case 0x33: s.append("CHECK"); if (n >= 1) s.append(" ch ").append(chan(p[0] & 255)); break;
-            case 0x34: s.append("PAIR_REPORT"); if (n >= 40) s.append(" scale ").append(w16(p, 34)).append(" ladder ").append((p[38] & 255) - 1).append(" quality ").append((p[39] & 255) - 20).append(" dB"); break;
-            case 0x35: s.append("SELFTEST"); if (n >= 3) s.append(" stage ").append(p[1] & 255).append(" number ").append(p[2] & 255); break;
-            default: s.append("type 0x").append(Integer.toHexString(type));
-        }
-        return s.append(" (").append(n).append(" bytes)").toString();
-    }
-
-    public static String typeName(int type) {
-        String d = describe(type, new byte[0]);
-        return d.substring(0, d.indexOf(" ("));
     }
 }
