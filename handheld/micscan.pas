@@ -1,7 +1,7 @@
 program micscan;
 { Mic Scan: finds out how a handheld's microphone really hears sound.
 
-  The phone plays a one-minute test signal (the page scan.html); this program
+  The phone plays a test signal of about a minute and a quarter (the page scan.html); this program
   records it, measures it (scanlib.pas), shows what it found, and can type
   the report to the phone through HPC Whisper's sound link (wmodem.pas), so
   nothing has to be copied off the handheld.
@@ -16,7 +16,7 @@ program micscan;
 uses Windows, wmodem, scanlib;
 
 const
-  VERSION = '1.0';
+  VERSION = '1.1';
   CREATOR = 'Kyriakos Christodoulou';
   CLSNAME: UnicodeString = 'HPCMicScan';
   APPNAME: UnicodeString = 'Mic Scan';
@@ -26,13 +26,13 @@ const
   IN_RATE = 44100;                 { what the handheld says; the real rate is measured }
   IN_N = 4410;                     { 100 ms per buffer }
   IN_NBUF = 12;
-  REC_SECONDS = 75;
+  REC_SECONDS = 92;
   REC_MAX = IN_RATE * REC_SECONDS;
   OUT_RATE = 43200;                { for sending the report: the speaker's real rate }
   BUF_N = 4410; NBUF = 3;
 
   ST_READY = 0; ST_REC = 1; ST_WORK = 2; ST_RESULT = 3;
-  PAGES = 4;
+  PAGES = 5;
 
   HEAD_H = 30; FOOT_H = 42; PAD = 8;
 
@@ -653,7 +653,7 @@ begin
   Txt(dc, '2.  Press Enter here. On the phone open this page and tap Start:',
       MkRect(card.left + 16, y + 46, card.right - 16, y + 64), fNorm, COL_INK, DT_LEFT or DT_SINGLELINE);
   Txt(dc, 'kiriakoschristodoulou-netizen.github.io/hpc-whisper/scan.html', MkRect(card.left + 36, y + 64, card.right - 16, y + 82), fBold, COL_KEYFG, DT_LEFT or DT_SINGLELINE);
-  Txt(dc, '3.  Keep quiet for a minute. When the phone says Done, press Enter to measure.',
+  Txt(dc, '3.  Keep quiet for a minute and a quarter. When the phone says Done, press Enter to measure.',
       MkRect(card.left + 16, y + 84, card.right - 16, y + 102), fNorm, COL_INK, DT_LEFT or DT_SINGLELINE);
   if MicErr <> '' then
     Txt(dc, MicErr, MkRect(card.left + 16, y + 112, card.right - 16, y + 130), fBold, COL_FAIL, DT_LEFT or DT_SINGLELINE);
@@ -700,7 +700,7 @@ begin
 end;
 
 procedure DrawSummary(dc: HDC; const card: TRect);
-var y, i, lo, hi, best, bi: Integer; ww: UnicodeString;
+var y, f: Integer; ww, t: UnicodeString;
 begin
   y := card.top + 8;
   if not Res.ok then
@@ -709,17 +709,22 @@ begin
     Txt(dc, US(Res.err), MkRect(card.left + 16, y + 30, card.right - 16, card.bottom - 6), fNorm, COL_INK, DT_LEFT or DT_WORDBREAK);
     Exit;
   end;
-  lo := UsableLowHz(Res); hi := UsableHighHz(Res);
-  best := -9990; bi := 0;
-  for i := 0 to NTONE - 1 do if Res.toneDb10[i] - Res.noiseDb10[i] > best then begin best := Res.toneDb10[i] - Res.noiseDb10[i]; bi := i; end;
-  if lo = 0 then ww := 'No tone was heard clearly and steadily.'
-  else ww := 'Usable: ' + KHz1(lo) + ' to ' + KHz1(hi) + ' kHz';
+  ww := 'Strong signal up to ' + KHz1(Res.strongTopHz) + ' kHz';
   Txt(dc, ww, MkRect(card.left + 16, y, card.right - 16, y + 24), fBig, COL_NAVY, DT_LEFT or DT_SINGLELINE);
-  Txt(dc, '(20 dB over the background and the level not falling away)', MkRect(card.left + 16, y + 22, card.right - 16, y + 38), fSmall, COL_MUTED, DT_LEFT or DT_SINGLELINE);
-  Txt(dc, 'Real sampling rate: ' + IU(Res.rate100 div 100) + ' Hz (Windows says 44,100)', MkRect(card.left + 16, y + 44, card.right - 16, y + 62), fNorm, COL_INK, DT_LEFT or DT_SINGLELINE);
-  Txt(dc, 'Best tone: ' + KHz1(ToneHz(bi)) + ' kHz, ' + D1(best) + ' dB over the background', MkRect(card.left + 16, y + 62, card.right - 16, y + 80), fNorm, COL_INK, DT_LEFT or DT_SINGLELINE);
-  Txt(dc, LineOf(Full, Full.n - 1), MkRect(card.left + 16, y + 80, card.right - 16, y + 98), fNorm, COL_INK, DT_LEFT or DT_SINGLELINE);
-  Txt(dc, 'Bursts at 19.5 kHz seen (of 6): 20 ms ' + IU(Res.burstSeen[0]) + ', 40 ms ' + IU(Res.burstSeen[1]) + ', 60 ms ' + IU(Res.burstSeen[2]) + ', 100 ms ' + IU(Res.burstSeen[3]),
+  if Res.cliffHz > 0 then t := 'The response ends near ' + KHz1(Res.cliffHz) + ' kHz (20 dB under the middle). Anything at all up to ' + KHz1(Res.marginalTopHz) + ' kHz.'
+  else t := 'No sharp end up to 21.5 kHz. Anything at all up to ' + KHz1(Res.marginalTopHz) + ' kHz.';
+  Txt(dc, t, MkRect(card.left + 16, y + 24, card.right - 16, y + 40), fSmall, COL_MUTED, DT_LEFT or DT_SINGLELINE);
+  Txt(dc, 'Real sampling rate: ' + IU(Res.rate100 div 100) + ' Hz (Windows says 44,100). Offset ' + IU(Res.dc) + ' counts.', MkRect(card.left + 16, y + 44, card.right - 16, y + 62), fNorm, COL_INK, DT_LEFT or DT_SINGLELINE);
+  if Following(Res) then t := 'The level follows the sound: no strong automatic gain.'
+  else
+  begin
+    t := 'Automatic gain: 23 dB of change comes out as';
+    for f := 0 to NLINF - 1 do t := t + ' ' + D1(Res.slope100[f] * 235 div 100) + ' dB';
+  end;
+  Txt(dc, t, MkRect(card.left + 16, y + 62, card.right - 16, y + 80), fNorm, COL_INK, DT_LEFT or DT_SINGLELINE);
+  Txt(dc, 'Bursts seen (of 6) at 10, 20, 40, 100 ms:', MkRect(card.left + 16, y + 80, card.right - 16, y + 98), fNorm, COL_INK, DT_LEFT or DT_SINGLELINE);
+  Txt(dc, '12.5 kHz: ' + IU(Res.burstSeen[0, 0]) + ' ' + IU(Res.burstSeen[0, 1]) + ' ' + IU(Res.burstSeen[0, 2]) + ' ' + IU(Res.burstSeen[0, 3]) +
+      '     19.5 kHz: ' + IU(Res.burstSeen[1, 0]) + ' ' + IU(Res.burstSeen[1, 1]) + ' ' + IU(Res.burstSeen[1, 2]) + ' ' + IU(Res.burstSeen[1, 3]),
       MkRect(card.left + 16, y + 98, card.right - 16, y + 116), fNorm, COL_INK, DT_LEFT or DT_SINGLELINE);
 end;
 
@@ -727,7 +732,7 @@ procedure DrawResponse(dc: HDC; const card: TRect);
 var i, x0, x1, y0, y1, bw, h, db, nz, top: Integer; col: COLORREF; rc: TRect;
 begin
   x0 := card.left + 34; x1 := card.right - 10; y0 := card.top + 24; y1 := card.bottom - 22;
-  Txt(dc, 'Level of each tone (dBFS) against frequency. Green: usable. Line: background.', MkRect(card.left + 10, card.top + 4, card.right - 10, card.top + 22), fSmall, COL_MUTED, DT_LEFT or DT_SINGLELINE);
+  Txt(dc, 'Level of each tone (dBFS) against frequency. Green: 40 dB over the background. Amber: 20. Red line: background.', MkRect(card.left + 10, card.top + 4, card.right - 10, card.top + 22), fSmall, COL_MUTED, DT_LEFT or DT_SINGLELINE);
   { scale: -110 dB at the bottom, -10 dB at the top }
   bw := (x1 - x0) div NTONE;
   for i := 0 to 5 do
@@ -743,7 +748,7 @@ begin
     if db < -110 then db := -110;
     if db > -10 then db := -10;
     top := y0 + (y1 - y0) * (-10 - db) div 100;
-    if (Res.toneDb10[i] - Res.noiseDb10[i] >= 200) and (Res.fall10[i] <= 150) then col := COL_GOOD
+    if Res.toneDb10[i] - Res.noiseDb10[i] >= 400 then col := COL_GOOD
     else if Res.toneDb10[i] - Res.noiseDb10[i] >= 200 then col := COL_AMBER else col := COL_GREY;
     rc := MkRect(x0 + i * bw + 1, top, x0 + (i + 1) * bw - 1, y1);
     FillR(dc, rc, col);
@@ -754,28 +759,47 @@ begin
     FillR(dc, MkRect(x0 + i * bw, h, x0 + (i + 1) * bw, h + 2), COL_FAIL);
   end;
   for i := 0 to 4 do
-    Txt(dc, IU(i * 5) + 'k', MkRect(x0 + (i * 10 - 1) * bw, y1 + 3, x0 + (i * 10 + 5) * bw, y1 + 18), fSmall, COL_MUTED, DT_LEFT or DT_SINGLELINE);
+    Txt(dc, IU(i * 5) + 'k', MkRect(x0 + ToneIndex(i * 5000 + 500) * bw - bw, y1 + 3, x0 + ToneIndex(i * 5000 + 500) * bw + 5 * bw, y1 + 18), fSmall, COL_MUTED, DT_LEFT or DT_SINGLELINE);
 end;
 
 procedure DrawGain(dc: HDC; const card: TRect);
 var g, k, y0: Integer; hd: UnicodeString; col: COLORREF; v: Integer;
+const HDR: array[0..NENV - 1] of string = ('0', '.02', '.05', '.1', '.2', '.4', '.8', '1.4');
 begin
-  Txt(dc, 'Level while a tone goes on (dB from its first 0.15 s). A fall means automatic gain.', MkRect(card.left + 10, card.top + 3, card.right - 40, card.top + 18), fSmall, COL_MUTED, DT_LEFT or DT_SINGLELINE);
-  Txt(dc, 'after   0.05     0.1     0.25     0.5       1       1.9 s', MkRect(card.left + 160, card.top + 19, card.right - 8, card.top + 34), fSmall, COL_MUTED, DT_LEFT or DT_SINGLELINE);
+  Txt(dc, 'Level while a tone goes on (dB from its first 20 ms), seconds after the start:', MkRect(card.left + 10, card.top + 3, card.right - 40, card.top + 18), fSmall, COL_MUTED, DT_LEFT or DT_SINGLELINE);
+  for k := 0 to NENV - 1 do
+    Txt(dc, US(HDR[k]), MkRect(card.left + 150 + k * 46, card.top + 19, card.left + 196 + k * 46, card.top + 34), fSmall, COL_MUTED, DT_LEFT or DT_SINGLELINE);
+  Txt(dc, 'pause', MkRect(card.left + 524, card.top + 19, card.right - 8, card.top + 34), fSmall, COL_MUTED, DT_LEFT or DT_SINGLELINE);
   for g := 0 to NAGC - 1 do
   begin
     y0 := card.top + 34 + g * 24;
-    hd := KHz1(AGC_HZ[g]) + ' kHz, ' + IU(AGC_AMP[g]) + '%';
-    Txt(dc, hd, MkRect(card.left + 10, y0, card.left + 110, y0 + 18), fBold, COL_INK, DT_LEFT or DT_SINGLELINE);
-    Txt(dc, D1(Res.envAbs10[g] div 10 * 10) + ' dBFS', MkRect(card.left + 104, y0 + 2, card.left + 164, y0 + 18), fSmall, COL_MUTED, DT_LEFT or DT_SINGLELINE);
+    hd := KHz1(AGC_HZ[g]) + 'k ' + IU(AGC_AMP[g]) + '%';
+    Txt(dc, hd, MkRect(card.left + 10, y0, card.left + 100, y0 + 18), fBold, COL_INK, DT_LEFT or DT_SINGLELINE);
+    Txt(dc, IU(Res.envAbs10[g] div 10) + 'dB', MkRect(card.left + 100, y0 + 2, card.left + 150, y0 + 18), fSmall, COL_MUTED, DT_LEFT or DT_SINGLELINE);
     for k := 0 to NENV - 1 do
     begin
       v := Res.envDb10[g, k];
       if v <= -150 then col := COL_FAIL else if v <= -60 then col := COL_AMBER else col := COL_GOOD;
-      Txt(dc, D1(v), MkRect(card.left + 166 + k * 52, y0, card.left + 218 + k * 52, y0 + 18), fBold, col, DT_LEFT or DT_SINGLELINE);
+      Txt(dc, D1(v), MkRect(card.left + 150 + k * 46, y0, card.left + 196 + k * 46, y0 + 18), fBold, col, DT_LEFT or DT_SINGLELINE);
     end;
-    Txt(dc, 'pause ' + D1(Res.envBack10[g]), MkRect(card.left + 484, y0 + 2, card.right - 6, y0 + 18), fSmall, COL_MUTED, DT_LEFT or DT_SINGLELINE);
+    Txt(dc, D1(Res.envBack10[g]), MkRect(card.left + 524, y0, card.right - 6, y0 + 18), fBold, COL_INK, DT_LEFT or DT_SINGLELINE);
   end;
+end;
+
+procedure DrawLinear(dc: HDC; const card: TRect);
+var f, g, y0: Integer; col: COLORREF;
+begin
+  Txt(dc, 'Recorded level (dBFS, late in the tone) for a sound of 90, 45, 22, 11, 6 % (23 dB range):', MkRect(card.left + 10, card.top + 3, card.right - 40, card.top + 18), fSmall, COL_MUTED, DT_LEFT or DT_SINGLELINE);
+  for f := 0 to NLINF - 1 do
+  begin
+    y0 := card.top + 26 + f * 30;
+    Txt(dc, KHz1(LIN_HZ[f]) + ' kHz', MkRect(card.left + 10, y0, card.left + 100, y0 + 20), fBold, COL_INK, DT_LEFT or DT_SINGLELINE);
+    for g := 0 to NLINA - 1 do
+      Txt(dc, D1(Res.linLate10[f, g]), MkRect(card.left + 100 + g * 62, y0, card.left + 160 + g * 62, y0 + 20), fBold, COL_INK, DT_LEFT or DT_SINGLELINE);
+    if Res.slope100[f] >= 60 then col := COL_GOOD else col := COL_FAIL;
+    Txt(dc, 'follows ' + IU(Res.slope100[f]) + '%', MkRect(card.left + 420, y0, card.right - 6, y0 + 20), fBold, col, DT_LEFT or DT_SINGLELINE);
+  end;
+  Txt(dc, '100% means the recording follows the sound; near 0 means automatic gain flattens it.', MkRect(card.left + 10, card.top + 116, card.right - 10, card.top + 132), fSmall, COL_MUTED, DT_LEFT or DT_SINGLELINE);
 end;
 
 procedure DrawReportText(dc: HDC; const card: TRect);
@@ -803,7 +827,8 @@ begin
     0: DrawSummary(dc, card);
     1: if Res.ok then DrawResponse(dc, card);
     2: if Res.ok then DrawGain(dc, card);
-    3: DrawReportText(dc, card);
+    3: if Res.ok then DrawLinear(dc, card);
+    4: DrawReportText(dc, card);
   end;
   Txt(dc, IU(Page + 1) + '/' + IU(PAGES), MkRect(card.right - 50, card.top + 4, card.right - 8, card.top + 20), fSmall, COL_MUTED, DT_RIGHT or DT_SINGLELINE);
 end;
@@ -816,8 +841,8 @@ begin
   y := card.top + 10;
   Txt(dc, APPNAME + '  ' + VERSION, MkRect(card.left + 16, y, card.right - 16, y + 24), fBig, COL_NAVY, DT_LEFT or DT_SINGLELINE);
   Txt(dc, 'Part of HPC Whisper. Created by ' + CREATOR + '.', MkRect(card.left + 16, y + 24, card.right - 16, y + 42), fNorm, COL_MUTED, DT_LEFT or DT_SINGLELINE);
-  Txt(dc, 'It records a one-minute test sound from the phone and measures how this handheld''s microphone hears it: ' +
-      'which frequencies, how loud, whether the level falls while a tone goes on (automatic gain), the real sampling rate, ' +
+  Txt(dc, 'It records a test sound of about a minute and a quarter from the phone and measures how this handheld''s microphone hears it: ' +
+      'which frequencies, how loud, whether the level follows the sound (automatic gain), the real sampling rate, ' +
       'ghost tones and the shortest burst it notices. Press S on the results to type the report to the phone.',
       MkRect(card.left + 16, y + 48, card.right - 16, y + 120), fNorm, COL_INK, DT_LEFT or DT_WORDBREAK);
   Txt(dc, 'Press any key to go back.', MkRect(card.left + 16, y + 126, card.right - 16, y + 144), fSmall, COL_MUTED, DT_LEFT or DT_SINGLELINE);

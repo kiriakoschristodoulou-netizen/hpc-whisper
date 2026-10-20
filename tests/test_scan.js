@@ -7,93 +7,88 @@ const gauss = () => { let s = 0; for (let i = 0; i < 6; i++) s += rnd(); return 
 let pass = 0, tot = 0;
 const check = (name, ok, info) => { tot++; if (ok) pass++; console.log((ok ? 'ok    ' : 'FAIL  ') + name + (info ? '  ' + info : '')); };
 
-// the microphone's response in dB: flat to 8 kHz, then falling to -45 at 18 kHz and -55 at 21.5 kHz
-const H = hz => hz <= 8000 ? 0 : hz <= 18000 ? -45 * (hz - 8000) / 10000 : -45 - 10 * (hz - 18000) / 3500;
+// the microphone's response in dB: flat to 13.75 kHz, then a cliff of 35 dB falling on to -55 at 21.5 kHz
+const H = hz => hz <= 13750 ? 0 : -35 - 20 * (hz - 14000) / 7500;
 const GH = 0.3;                                   // ghost: 900 Hz below, 0.3 of the tone
+const DC = 800;                                   // the microphone's offset, in counts
 
 function run(name, agc) {
   const SC = 20000;
   const x = P.render(FS, hz => [[hz, SC * Math.pow(10, H(hz) / 20)], [hz - 900, GH * SC * Math.pow(10, H(hz) / 20)]]);
-  // automatic gain: attack 60 ms time constant when the level is over a threshold, recovery 1.5 s
-  const gain = new Float32Array(x.length); let g = 1, env = 0;
-  const att = 1 - Math.exp(-1 / (0.06 * FS)), rel = Math.exp(1 / (1.5 * FS));
-  const y = new Float32Array(x.length);
+  // automatic gain (a compressor): the output is pulled toward 2500 counts; attack 20 ms, release 300 ms
+  const y = new Float32Array(x.length); let g = 1, env = 0;
+  const att = 1 - Math.exp(-1 / (0.02 * FS)), rel = 1 - Math.exp(-1 / (0.3 * FS)), dec = Math.exp(-1 / (0.03 * FS));
   for (let i = 0; i < x.length; i++) {
     if (agc) {
-      const a = Math.abs(x[i] * g);
-      env = a > env ? a : env * (1 - 1 / (0.05 * FS));
-      if (env > 800) g *= (1 - att * 0.5); else g = Math.min(1, g * rel);
-      g = Math.max(g, 0.01);
+      const a = Math.abs(x[i]);
+      env = a > env ? a : env * dec;
+      const gt = Math.min(1, 2500 / Math.max(env, 1));
+      g += (gt - g) * (gt < g ? att : rel);
     }
-    gain[i] = g; y[i] = x[i] * g;
+    y[i] = x[i] * g;
   }
-  // the recording: 2.3 s before the phone starts, the signal, 4 s after; noise 0.3 counts
+  // the recording: 2.3 s before the phone starts, the signal, 4 s after; noise 0.3 counts; offset
   const pre = Math.round(2.3 * REAL), n = pre + y.length + 4 * REAL, out = Buffer.alloc(2 * n);
   for (let j = 0; j < n; j++) {
     let v = j >= pre && j - pre < y.length ? y[j - pre] : 0;
-    v += 0.3 * gauss();
+    v += DC + 0.3 * gauss();
     out.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(v))), 2 * j);
   }
   const f = path.join(process.env.TMPDIR || '/tmp', 'scan-' + name + '.raw'); fs.writeFileSync(f, out);
   const txt = cp.execFileSync(path.join(__dirname, 'scansim'), [f, String(CLAIM)]).toString().split('\n');
-  const R = { tone: [], agc: [], burst: [] };
+  const R = { tone: [], agc: [], burst: [[], []], lin: [] };
   for (const l of txt) {
     const w = l.split(' ');
     if (w[0] === 'ok') R.ok = +w[1]; else if (w[0] === 'err') R.err = l;
     else if (w[0] === 'rate100') R.rate = +w[1] / 100; else if (w[0] === 'mark') R.mark = [+w[1], +w[2]];
-    else if (w[0] === 'noise') R.noise = +w[1];
+    else if (w[0] === 'noise') R.noise = +w[1]; else if (w[0] === 'dc') R.dc = +w[1];
     else if (w[0] === 'tone') R.tone[+w[1]] = w.slice(2).map(Number);
     else if (w[0] === 'agc') R.agc[+w[1]] = w.slice(2).map(Number);
-    else if (w[0] === 'burst') R.burst[+w[1]] = [+w[2], +w[3]];
-    else if (w[0] === 'usable') R.usable = [+w[1], +w[2]];
-    else if (w[0] === '#' && /Real sampling|Usable/.test(l)) console.log('      ' + l.slice(2));
+    else if (w[0] === 'burst') R.burst[+w[1]][+w[2]] = [+w[3], +w[4]];
+    else if (w[0] === 'lin') R.lin[+w[1]] = w.slice(2).map(Number);
+    else if (w[0] === 'verdict') R.verdict = w.slice(1).map(Number);
+    else if (w[0] === '#' && /Real sampling|response|Automatic|follows/.test(l)) console.log('      ' + l.slice(2));
   }
-  R.txt = txt; return { R, gain, SC, txt };
+  R.txt = txt; return { R, SC };
 }
 
-// ---- 1. a steady microphone ----
+// ---- 1. a steady microphone with an offset and a cliff ----
 {
   const { R, SC } = run('flat', false);
   check('analysis ran', R.ok === 1, R.err || '');
   check('real rate found', Math.abs(R.rate - REAL) / REAL < 0.0005, R.rate + ' (model ' + REAL + ')');
+  check('offset found', Math.abs(R.dc - DC) <= 3, R.dc + ' (model ' + DC + ')');
   let worst = 0, wi = 0;
   for (let i = 0; i < P.NTONE; i++) {
     const truth = 200 * Math.log10(P.TONE_AMP * SC * Math.pow(10, H(P.toneHz(i)) / 20) / 32768);
     const d = Math.abs(R.tone[i][0] - truth); if (d > worst) { worst = d; wi = i; }
   }
-  check('all 43 tone levels within 1.5 dB', worst <= 15, 'worst ' + (worst / 10).toFixed(1) + ' dB at ' + P.toneHz(wi) + ' Hz');
+  check('all 52 tone levels within 1.5 dB', worst <= 15, 'worst ' + (worst / 10).toFixed(1) + ' dB at ' + P.toneHz(wi) + ' Hz');
   let gw = 0;
   for (let i = 4; i < P.NTONE; i++) { const d = Math.abs(R.tone[i][3] - 200 * Math.log10(GH)); if (R.tone[i][0] - R.tone[i][1] > 150 && d > gw) gw = d; }
   check('ghost 900 Hz below found at -10.5 dB', gw <= 20, 'worst deviation ' + (gw / 10).toFixed(1) + ' dB');
   check('no ghost above', R.tone[20][4] < -200, 'level ' + R.tone[20][4] / 10);
   let fall = 0; for (let i = 0; i < P.NTONE; i++) fall = Math.max(fall, Math.abs(R.tone[i][2]));
   check('steady microphone: no fall', fall <= 15, 'largest ' + fall / 10 + ' dB');
-  check('noise floor near -100 dBFS', R.noise < -950 && R.noise > -1100, R.noise / 10 + ' dBFS');
-  // tones are heard 20 dB over background while  H > about -63 dB re 0.5*SC ... find the model's own limit
-  let hiTruth = 0; for (let i = 0; i < P.NTONE; i++) { const a = P.TONE_AMP * SC * Math.pow(10, H(P.toneHz(i)) / 20); if (20 * Math.log10(a / (0.3 * 1.41)) >= 20) hiTruth = P.toneHz(i); }
-  check('top of the usable range', Math.abs(R.usable[1] - hiTruth) <= 500, R.usable[1] + ' (model ' + hiTruth + ')');
+  check('noise floor near -98 dBFS with the offset removed', R.noise < -950 && R.noise > -1050, R.noise / 10 + ' dBFS');
   check('background at one frequency, measured like a tone (about -128 dBFS)', Math.abs(R.tone[10][1] - (-1280)) <= 40, R.tone[10][1] / 10 + ' dBFS');
+  check('the cliff is found at 14 kHz', R.verdict[1] === 14000, 'cliff ' + R.verdict[1]);
+  check('strong signal reaches the top (model: 21.5 kHz)', R.verdict[2] >= 21000, 'top ' + R.verdict[2]);
+  check('the level follows the sound', R.verdict[4] === 1 && R.lin.every(l => l[0] >= 90 && l[0] <= 110), JSON.stringify(R.lin.map(l => l[0])));
   const compact = R.txt.filter(l => l.startsWith('$ ')).map(l => l.slice(2));
-  check('the report for the phone is short (under 1,700 characters)', compact.join('\n').length < 1700, compact.join('\n').length + ' characters');
-  check('short bursts all seen', R.burst.every(b => b[1] >= 5), JSON.stringify(R.burst));
-  check('burst level near the steady tone (>= -3 dB)', R.burst.slice(1).every(b => b[0] > -30), JSON.stringify(R.burst.map(b => b[0] / 10)));
+  check('the report for the phone is short (under 1,900 characters)', compact.join('\n').length < 1900, compact.join('\n').length + ' characters');
+  check('bursts of 20 ms and more all seen', R.burst.every(s => s.slice(1).every(b => b[1] >= 5)), JSON.stringify(R.burst));
+  check('burst level near the steady tone (>= -3 dB)', R.burst.every(s => s.slice(2).every(b => b[0] > -30)), JSON.stringify(R.burst.map(s => s.map(b => b[0] / 10))));
 }
 
 // ---- 2. a microphone with automatic gain ----
 {
-  const { R, gain } = run('agc', true);
+  const { R } = run('agc', true);
   check('analysis ran (AGC)', R.ok === 1, R.err || '');
   check('real rate found (AGC)', Math.abs(R.rate - REAL) / REAL < 0.0005, R.rate + '');
-  // the model's own gain at the times the analysis looked at, for the 3 kHz test at 90 %
-  const g0 = 0, st = P.AGC_AT0 / 1000, at = ms => Math.round((st + ms / 1000) * FS);
-  const mg = i => 20 * Math.log10(gain[at(i * 50 + 25)]);
-  const ref = Math.max(mg(0), mg(1), mg(2));
-  const want = [0, 1, 4, 9, 19, 38].map(w => 10 * (mg(w) - ref));
-  const env = R.agc[0].slice(2);
-  let worst = 0; env.forEach((v, i) => { worst = Math.max(worst, Math.abs(v - want[i])); });
-  check('level curve of the gain test follows the model', worst <= 40, 'worst ' + (worst / 10).toFixed(1) + ' dB; model ' + want.map(v => (v / 10).toFixed(0)).join(' ') + ' | read ' + env.map(v => (v / 10).toFixed(0)).join(' '));
-  check('the fall is reported', R.agc[0][5] < -100, 'level at 0.5 s: ' + R.agc[0][5] / 10 + ' dB');
-  check('the verdict names automatic gain', R.txt.some(l => /automatic gain\./.test(l)));
+  check('the level does not follow the sound', R.verdict[4] === 0 && R.lin.slice(0, 2).every(l => l[0] < 40), JSON.stringify(R.lin.map(l => l[0])));
+  check('the fall is reported (90 % at 12 kHz)', R.agc[0][2 + 6] < -100, 'level at 0.8 s: ' + R.agc[0][8] / 10 + ' dB');
+  check('the verdict names automatic gain', R.txt.some(l => /^# Automatic gain/.test(l)));
 }
 
 // ---- 3. nothing useful recorded ----

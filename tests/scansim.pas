@@ -2,7 +2,7 @@ program scansim;
 { usage: scansim recording.raw rate   (16-bit little endian samples). Prints what scanlib measured, one value per line. }
 {$mode objfpc}{$H+}
 uses scanlib;
-var f: file; x: PSamples; n, rate, code, i, g, k: LongInt; r: TScanResult; L: TLines; size: LongInt;
+var f: file; x: PSamples; n, rate, code, i, g, k, q: LongInt; r: TScanResult; L: TLines; size: LongInt;
 begin
   Assign(f, ParamStr(1)); Reset(f, 1);
   size := FileSize(f);
@@ -28,8 +28,16 @@ begin
       for k := 0 to NENV - 1 do Write(' ', r.envDb10[g, k]);
       WriteLn;
     end;
-    for g := 0 to NBURST - 1 do WriteLn('burst ', g, ' ', r.burstDb10[g], ' ', r.burstSeen[g]);
-    WriteLn('usable ', UsableLowHz(r), ' ', UsableHighHz(r));
+    for q := 0 to NBSET - 1 do
+      for g := 0 to NBURST - 1 do WriteLn('burst ', q, ' ', g, ' ', r.burstDb10[q, g], ' ', r.burstSeen[q, g]);
+    for q := 0 to NLINF - 1 do
+    begin
+      Write('lin ', q, ' ', r.slope100[q]);
+      for g := 0 to NLINA - 1 do Write(' ', r.linLate10[q, g]);
+      WriteLn;
+    end;
+    WriteLn('dc ', r.dc);
+    WriteLn('verdict ', r.passDb10, ' ', r.cliffHz, ' ', r.strongTopHz, ' ', r.marginalTopHz, ' ', Ord(Following(r)));
   end;
   BuildReport(r, L);
   for i := 0 to L.n - 1 do WriteLn('# ', L.s[i]);
