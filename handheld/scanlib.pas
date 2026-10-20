@@ -17,8 +17,8 @@ const
   { the test signal, in milliseconds from the start of the first marker }
   MARK_HZ = 4000;
   MARK_MS = 600;
-  END_AT = 75500;                       { the second marker starts here }
-  PLAN_MS = 76100;
+  END_AT = 80000;                       { the second marker starts here }
+  PLAN_MS = 80600;
   NOISE_FROM = 1400; NOISE_TO = 2600;   { silence, to measure the background }
 
   { steady tones: 0.5 to 9.5 kHz every 500 Hz, 10 to 14.5 every 250 Hz, 15 to 21.5 every 500 Hz }
@@ -39,6 +39,11 @@ const
   AGC_AMP: array[0..NAGC - 1] of Integer = (90, 22, 90, 22);
   NENV = 8;                             { the points of the level curve kept: 20 ms windows starting here (ms) }
   ENV_AT: array[0..NENV - 1] of Integer = (0, 20, 50, 100, 200, 400, 800, 1400);
+
+  { one long ultrasonic tone: how far does the gain climb, and how long does it take }
+  SET_AT = 75500; SET_MS = 4000; SET_HZ = 18500; SET_AMP = 50;
+  NSET = 8;
+  SET_T: array[0..NSET - 1] of Integer = (0, 250, 500, 1000, 1500, 2000, 3000, 3800);
 
   { short bursts at two frequencies }
   NBSET = 2; NBURST = 4; BURST_N = 6; BURST_GAP = 150;
@@ -65,6 +70,8 @@ type
     ghostLo10, ghostHi10, harm10: array[0..NTONE - 1] of Integer;   { 900 Hz below, 900 Hz above, 2nd harmonic: dB x 10 relative to the tone, -9990 = not looked at }
     linEarly10, linLate10: array[0..NLINF - 1, 0..NLINA - 1] of Integer;   { level 20-120 ms and 400-600 ms into the tone, dBFS x 10 }
     envDb10: array[0..NAGC - 1, 0..NENV - 1] of Integer;   { level curve relative to the first 20 ms }
+    settleDb10: array[0..NSET - 1] of Integer;    { the long ultrasonic tone, relative to its first 20 ms }
+    settleAbs10: Integer;
     envBack10: array[0..NAGC - 1] of Integer;     { second tone, first 20 ms, relative to the first tone's }
     envAbs10: array[0..NAGC - 1] of Integer;      { first tone's first 20 ms, dBFS x 10 }
     burstDb10: array[0..NBSET - 1, 0..NBURST - 1] of Integer;   { average peak of the bursts relative to the steady tone at that frequency }
@@ -171,7 +178,7 @@ begin
   for i := 0 to nsub - 1 do tmp[i] := lvl[i * 16];
   for i := 1 to nsub - 1 do begin v := tmp[i]; k := i - 1; while (k >= 0) and (tmp[k] > v) do begin tmp[k + 1] := tmp[k]; Dec(k); end; tmp[k + 1] := v; end;
   md := tmp[nsub div 10];
-  thr := mx * 0.3;
+  thr := mx * 0.1;                            { low, so that a marker the gain is still lifting is found at its start }
   if thr < md * 12 then thr := md * 12;
   if mx < md * 12 then Exit;                  { nothing stands out }
   for i := 0 to nb - 1 do
@@ -227,15 +234,15 @@ begin
   if n < nominalRate * 20 then begin r.err := 'The recording is too short (under 20 seconds).'; Exit; end;
   r.t0 := FindMarker(x, 0, n - nominalRate * 20, nominalRate);
   if r.t0 < 0 then begin r.err := 'The first marker (4 kHz beep) was not heard. Move the phone closer and turn it up.'; Exit; end;
-  { the second marker, 75.5 s later: look for it between 74 and 80 s (nominal) }
-  s0 := r.t0 + nominalRate * 74; s1 := r.t0 + nominalRate * 80;
+  { the second marker, 80 s later: look for it between 78 and 84 s (nominal) }
+  s0 := r.t0 + nominalRate * 78; s1 := r.t0 + nominalRate * 84;
   if s1 > n then s1 := n;
   r.t1 := -1;
   if s1 - s0 > nominalRate then r.t1 := FindMarker(x, s0, s1, nominalRate);
-  if r.t1 < 0 then begin r.err := 'The end marker was not heard: record for 85 seconds and let the phone finish.'; Exit; end;
+  if r.t1 < 0 then begin r.err := 'The end marker was not heard: record for 90 seconds and let the phone finish.'; Exit; end;
   r.rate100 := Round((r.t1 - r.t0) / (END_AT / 1000.0) * 100);
   if (r.rate100 < nominalRate * 100 * 90 div 100) or (r.rate100 > nominalRate * 100 * 110 div 100) then
-  begin r.err := 'The markers are not 75 seconds apart: something went wrong in the recording.'; Exit; end;
+  begin r.err := 'The markers are not 80 seconds apart: something went wrong in the recording.'; Exit; end;
 
   { the microphone's offset and the background, from the silence after the first marker }
   bs := ToSample(r, NOISE_FROM); be := ToSample(r, NOISE_TO);
@@ -287,7 +294,7 @@ begin
     begin
       st := LIN_AT0 + (f * NLINA + g) * LIN_PERIOD;
       r.linEarly10[f, g] := Db10(Amp(x, ToSample(r, st + 20), ToSample(r, st + 120) - ToSample(r, st + 20), LIN_HZ[f], r.rate100));
-      r.linLate10[f, g] := Db10(Amp(x, ToSample(r, st + 400), ToSample(r, st + 600) - ToSample(r, st + 400), LIN_HZ[f], r.rate100));
+      r.linLate10[f, g] := Db10(Amp(x, ToSample(r, st + 300), ToSample(r, st + 500) - ToSample(r, st + 300), LIN_HZ[f], r.rate100));
     end;
     { 200 * log10(90/6) = 23.5 dB of input; the output change over the same }
     in1 := 200 * Ln(LIN_AMP[0] / LIN_AMP[NLINA - 1]) / Ln(10);
@@ -308,6 +315,13 @@ begin
     e := Amp(x, ToSample(r, st + AGC_TONE_MS + AGC_GAP_MS), wl, hz, r.rate100);
     r.envBack10[g] := Db10(e) - Db10(e0);
   end;
+
+  { the long ultrasonic tone }
+  wl := ToSample(r, 20) - ToSample(r, 0);
+  e0 := Amp(x, ToSample(r, SET_AT), wl, SET_HZ, r.rate100);
+  r.settleAbs10 := Db10(e0);
+  for k := 0 to NSET - 1 do
+    r.settleDb10[k] := Db10(Amp(x, ToSample(r, SET_AT + SET_T[k]), wl, SET_HZ, r.rate100)) - Db10(e0);
 
   { short bursts }
   for sm := 0 to NBSET - 1 do
@@ -429,7 +443,7 @@ begin
   for i := 0 to NTONE - 1 do
     Put(L, KHz1(ToneHz(i)) + ': ' + D1(r.toneDb10[i]) + ' | ' + D1(r.toneDb10[i] - r.noiseDb10[i]) + ' | ' + D1(r.fall10[i])
         + ' | ' + D1(r.ghostLo10[i]) + ' ' + D1(r.ghostHi10[i]) + ' | ' + D1(r.harm10[i]));
-  Put(L, 'DOES THE LEVEL FOLLOW? sound 90, 45, 22, 11, 6 %: recorded dBFS early (20-120 ms) / late (400-600 ms)');
+  Put(L, 'DOES THE LEVEL FOLLOW? sound 90, 45, 22, 11, 6 %: recorded dBFS early (20-120 ms) / late (300-500 ms)');
   for f := 0 to NLINF - 1 do
   begin
     s := KHz1(LIN_HZ[f]) + ' kHz: ';
@@ -443,6 +457,9 @@ begin
     for k := 0 to NENV - 1 do s := s + D1(r.envDb10[g, k]) + ' ';
     Put(L, s + '| ' + D1(r.envBack10[g]));
   end;
+  s := '';
+  for k := 0 to NSET - 1 do s := s + D1(r.settleDb10[k]) + ' ';
+  Put(L, 'LONG 18.5 kHz TONE (' + D1(r.settleAbs10) + ' dBFS at the start): dB at 0, .25, .5, 1, 1.5, 2, 3, 3.8 s: ' + s);
   Put(L, 'SHORT BURSTS: length, level against a steady tone, seen of ' + N0(BURST_N));
   for sm := 0 to NBSET - 1 do
   begin
@@ -476,7 +493,7 @@ begin
     med := t[nl div 2];
     Put(L, 'Ghost 0.9 kHz below a tone: median ' + D1(med) + ' dB');
   end;
-  Put(L, 'Level vs sound (90,45,22,11,6 %), late dBFS');
+  Put(L, 'Level vs sound (90,45,22,11,6 %), late (300-500 ms) dBFS');
   for f := 0 to NLINF - 1 do
   begin
     s := KHz1(LIN_HZ[f]) + 'k: ';
@@ -490,6 +507,9 @@ begin
     for k := 0 to NENV - 1 do s := s + D1(r.envDb10[g, k]) + ' ';
     Put(L, s + '| ' + D1(r.envBack10[g]));
   end;
+  s := '';
+  for k := 0 to NSET - 1 do s := s + D1(r.settleDb10[k]) + ' ';
+  Put(L, 'Long 18.5k tone, dB at 0,.25,.5,1,1.5,2,3,3.8 s: ' + s);
   for sm := 0 to NBSET - 1 do
   begin
     s := 'Bursts ' + KHz1(BURST_HZ[sm]) + 'k seen of 6: ';

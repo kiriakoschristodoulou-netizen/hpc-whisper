@@ -1,7 +1,7 @@
 program micscan;
 { Mic Scan: finds out how a handheld's microphone really hears sound.
 
-  The phone plays a test signal of about a minute and a quarter (the page scan.html); this program
+  The phone plays a test signal of about a minute and a half (the page scan.html); this program
   records it, measures it (scanlib.pas), shows what it found, and can type
   the report to the phone through HPC Whisper's sound link (wmodem.pas), so
   nothing has to be copied off the handheld.
@@ -16,7 +16,7 @@ program micscan;
 uses Windows, wmodem, scanlib;
 
 const
-  VERSION = '1.1';
+  VERSION = '1.2';
   CREATOR = 'Kyriakos Christodoulou';
   CLSNAME: UnicodeString = 'HPCMicScan';
   APPNAME: UnicodeString = 'Mic Scan';
@@ -26,7 +26,7 @@ const
   IN_RATE = 44100;                 { what the handheld says; the real rate is measured }
   IN_N = 4410;                     { 100 ms per buffer }
   IN_NBUF = 12;
-  REC_SECONDS = 92;
+  REC_SECONDS = 96;
   REC_MAX = IN_RATE * REC_SECONDS;
   OUT_RATE = 43200;                { for sending the report: the speaker's real rate }
   BUF_N = 4410; NBUF = 3;
@@ -653,7 +653,7 @@ begin
   Txt(dc, '2.  Press Enter here. On the phone open this page and tap Start:',
       MkRect(card.left + 16, y + 46, card.right - 16, y + 64), fNorm, COL_INK, DT_LEFT or DT_SINGLELINE);
   Txt(dc, 'kiriakoschristodoulou-netizen.github.io/hpc-whisper/scan.html', MkRect(card.left + 36, y + 64, card.right - 16, y + 82), fBold, COL_KEYFG, DT_LEFT or DT_SINGLELINE);
-  Txt(dc, '3.  Keep quiet for a minute and a quarter. When the phone says Done, press Enter to measure.',
+  Txt(dc, '3.  Keep quiet for a minute and a half. When the phone says Done, press Enter to measure.',
       MkRect(card.left + 16, y + 84, card.right - 16, y + 102), fNorm, COL_INK, DT_LEFT or DT_SINGLELINE);
   if MicErr <> '' then
     Txt(dc, MicErr, MkRect(card.left + 16, y + 112, card.right - 16, y + 130), fBold, COL_FAIL, DT_LEFT or DT_SINGLELINE);
@@ -772,7 +772,7 @@ begin
   Txt(dc, 'pause', MkRect(card.left + 524, card.top + 19, card.right - 8, card.top + 34), fSmall, COL_MUTED, DT_LEFT or DT_SINGLELINE);
   for g := 0 to NAGC - 1 do
   begin
-    y0 := card.top + 34 + g * 24;
+    y0 := card.top + 34 + g * 18;
     hd := KHz1(AGC_HZ[g]) + 'k ' + IU(AGC_AMP[g]) + '%';
     Txt(dc, hd, MkRect(card.left + 10, y0, card.left + 100, y0 + 18), fBold, COL_INK, DT_LEFT or DT_SINGLELINE);
     Txt(dc, IU(Res.envAbs10[g] div 10) + 'dB', MkRect(card.left + 100, y0 + 2, card.left + 150, y0 + 18), fSmall, COL_MUTED, DT_LEFT or DT_SINGLELINE);
@@ -784,6 +784,12 @@ begin
     end;
     Txt(dc, D1(Res.envBack10[g]), MkRect(card.left + 524, y0, card.right - 6, y0 + 18), fBold, COL_INK, DT_LEFT or DT_SINGLELINE);
   end;
+  y0 := card.top + 34 + NAGC * 18;
+  Txt(dc, '18.5k long', MkRect(card.left + 10, y0, card.left + 100, y0 + 18), fBold, COL_INK, DT_LEFT or DT_SINGLELINE);
+  Txt(dc, IU(Res.settleAbs10 div 10) + 'dB', MkRect(card.left + 100, y0 + 2, card.left + 150, y0 + 18), fSmall, COL_MUTED, DT_LEFT or DT_SINGLELINE);
+  for k := 0 to NSET - 1 do
+    Txt(dc, D1(Res.settleDb10[k]), MkRect(card.left + 150 + k * 46, y0, card.left + 196 + k * 46, y0 + 18), fBold, COL_INK, DT_LEFT or DT_SINGLELINE);
+  Txt(dc, '0 to 3.8 s', MkRect(card.left + 524, y0 + 2, card.right - 6, y0 + 18), fSmall, COL_MUTED, DT_LEFT or DT_SINGLELINE);
 end;
 
 procedure DrawLinear(dc: HDC; const card: TRect);
@@ -841,7 +847,7 @@ begin
   y := card.top + 10;
   Txt(dc, APPNAME + '  ' + VERSION, MkRect(card.left + 16, y, card.right - 16, y + 24), fBig, COL_NAVY, DT_LEFT or DT_SINGLELINE);
   Txt(dc, 'Part of HPC Whisper. Created by ' + CREATOR + '.', MkRect(card.left + 16, y + 24, card.right - 16, y + 42), fNorm, COL_MUTED, DT_LEFT or DT_SINGLELINE);
-  Txt(dc, 'It records a test sound of about a minute and a quarter from the phone and measures how this handheld''s microphone hears it: ' +
+  Txt(dc, 'It records a test sound of about a minute and a half from the phone and measures how this handheld''s microphone hears it: ' +
       'which frequencies, how loud, whether the level follows the sound (automatic gain), the real sampling rate, ' +
       'ghost tones and the shortest burst it notices. Press S on the results to type the report to the phone.',
       MkRect(card.left + 16, y + 48, card.right - 16, y + 120), fNorm, COL_INK, DT_LEFT or DT_WORDBREAK);
