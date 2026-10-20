@@ -40,6 +40,8 @@ jobs:
           fpc -O2 -Fu../handheld -Fi../handheld -FUlinux -olosssim losssim.pas
           ./losssim 0 0 100
           ./losssim 10 0 100
+          fpc -O2 -Fu../handheld -FUlinux -oscansim scansim.pas
+          node test_scan.js
           mkdir -p writer/cls && javac -d writer/cls $(find writer/stubs -name "*.java") ../android/app/src/main/java/net/kyriakos/whisper/{Writer,Mirror,Keys,Receiver,DiagLog}.java writer/WriterTest.java
           java -cp writer/cls WriterTest writer/writer-frames.txt
 
@@ -71,7 +73,7 @@ jobs:
         run: |
           mkdir out
           cp android/app/build/outputs/apk/release/app-release.apk out/HPC-Whisper.apk
-          cp handheld/HPC-Whisper-10.zip out/
+          cp handheld/HPC-Whisper-10.zip handheld/Mic-Scan-10.zip out/
 
       - uses: actions/upload-artifact@v4
         with:
@@ -81,10 +83,11 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: Whisper Tools (build ${{ github.run_number }})
+          name: HPC Whisper (build ${{ github.run_number }})
           make_latest: 'true'
           body: |
-            **HPC-Whisper.apk** – Whisper Tools for Android: the keyboard (type on the handheld straight into any app, with all keys), files both ways, and the picture remote.
-            **Whisper-Tools-393.zip** – Whisper Tools for Windows CE handheld PCs with an ARM processor, such as the HP Jornada 720 (copy the folder inside to the handheld and run WhisperTools.exe).
+            **HPC-Whisper.apk** – the Android keyboard: what you type on the handheld appears in any app.
+            **HPC-Whisper-10.zip** – the program for Windows CE handhelds with an ARM processor, such as the HP Jornada 720 (copy the folder to the handheld and run HPCWhisper.exe).
+            **Mic-Scan-10.zip** – a separate tool for the handheld that measures how its microphone hears sound (test sound: https://kiriakoschristodoulou-netizen.github.io/hpc-whisper/scan.html).
             On an iPhone (Apple does not let keyboards use the microphone) or any other phone, use the receiver page: https://kiriakoschristodoulou-netizen.github.io/hpc-whisper/
           files: out/*

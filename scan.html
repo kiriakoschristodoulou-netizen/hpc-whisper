@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mic Scan</title>
+<style>
+:root{--bg:#f4f2ee;--card:#fff;--ink:#1d2430;--muted:#6b6f78;--navy:#1b2536;--line:#dcd8d0;--green:#3d8a1f;--amber:#b4531a}
+@media (prefers-color-scheme:dark){:root{--bg:#161b24;--card:#202734;--ink:#ece9e3;--muted:#a3a8b2;--navy:#3a5a8c;--line:#323b4b;--green:#7cc75a;--amber:#e8915a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,sans-serif}
+main{max-width:520px;margin:0 auto;padding:20px 16px 40px}
+h1{font-size:24px;margin:8px 0 2px}
+.sub{color:var(--muted);margin:0 0 18px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-top:14px}
+ol{margin:6px 0 0;padding-left:20px}li{margin:6px 0}
+button{width:100%;height:56px;border:0;border-radius:12px;background:var(--navy);color:#fff;font-size:18px;font-weight:600;margin-top:14px}
+button:disabled{opacity:.55}
+.bar{height:10px;background:var(--line);border-radius:5px;overflow:hidden;margin-top:12px}
+.bar i{display:block;height:100%;width:0;background:var(--green)}
+#state{font-size:20px;font-weight:600}
+.muted{color:var(--muted);font-size:14px}
+</style>
+</head>
+<body>
+<main>
+  <h1>Mic Scan</h1>
+  <p class="sub">A test sound for the handheld's microphone. HPC Whisper, by Kyriakos Christodoulou.</p>
+  <div class="card">
+    <ol>
+      <li>On the handheld, open <b>Mic Scan</b> and press <b>Enter</b> to start recording.</li>
+      <li>Put this phone's speaker 2 to 5 cm from the handheld's microphone. Phone volume at maximum, silent mode off.</li>
+      <li>Tap <b>Start</b> below. The test lasts a minute. Keep quiet and do not touch anything until it says Done.</li>
+    </ol>
+    <button id="go">Start</button>
+    <div class="bar"><i id="bar"></i></div>
+    <p id="state" style="margin:12px 0 0">Ready</p>
+    <p class="muted" id="note" style="margin:4px 0 0">The sound is a series of beeps and whistles, many too high to hear.</p>
+  </div>
+</main>
+<script src="scanplan.js"></script>
+<script>
+(function () {
+  const go = document.getElementById('go'), bar = document.getElementById('bar'), state = document.getElementById('state'), note = document.getElementById('note');
+  let ctx = null, lock = null, timer = 0;
+  async function keepAwake() { try { if (navigator.wakeLock) lock = await navigator.wakeLock.request('screen'); } catch (e) { } }
+  function release() { try { if (lock) lock.release(); } catch (e) { } lock = null; }
+  go.onclick = async function () {
+    go.disabled = true;
+    try { ctx = ctx || new (window.AudioContext || window.webkitAudioContext)(); await ctx.resume(); } catch (e) { state.textContent = 'This browser cannot play sound.'; go.disabled = false; return; }
+    keepAwake();
+    const rate = ctx.sampleRate, x = ScanPlan.render(rate);
+    const buf = ctx.createBuffer(1, x.length, rate); buf.copyToChannel(x, 0);
+    for (let c = 3; c > 0; c--) { state.textContent = 'Starting in ' + c; await new Promise(r => setTimeout(r, 1000)); }
+    const src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination);
+    const t0 = performance.now(), total = ScanPlan.PLAN_MS;
+    src.start();
+    state.textContent = 'Playing';
+    note.textContent = 'Keep quiet, and keep the phone still.';
+    timer = setInterval(function () {
+      const e = performance.now() - t0, p = Math.min(1, e / total);
+      bar.style.width = (p * 100) + '%';
+      state.textContent = p < 1 ? 'Playing, ' + Math.max(0, Math.ceil((total - e) / 1000)) + ' s left' : 'Done';
+    }, 200);
+    src.onended = function () {
+      clearInterval(timer); bar.style.width = '100%'; state.textContent = 'Done';
+      note.textContent = 'On the handheld, press Enter to stop and measure. Tap Start to play it again.';
+      go.disabled = false; release();
+    };
+  };
+})();
+</script>
+</body>
+</html>
