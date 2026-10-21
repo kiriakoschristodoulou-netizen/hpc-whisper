@@ -81,10 +81,22 @@ own `base` forward (when `base < ACK ≤ end`).
 
 ### 3.3 Start
 
-A side that has just started sends SYNC in its frames until it has heard a
-frame from the other side. A frame with SYNC tells the receiver to forget the
-other direction's stream (`next` := the frame's OFF) and every connection
-(4.2): the other side has restarted.
+Each side starts its stream at a random 16-bit offset (`start`, not 0). A frame
+carries **SYNC** exactly when its OFF is `start`: the first frame of every turn
+until the other side has acknowledged anything.
+
+A frame with SYNC tells the receiver where the sender's stream begins. The
+receiver takes it as a **restart** when it has not heard the sender before, or
+when OFF is outside the window it expects (`next - 170 … next + 110`); then it
+sets `next := OFF`, forgets the connections (the mux sees a restart) and, if its
+own stream had been acknowledged already, starts its own stream anew (a new
+random `start`, nothing unsent kept), so the sender, which knows nothing of the
+old stream, hears a SYNC frame. Otherwise a SYNC frame is an ordinary frame
+(a repeated first turn).
+
+A frame without SYNC from a sender not heard before is ignored. An ACK of 0
+means "nothing acknowledged" and is ignored (the field also holds 0 in frames
+sent before the sender has heard the other side).
 
 ### 3.4 Turns
 

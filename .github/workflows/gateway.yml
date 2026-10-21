@@ -1,0 +1,79 @@
+# Whisper Net: the phone's gateway app (and the tests of the whole link) on the
+# whisper-gateway branch. Publishes the APK as a pre-release, so the main
+# release of the keyboard app is not touched.
+name: Whisper Gateway
+
+on:
+  push:
+    branches: [whisper-gateway]
+    paths: ['gateway/**', '.github/workflows/gateway.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Free Pascal
+        run: sudo apt-get update -q && sudo apt-get install -y -q fpc
+      - name: Frames and receivers, handheld (Pascal) against phone (Java)
+        working-directory: gateway/tests
+        run: |
+          mkdir -p lx cls
+          javac -d cls ../android/app/src/main/java/net/kyriakos/whisper/gw/*.java java/*.java
+          fpc -O2 -Fu../handheld -Fi../../handheld -FUlx -FElx rxtest.pas
+          fpc -O2 -Fu../handheld -Fi../../handheld -FUlx -FElx wavtool.pas
+          fpc -O2 -Fu../handheld -Fi../../handheld -FUlx -FElx linktest.pas
+          fpc -O2 -Fu../handheld -Fi../../handheld -FUlx -FElx netsim.pas
+          ./lx/rxtest
+          ./lx/linktest
+          java -cp cls LinkTest
+          java -cp cls MuxTest
+          CLS=cls ./cross.sh
+      - name: End to end (Linux TCP through a TUN device, handheld program, simulated sound room, phone program)
+        working-directory: gateway/tests
+        run: sudo env CLS=$PWD/cls PATH=$PATH python3 e2e.py
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+      - name: Build the app
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          set -o pipefail
+          gradle -p gateway/android assembleRelease --no-daemon 2>&1 | tee build.log || {
+            grep -E "error:|\.java:[0-9]+|What went wrong|AAPT|Execution failed" build.log | head -60 | while IFS= read -r l; do echo "::error::$l"; done
+            exit 1; }
+      - name: Collect
+        run: |
+          mkdir out
+          cp gateway/android/app/build/outputs/apk/release/app-release.apk out/Whisper-Gateway.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Whisper-Gateway
+          path: out/*
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: gateway-${{ github.run_number }}
+          name: Whisper Gateway (test build ${{ github.run_number }})
+          prerelease: true
+          make_latest: 'false'
+          body: |
+            **Whisper-Gateway.apk** – turns the phone into the internet gateway for the handheld's Whisper Net (test build).
+          files: out/*

@@ -1,0 +1,40 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'net.kyriakos.whisper.gateway'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'net.kyriakos.whisper.gateway'
+        minSdk 24
+        targetSdk 34
+        versionCode Integer.parseInt(System.getenv('BUILD_NUMBER') ?: '1')
+        versionName '0.1'
+    }
+
+    // The same fixed key as HPC Whisper (hobby app: every new build installs over the old one).
+    signingConfigs {
+        release {
+            storeFile rootProject.file('../../android/whisper.keystore')
+            storePassword 'j720whisper'
+            keyAlias 'whisper'
+            keyPassword 'j720whisper'
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
