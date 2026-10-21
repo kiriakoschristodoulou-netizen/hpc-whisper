@@ -381,8 +381,13 @@ On an acknowledgement with `doc == its current document id` and not within
   After **two windows in a row without one**, stop waiting and repeat on the
   old schedule (a receiver that cannot or does not answer). Any acknowledgement
   that arrives resets this.
-- The sender's microphone must be open while it plays (the Jornada's sound
-  driver may not allow this; then it falls back as above).
+- The sender listens **between its own transmissions**, not while it plays. The
+  Jornada's sound chip cannot play and record at the same time (opening the
+  microphone while the speaker is open fails), so the reference sender closes
+  its speaker when it has been quiet for about 0.3 s, opens the microphone,
+  and switches back (closing the microphone first) as soon as it has something
+  to send. If the microphone cannot be opened three times in a row it stays
+  in speaker-only mode and falls back as above.
 
 Simulated gain (10 % frame loss, 100 runs): 64 frames and ~132 s instead of
 104 frames and ~256 s; with every acknowledgement lost the sender still

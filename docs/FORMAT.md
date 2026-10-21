@@ -105,7 +105,7 @@ The phone answers the handheld, silently, so the handheld need not repeat what h
   or text since changed) is not believed; then it sends the last 300 bytes again.
 - **When:** about 700 ms after the last frame of a group was heard and nothing else is coming, at most once a
   second; the phone ignores its own sound for that time and 150 ms more.
-- **Handheld:** after a frame it waits up to 2.6 s for the answer. Bytes below P are done and not repeated; a
+- **Handheld:** it listens only between its own transmissions (the chip cannot play and record at once: the speaker is closed when it is quiet and the microphone opens, and the reverse when there is something to send). After a frame it waits up to 2.6 s for the answer. Bytes below P are done and not repeated; a
   gap of G bytes at P is sent at once. After two windows in a row without an answer it behaves as before
   (every byte sent the set number of times), so phones without the return channel still work. The title bar
   shows "Delivered" when P covers the whole text.
