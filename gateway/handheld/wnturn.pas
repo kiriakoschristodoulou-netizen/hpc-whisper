@@ -25,7 +25,8 @@ var
   PfNow: TNowMs;
   PfSleep: TSleepMs;
 
-  NtRate: Integer = 43200;
+  NtRate: Integer = 43200;            { what the sound is made at }
+  NtRxRate: Integer = 0;              { what the microphone really runs at (0 = NtRate) }
   NtUpHz: Integer = 19000;
   NtDownHz: Integer = 18000;
   NtSymMs: Integer = 20;
@@ -75,9 +76,10 @@ begin
   Inc(NtTurns);
   { listen }
   NtState := 2;
-  NrInit(Rx, NtRate, NtDownHz, NtSymMs);
+  if NtRxRate = 0 then NtRxRate := NtRate;
+  NrInit(Rx, NtRxRate, NtDownHz, NtSymMs);
   PfMicStart();
-  mc := NtRate div 1000 * MICCHUNK_MS;
+  mc := NtRxRate div 1000 * MICCHUNK_MS;
   haveTurn := False; turnEnd := 0; heard := 0;
   while not NtStop do
   begin
