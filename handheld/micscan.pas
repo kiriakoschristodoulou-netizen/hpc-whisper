@@ -273,15 +273,25 @@ procedure RunAnalysis(nominal: LongInt);
 begin
   State := ST_WORK;
   PostMessageW(hMain, WM_UPDATE, 0, 0);
-  if Mode = 1 then
+  { the test that was played is told by where the end marker is: if it is not the chosen one, switch }
+  if Mode = 1 then AnalyseRet(Rec, RecN, nominal, RRes) else Analyse(Rec, RecN, nominal, Res);
+  if (Mode = 1) and (not RRes.ok) then
+  begin
+    Analyse(Rec, RecN, nominal, Res);
+    if Res.ok then Mode := 0;
+  end
+  else if (Mode = 0) and (not Res.ok) then
   begin
     AnalyseRet(Rec, RecN, nominal, RRes);
+    if RRes.ok then Mode := 1;
+  end;
+  if Mode = 1 then
+  begin
     BuildRetReport(RRes, Full);
     BuildRetCompact(RRes, Compact);
   end
   else
   begin
-    Analyse(Rec, RecN, nominal, Res);
     BuildReport(Res, Full);
     BuildCompact(Res, Compact);
   end;
