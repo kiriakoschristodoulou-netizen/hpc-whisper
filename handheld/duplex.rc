@@ -1,0 +1,21 @@
+MAINICON ICON "whisper.ico"
+1 VERSIONINFO
+FILEVERSION 1,0,0,0
+PRODUCTVERSION 1,0,0,0
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "CompanyName", "Kyriakos Christodoulou\0"
+      VALUE "FileDescription", "Duplex Test\0"
+      VALUE "FileVersion", "1.0\0"
+      VALUE "ProductName", "Duplex Test\0"
+      VALUE "OriginalFilename", "duplex.exe\0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

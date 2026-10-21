@@ -80,7 +80,7 @@ jobs:
         run: |
           mkdir out
           cp android/app/build/outputs/apk/release/app-release.apk out/HPC-Whisper.apk
-          cp handheld/HPC-Whisper-11.zip handheld/Mic-Scan-13.zip out/
+          cp handheld/HPC-Whisper-11.zip handheld/Mic-Scan-13.zip handheld/Duplex-Test-10.zip out/
 
       - uses: actions/upload-artifact@v4
         with:
@@ -96,5 +96,6 @@ jobs:
             **HPC-Whisper.apk** – the Android keyboard: what you type on the handheld appears in any app.
             **HPC-Whisper-11.zip** – the program for Windows CE handhelds with an ARM processor, such as the HP Jornada 720 (copy the folder to the handheld and run HPCWhisper.exe).
             **Mic-Scan-13.zip** – a separate tool for the handheld that measures how its microphone hears sound (test sound: https://kiriakoschristodoulou-netizen.github.io/hpc-whisper/scan.html) and whether it can decode data sent by the phone (https://kiriakoschristodoulou-netizen.github.io/hpc-whisper/return.html).
+            **Duplex-Test-10.zip** – a small test for the handheld: can its sound chip play and record at the same time, and how long does switching take.
             On an iPhone (Apple does not let keyboards use the microphone) or any other phone, use the receiver page: https://kiriakoschristodoulou-netizen.github.io/hpc-whisper/
           files: out/*

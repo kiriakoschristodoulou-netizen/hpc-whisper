@@ -33,3 +33,4 @@ handheld/micscan.exe
 tests/scansim
 tests/acksim
 tests/hashsim
+handheld/duplex.exe
