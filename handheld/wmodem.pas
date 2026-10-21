@@ -42,6 +42,7 @@ const
   MAX_SENDS = 8;                     { the most times a byte can be asked to go out }
   DEFAULT_SENDS = 6;
   ACK_WAIT_MS = 2600;                { after a frame, the repeats wait this long for the phone's acknowledgement }
+  CHECK_MS = 30000;                  { an idle, fully acknowledged page is checked with the phone this often (an empty frame asks for an acknowledgement) }
   ACK_IGNORE_MS = 3000;              { after text that was acknowledged is changed, older acknowledgements are not believed }
   { how long the text must have been left alone before it goes out for the 2nd, 3rd... time }
   SEND_AFTER_MS: array[1..MAX_SENDS - 1] of LongWord = (400, 1500, 3000, 6000, 10000, 15000, 22000);
@@ -104,6 +105,9 @@ type
     noAck: Integer;                  { windows in a row that passed without one; from 2 on the repeats stop waiting }
     heard: Boolean;                  { an acknowledgement has been heard at least once }
     mismatch: Integer;               { acknowledgements in a row that did not fit the text }
+    repairAll: Boolean;              { the phone's copy does not fit: the whole page goes out again, not only the end }
+    lastCheck: LongWord;             { when the last periodic check frame was sent }
+    hbMiss: Integer;                 { check frames in a row that were not answered (they stop after a while) }
   end;
 
 procedure SnInit(var s: TSender; docId: Byte);
@@ -259,7 +263,7 @@ begin
   if s.docId >= $FD then s.docId := 0;
   s.sentL := -1;
   s.target := DEFAULT_SENDS;
-  s.acked := 0; s.repLen := 0; s.waitAck := False; s.noAck := 0; s.heard := False; s.mismatch := 0;
+  s.acked := 0; s.repLen := 0; s.waitAck := False; s.noAck := 0; s.heard := False; s.mismatch := 0; s.repairAll := False; s.lastCheck := 0;
 end;
 
 procedure SnNewDoc(var s: TSender);
@@ -269,7 +273,7 @@ begin
   if id >= $FD then id := 0;
   s.L := 0; s.sentL := -1; s.liveFrom := 0; s.keyEnd := 0;
   s.docId := id;
-  s.acked := 0; s.repLen := 0; s.waitAck := False; s.mismatch := 0;
+  s.acked := 0; s.repLen := 0; s.waitAck := False; s.mismatch := 0; s.repairAll := False;
 end;
 
 procedure Changed(var s: TSender; now: LongWord);
@@ -376,17 +380,31 @@ begin
 end;
 
 procedure SnAck(var s: TSender; now: LongWord; doc, P, G, hash: Integer);
-var i, lo: Integer;
+var i, lo, m: Integer;
 begin
   if doc <> s.docId then Exit;
+  s.hbMiss := 0;
   if (s.ackIgnore <> 0) and (LongInt(now - s.ackIgnore) < 0) then Exit;
   { it must say something true about OUR text: otherwise the phone holds older text, or the frame was misread }
   if (P > s.L) or (AckHash(doc, P, G, s.doc) <> hash) then
   begin
     s.heard := True; s.noAck := 0; s.waitAck := False;
-    if s.mismatch < 5 then
+    if s.mismatch < 200 then
     begin
       Inc(s.mismatch);
+      if s.mismatch >= 2 then
+      begin
+        { two in a row: the difference may be anywhere in the page: all of it goes out again }
+        m := 255;
+        for i := 0 to s.L - 1 do if s.sends[i] < m then m := s.sends[i];
+        if (not s.repairAll) or (m >= s.target) then     { not while such a round is still going out }
+        begin
+          s.repairAll := True;
+          for i := 0 to s.L - 1 do s.sends[i] := 1;
+        end;
+        s.acked := 0;
+        Exit;
+      end;
       lo := s.L - RECENT_BACK; if lo < 0 then lo := 0;
       for i := lo to s.L - 1 do if (s.target > 1) and (s.sends[i] > s.target - 1) then s.sends[i] := s.target - 1;
       if s.acked > lo then s.acked := lo;
@@ -394,6 +412,7 @@ begin
     Exit;
   end;
   s.mismatch := 0;
+  s.repairAll := False;
   s.heard := True;
   s.noAck := 0;
   s.waitAck := False;
@@ -441,6 +460,22 @@ begin
   f.off := o; f.len := n; f.docL := s.L;
   s.seq := Byte(s.seq + 1);
   s.sentL := s.L;
+end;
+
+{ Nothing else to send and the page has been left alone: an empty frame asks the phone to say what it holds, now and
+  then (CHECK_MS; sooner while its copy does not fit). Only when the phone has answered before. }
+function Heartbeat(var s: TSender; now: LongWord; var f: TFrame): Boolean;
+var chk: LongWord;
+begin
+  Result := False;
+  if (not s.heard) or (s.hbMiss >= 20) or (s.L = 0) then Exit;
+  chk := CHECK_MS;
+  if s.mismatch > 0 then chk := ACK_WAIT_MS + 1500;
+  if (LongInt(now - s.lastEdit) < LongInt(chk)) or (LongInt(now - s.lastCheck) < LongInt(chk)) then Exit;
+  s.lastCheck := now;
+  Inc(s.hbMiss);
+  MakeFrame(s, s.L, 0, False, f);
+  Result := True;
 end;
 
 function SnNext(var s: TSender; now: LongWord; var f: TFrame): Boolean;
@@ -495,8 +530,9 @@ begin
     enough for that many sends (the 2nd after 0.4 s, the 3rd after 1.5 s, ...) }
   lo := s.L - RECENT_BACK;
   if lo < 0 then lo := 0;
+  if s.repairAll then lo := 0;
   if lo < s.acked then lo := s.acked;
-  if lo >= s.L then Exit;
+  if lo >= s.L then begin Result := Heartbeat(s, now, f); Exit; end;
   m := 255;
   for i := lo to s.L - 1 do if s.sends[i] < m then m := s.sends[i];
   if (m >= 1) and (m < s.target) and (m < MAX_SENDS) and (idle >= SEND_AFTER_MS[m]) then
@@ -507,7 +543,8 @@ begin
     while (o + n < s.L) and (n < REPAIR_MAX) and (s.sends[o + n] <= m + 1) do Inc(n);
     MakeFrame(s, o, n, not Odd(m + 1), f);              { the 2nd, 4th... send on the second band }
     Result := True;
-  end;
+  end
+  else Result := Heartbeat(s, now, f);
 end;
 
 function FrameMs(const f: TFrame; speed: Integer): Integer;

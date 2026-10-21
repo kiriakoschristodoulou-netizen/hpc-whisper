@@ -178,6 +178,25 @@ public class WriterTest {
             Field f = run(t, fr, 0, info);
             check("a late repeat still fills the gap", f.text.toString().equals("abcdefghijkl"), "[" + f.text + "]");
         }
+        // 6e. the double check: a late repeat changes a byte that was already written: the field is corrected
+        {
+            List<long[]> t = new ArrayList<>(); List<byte[]> fr = new ArrayList<>();
+            t.add(new long[]{0}); fr.add(text(15, 1, 11, 0, "hello world"));
+            t.add(new long[]{8000}); fr.add(text(15, 2, 11, 0, "jello world"));   // the first letter is not what was written
+            Field f = run(t, fr, 0, info);
+            check("text written differs from the page: corrected", f.text.toString().equals("jello world") && !f.composing(), "[" + f.text + "]");
+        }
+        // 6f. a difference before a pressed key is left alone (the key cannot be taken back)
+        {
+            String tab = new String(Character.toChars(Keys.BASE + Keys.TAB));
+            String s1 = "ab" + tab + "cd", s2 = "xb" + tab + "cd";
+            int L = s1.getBytes(StandardCharsets.UTF_8).length;
+            List<long[]> t = new ArrayList<>(); List<byte[]> fr = new ArrayList<>();
+            t.add(new long[]{0}); fr.add(text(16, 1, L, 0, s1));
+            t.add(new long[]{8000}); fr.add(text(16, 2, L, 0, s2));
+            Field f = run(t, fr, 0, info);
+            check("a difference before a key is left alone", f.text.toString().equals("abcd") && f.keys.size() == 1, "[" + f.text + "] keys " + f.keys);
+        }
         // 6. the frames from the device test (16 October 2026), the field opened before any of them
         if (a.length > 0) {
             List<long[]> t = new ArrayList<>(); List<byte[]> fr = new ArrayList<>();

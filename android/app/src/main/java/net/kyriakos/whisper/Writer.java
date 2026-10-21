@@ -32,10 +32,11 @@ public final class Writer {
     public final Mirror mirror;
     private int doc = -1;                                   // the page this field writes from
     private int committed = 0;                              // bytes of that page written for good
+    private int base = 0;                                   // where this field's own text starts in that page
     private byte[] done = new byte[0];                      // a copy of them, to know how much a Backspace takes back
     private String shown = "";                              // the underlined text in the field now
     private boolean singleLine = false;
-    public int keysPressed = 0, gapsGivenUp = 0;
+    public int keysPressed = 0, gapsGivenUp = 0, fixes = 0;
 
     public Writer(Mirror shared) { mirror = shared; }
 
@@ -52,6 +53,7 @@ public final class Writer {
     public void startField(EditorInfo info) {
         doc = mirror.doc;
         committed = mirror.L;
+        base = committed;
         shown = "";
         int cls = info.inputType & EditorInfo.TYPE_MASK_CLASS;
         singleLine = cls == EditorInfo.TYPE_CLASS_TEXT
@@ -64,6 +66,7 @@ public final class Writer {
         if (ic != null && !shown.isEmpty()) ic.finishComposingText();
         doc = mirror.doc;
         committed = mirror.L;
+        base = committed;
         shown = "";
     }
 
@@ -86,6 +89,7 @@ public final class Writer {
             if (doc == -1) while (from < m.L && !m.known[from]) from++;
             doc = m.doc;
             committed = from;
+            base = from;
             DiagLog.log("keyboard: a new page from the handheld, writing from byte " + from);
         }
         // the handheld's Backspace went past text already written: take it back
@@ -101,12 +105,41 @@ public final class Writer {
         update(ic, info, now);
     }
 
+    private long lastFixLog = 0;
+
+    /**
+     * The double check: what was written into the field for good must still be what the page says. A late repeat can
+     * change a byte that was already written (the handheld edited that text and the new version only arrived now);
+     * then the field holds old text. That part is taken back and written again from the page. Keys already pressed
+     * cannot be taken back, so a difference before one is left alone.
+     */
+    private void checkWritten(InputConnection ic, long now) {
+        Mirror m = mirror;
+        int d = -1;
+        for (int i = base; i < committed && i < done.length; i++) if (m.known[i] && m.bytes[i] != done[i]) { d = i; break; }
+        if (d < 0) return;
+        while (d > base && (done[d] & 0xC0) == 0x80) d--;
+        if (Keys.findKey(done, d, committed) >= 0) {
+            if (now - lastFixLog > 30000) { lastFixLog = now; DiagLog.log("keyboard: the text written differs from the page at byte " + d + ", but a key was pressed after it: left as it is"); }
+            return;
+        }
+        int chars = Keys.strip(new String(done, d, committed - d, StandardCharsets.UTF_8)).replace("\0", "").replace("\uFFFD", "").length();
+        ic.beginBatchEdit();
+        if (!shown.isEmpty()) { ic.setComposingText("", 1); ic.finishComposingText(); shown = ""; }
+        ic.deleteSurroundingText(chars, 0);
+        ic.endBatchEdit();
+        DiagLog.log("keyboard: the text written differed from the page at byte " + d + ": took back " + chars + " characters and wrote them again");
+        committed = d;
+        fixes++;
+    }
+
     /** Called on every frame and every half second: settle what has settled, press keys, show the rest. */
     public void update(InputConnection ic, EditorInfo info, long now) {
         if (ic == null) return;
         Mirror m = mirror;
         if (m.doc != doc) return;                           // frame() handles a new page
         if (committed > m.L) committed = m.L;
+        checkWritten(ic, now);
         int fu = m.firstUnknown(committed);
         while (fu < m.L) {
             // the handheld repeats its text for a while; a piece that is still missing long after the text behind it

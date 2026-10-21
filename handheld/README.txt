@@ -1,4 +1,4 @@
-HPC Whisper 1.1
+HPC Whisper 1.2
 by Kyriakos Christodoulou
 
 Type on this handheld and the text appears in any app on your phone,
@@ -29,3 +29,12 @@ what arrived is not sent again, and only what is missing is sent again.
 If the phone does not answer (an older keyboard, no microphone on this
 handheld, too far away) every text goes out several times, on two bands,
 as before. The title bar says how many times it has gone out.
+
+CHECKS AND SENDING (1.2)
+  With the Return channel on, the handheld asks the phone every 30 seconds
+  (when you have stopped typing) what it holds. If the phone's copy of the
+  page differs anywhere, the whole page is sent again, and the keyboard also
+  corrects text it had already written if the page changed after that.
+  Settings, Enter key: "Sends the message" makes Enter press Send on the
+  phone (Shift+Enter is a new line). Chat apps need the phone helper (Set up
+  in the app) unless the field's key says Send. Alt+S always sends.

@@ -55,7 +55,8 @@ public class InfoActivity extends BaseActivity {
                 + "lost on the way fills in by itself. If the keyboard says \"Waiting for a missing piece\", wait a few seconds; "
                 + "if it does not fill in, press Alt+R on the handheld. Move the phone closer if it says \"Weak signal\". "
                 + "Text still missing after half a minute is given up so it cannot hold up what you type next. Everything that "
-                + "did arrive is kept under Sessions.", 14, t().ink, false).setPadding(0, ui.dp(6), 0, 0);
+                + "did arrive is kept under Sessions. With the confirmation on, the handheld also checks every half minute that the "
+                + "phone holds the whole page, and the keyboard corrects text it had written that later changed.", 14, t().ink, false).setPadding(0, ui.dp(6), 0, 0);
 
         LinearLayout i = box("iPhone, or any other phone");
         ui.text(i, "Apple does not let keyboards use the microphone, so an iPhone keyboard is impossible. On an iPhone, or any "

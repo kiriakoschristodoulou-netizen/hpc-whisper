@@ -26,7 +26,7 @@ program whisper;
 uses Windows, wmodem, wback;
 
 const
-  VERSION = '1.1';
+  VERSION = '1.2';
   CREATOR = 'Kyriakos Christodoulou';
   CLSNAME: UnicodeString = 'HPCWhisper';
   APPNAME: UnicodeString = 'HPC Whisper';
@@ -110,6 +110,7 @@ var
   Sends: Integer = DEFAULT_SENDS;  { every piece of text goes out this many times }
   TwoBands: Boolean = True;        { the repeats go on another band }
   ChipRate: Boolean = True;        { play at the chip's own 43,200 instead of 44,100 }
+  EnterSends: Boolean = False;     { the Enter key presses Send on the phone (Shift+Enter is a new line) }
   ReturnOn: Boolean = False;       { listen for the phone's acknowledgements (the return channel) }
   LastAckSeq: LongInt = 0;
 
@@ -250,12 +251,13 @@ begin
 end;
 
 procedure LoadCfg;
-var h: THandle; b: array[0..7] of Byte; got: DWORD;
+var h: THandle; b: array[0..8] of Byte; got: DWORD;
 begin
+  FillChar(b, SizeOf(b), 0);
   h := CreateFileW(PWideChar(CfgPath), GENERIC_READ, FILE_SHARE_READ, nil, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
   if h = INVALID_HANDLE_VALUE then Exit;
   got := 0;
-  if ReadFile(h, {$ifdef wince}@b{$else}b{$endif}, 8, {$ifdef wince}@got{$else}got{$endif}, nil) and (got = 8) and (b[0] = $59) then
+  if ReadFile(h, {$ifdef wince}@b{$else}b{$endif}, 9, {$ifdef wince}@got{$else}got{$endif}, nil) and (got >= 8) and (b[0] = $59) then
   begin
     if b[1] < NBANDS then Band := b[1];
     if b[2] < NSPEEDS then Speed := b[2];
@@ -264,19 +266,20 @@ begin
     TwoBands := b[5] <> 0;
     ChipRate := b[6] <> 0;
     ReturnOn := b[7] = 1;
+    EnterSends := b[8] = 1;
   end;
   CloseHandle(h);
 end;
 
 procedure SaveCfg;
-var h: THandle; b: array[0..7] of Byte; got: DWORD;
+var h: THandle; b: array[0..8] of Byte; got: DWORD;
 begin
   h := CreateFileW(PWideChar(CfgPath), GENERIC_WRITE, 0, nil, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
   if h = INVALID_HANDLE_VALUE then Exit;
   b[0] := $59; b[1] := Band; b[2] := Speed; b[3] := Volume; b[4] := Sends;
-  b[5] := Ord(TwoBands); b[6] := Ord(ChipRate); b[7] := Ord(ReturnOn);
+  b[5] := Ord(TwoBands); b[6] := Ord(ChipRate); b[7] := Ord(ReturnOn); b[8] := Ord(EnterSends);
   got := 0;
-  WriteFile(h, {$ifdef wince}@b{$else}b{$endif}, 8, {$ifdef wince}@got{$else}got{$endif}, nil);
+  WriteFile(h, {$ifdef wince}@b{$else}b{$endif}, 9, {$ifdef wince}@got{$else}got{$endif}, nil);
   CloseHandle(h);
 end;
 
@@ -825,8 +828,8 @@ end;
 { ---- settings ---- }
 
 const
-  NSET = 9;
-  SET_NAME: array[0..NSET - 1] of UnicodeString = ('Repeats', 'Second band for repeats', 'Volume', 'Speed', 'Band', 'Sound rate', 'Return channel', 'Test', 'About');
+  NSET = 10;
+  SET_NAME: array[0..NSET - 1] of UnicodeString = ('Repeats', 'Second band for repeats', 'Volume', 'Speed', 'Band', 'Sound rate', 'Return channel', 'Enter key', 'Test', 'About');
 
 function SettingValue(i: Integer): UnicodeString;
 begin
@@ -841,8 +844,9 @@ begin
        else if BkOn then Result := 'On, the phone confirms'
        else if BkErr <> '' then Result := 'On, but ' + US(BkErr)
        else Result := 'On';
-    7: Result := 'Type a test sentence';
-    8: Result := 'HPC Whisper ' + VERSION;
+    7: if EnterSends then Result := 'Sends the message' else Result := 'New line';
+    8: Result := 'Type a test sentence';
+    9: Result := 'HPC Whisper ' + VERSION;
   else Result := '';
   end;
 end;
@@ -857,8 +861,9 @@ begin
     4: Result := 'The phone finds the band by itself. Change it only if something else is making sound up there.';
     5: Result := 'Leave at 44,100 unless the phone struggles to read the handheld.';
     6: Result := 'The phone confirms what it has received, silently (19.0 to 20.5 kHz); then nothing is repeated needlessly. Without an answer it repeats as set above.';
-    7: Result := 'Sends a sentence to the phone, to try it.';
-    8: Result := 'Version, credits and how it works.';
+    7: Result := 'Enter presses Send on the phone (chat apps need the phone helper, or a field whose key says Send). Shift+Enter is always a new line. Alt+S also sends.';
+    8: Result := 'Sends a sentence to the phone, to try it.';
+    9: Result := 'Version, credits and how it works.';
   else Result := '';
   end;
 end;
@@ -873,15 +878,16 @@ begin
     4: Band := (Band + dir + NBANDS) mod NBANDS;
     5: begin ChipRate := not ChipRate; if ChipRate then WantRate := RATE_CHIP else WantRate := RATE_WINDOWS; end;
     6: begin ReturnOn := not ReturnOn; if ReturnOn then BkStart else BkStop; end;
-    7: if dir = 0 then begin TypeText(TEST_TEXT); Screen := SCR_TYPE; end;
-    8: if dir = 0 then Screen := SCR_ABOUT;
+    7: EnterSends := not EnterSends;
+    8: if dir = 0 then begin TypeText(TEST_TEXT); Screen := SCR_TYPE; end;
+    9: if dir = 0 then Screen := SCR_ABOUT;
   end;
-  if i < 7 then SaveCfg;
+  if i < 8 then SaveCfg;
 end;
 
 function SetRowRect(i: Integer): TRect;
 begin
-  Result := MkRect(PAD, HEAD_H + 3 + i * 15, CW - PAD, HEAD_H + 3 + i * 15 + 15);
+  Result := MkRect(PAD, HEAD_H + 3 + i * 14, CW - PAD, HEAD_H + 3 + i * 14 + 14);
 end;
 
 procedure DrawSettings(dc: HDC);
@@ -893,7 +899,7 @@ begin
     if i = SetSel then Rounded(dc, rc, COL_ROW_SEL, 8);
     Txt(dc, SET_NAME[i], MkRect(rc.left + 10, rc.top, rc.left + 230, rc.bottom), fBold, COL_INK, DT_LEFT or DT_SINGLELINE or DT_VCENTER);
     Txt(dc, SettingValue(i), MkRect(rc.left + 240, rc.top, rc.right - 24, rc.bottom), fNorm, COL_NAVY, DT_LEFT or DT_SINGLELINE or DT_VCENTER);
-    if (i = SetSel) and (i < 7) then
+    if (i = SetSel) and (i < 8) then
     begin
       Txt(dc, '<', MkRect(rc.left + 226, rc.top, rc.left + 240, rc.bottom), fBold, COL_MUTED, DT_LEFT or DT_SINGLELINE or DT_VCENTER);
       Txt(dc, '>', MkRect(rc.right - 20, rc.top, rc.right - 4, rc.bottom), fBold, COL_MUTED, DT_LEFT or DT_SINGLELINE or DT_VCENTER);
@@ -1071,7 +1077,7 @@ begin
     8: if CtrlDown then TypeDeleteWord else TypeBackspace;
     127: TypeDeleteWord;                             { Ctrl+Backspace on some keyboards }
     9: if ShiftDown then TypeKey(K_SHIFT_TAB) else TypeKey(K_TAB);
-    13: TypeChar(#10);
+    13: if EnterSends and not ShiftDown then TypeKey(K_SEND) else TypeChar(#10);
     27: TypeKey(K_ESC);
     1: TypeKey(K_SELALL);
     3: TypeKey(K_COPY);
@@ -1092,7 +1098,7 @@ begin
       if c = 27 then GoScreen(SCR_TYPE)
       else if (c = 13) or (c = 32) then
       begin
-        if SetSel >= 7 then ChangeSetting(SetSel, 0) else ChangeSetting(SetSel, 1);
+        if SetSel >= 8 then ChangeSetting(SetSel, 0) else ChangeSetting(SetSel, 1);
       end;
     SCR_KEYS:
       if (c = 27) or (c = 13) then GoScreen(SCR_TYPE);
@@ -1137,7 +1143,7 @@ begin
       if (y >= rc.top) and (y < rc.bottom) then
       begin
         SetSel := i;
-        if i >= 7 then ChangeSetting(i, 0)
+        if i >= 8 then ChangeSetting(i, 0)
         else if x > CW div 2 + 60 then ChangeSetting(i, 1)
         else if x > CW div 2 - 20 then ChangeSetting(i, -1);
         Exit;

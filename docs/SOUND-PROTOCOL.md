@@ -369,6 +369,21 @@ On an acknowledgement with `doc == its current document id` and not within
    the new length and ignores acknowledgements for 3 s (`ACK_IGNORE_MS`), since
    the phone's answer may describe the old text.
 
+### 7.4b Verification (version 1.2)
+
+- **Check frame:** when the page is idle (no edit for 30 s) and the phone has answered before, the sender sends
+  an **empty data frame** (n = 0, offset = L) every 30 s (every ~4 s while an acknowledgement did not fit). It
+  carries no text; the phone answers it like any frame, so the sender learns what the phone holds. After 20 check
+  frames in a row without an answer, the checks stop.
+- **Two mismatches in a row** (the hash of the phone's first P bytes does not match the sender's) mean the
+  difference may be anywhere in the page, not only in the last 300 bytes: the sender sets every byte's send count
+  back to 1 and sends the **whole page** again, as fast as the normal repeat schedule allows, until an
+  acknowledgement fits (and again if one still does not).
+- **Field check (receiver):** a receiver that has written text for good (typed it into a field) keeps a copy of
+  what it wrote and compares it with its mirror on every update; if a byte it already wrote has since changed in
+  the mirror, it takes the text back to that point and writes it again from the mirror, unless a key was pressed
+  after it (keys cannot be taken back).
+
 ### 7.5 Timing
 
 - **Receiver:** send an acknowledgement about **700 ms after the last frame of
