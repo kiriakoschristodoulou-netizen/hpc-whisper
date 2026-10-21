@@ -25,7 +25,7 @@ Made on, and for, the HP Jornada 720. Created by Kyriakos Christodoulou.
 - **iPhone, or any phone:** the receiver page,
   <https://kiriakoschristodoulou-netizen.github.io/hpc-whisper/>, with Copy and Share.
   (Apple does not let keyboards use the microphone, so no iPhone keyboard.)
-- **Handheld:** `HPC-Whisper-10.zip` from the same release. Copy the folder to
+- **Handheld:** `HPC-Whisper-11.zip` from the same release. Copy the folder to
   the handheld and run `HPCWhisper.exe`.
 
 - **Mic Scan** (`Mic-Scan-13.zip`, separate tool): records a test sound played by

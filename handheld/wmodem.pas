@@ -41,6 +41,8 @@ const
   RECENT_BACK = 300;                 { only this much of the end of the document is sent again }
   MAX_SENDS = 8;                     { the most times a byte can be asked to go out }
   DEFAULT_SENDS = 6;
+  ACK_WAIT_MS = 2600;                { after a frame, the repeats wait this long for the phone's acknowledgement }
+  ACK_IGNORE_MS = 3000;              { after text that was acknowledged is changed, older acknowledgements are not believed }
   { how long the text must have been left alone before it goes out for the 2nd, 3rd... time }
   SEND_AFTER_MS: array[1..MAX_SENDS - 1] of LongWord = (400, 1500, 3000, 6000, 10000, 15000, 22000);
 
@@ -93,6 +95,15 @@ type
     keyEnd: Integer;                 { just after the last key: Backspace cannot go back past it }
     target: Integer;                 { every byte goes out this many times }
     lastEdit: LongWord;              { tick of the last change }
+    { the return channel: the phone says "bytes 0 .. P-1 are all here" }
+    acked: Integer;                  { bytes below this need no more sending }
+    ackIgnore: LongWord;             { acknowledgements are not believed before this tick }
+    repFrom, repLen: Integer;        { a gap the phone asked for: sent at once }
+    lastEnd: LongWord;               { tick when the last frame finished }
+    waitAck: Boolean;                { a frame has finished and the acknowledgement may still come }
+    noAck: Integer;                  { windows in a row that passed without one; from 2 on the repeats stop waiting }
+    heard: Boolean;                  { an acknowledgement has been heard at least once }
+    mismatch: Integer;               { acknowledgements in a row that did not fit the text }
   end;
 
 procedure SnInit(var s: TSender; docId: Byte);
@@ -102,6 +113,10 @@ procedure SnKey(var s: TSender; code: Integer; now: LongWord);   { add a key (a 
 procedure SnBackspace(var s: TSender; now: LongWord);           { remove the last typed character; or, if none was typed since the last key, add the key Backspace }
 procedure SnDeleteWord(var s: TSender; now: LongWord);          { Ctrl+Backspace: the same, a word at a time }
 procedure SnResend(var s: TSender; now: LongWord);              { send the end of the document again, as if it was new }
+procedure SnFrameDone(var s: TSender; now: LongWord);           { the sound of a frame has ended }
+procedure SnAck(var s: TSender; now: LongWord; doc, P, G, hash: Integer);   { the phone's acknowledgement (ackrx) }
+function AckHash(doc, P, G: Integer; const bytes: array of Byte): Integer;   { 12 bits: what the acknowledgement says about the text }
+function SnDelivered(const s: TSender): Boolean;                { every byte is known to the phone }
 { the next frame to send, if any; now is GetTickCount }
 function SnNext(var s: TSender; now: LongWord; var f: TFrame): Boolean;
 function SnWaiting(const s: TSender): Integer;                  { bytes typed that have not gone out even once }
@@ -244,6 +259,7 @@ begin
   if s.docId >= $FD then s.docId := 0;
   s.sentL := -1;
   s.target := DEFAULT_SENDS;
+  s.acked := 0; s.repLen := 0; s.waitAck := False; s.noAck := 0; s.heard := False; s.mismatch := 0;
 end;
 
 procedure SnNewDoc(var s: TSender);
@@ -253,12 +269,15 @@ begin
   if id >= $FD then id := 0;
   s.L := 0; s.sentL := -1; s.liveFrom := 0; s.keyEnd := 0;
   s.docId := id;
+  s.acked := 0; s.repLen := 0; s.waitAck := False; s.mismatch := 0;
 end;
 
 procedure Changed(var s: TSender; now: LongWord);
 begin
   if s.liveFrom > s.L then s.liveFrom := s.L;
   if s.keyEnd > s.L then s.keyEnd := s.L;
+  if s.acked > s.L then begin s.acked := s.L; s.ackIgnore := now + ACK_IGNORE_MS; end;
+  if s.repFrom + s.repLen > s.L then begin s.repLen := 0; end;
   s.lastEdit := now;
 end;
 
@@ -328,7 +347,69 @@ begin
   for i := lo to s.L - 1 do s.sends[i] := 0;
   if s.liveFrom > lo then s.liveFrom := lo;
   s.sentL := -1;
+  if s.acked > lo then s.acked := lo;
+  s.repLen := 0;
+  s.ackIgnore := now + ACK_IGNORE_MS;
   s.lastEdit := now;
+end;
+
+procedure SnFrameDone(var s: TSender; now: LongWord);
+begin
+  s.lastEnd := now;
+  s.waitAck := True;
+end;
+
+function AckHash(doc, P, G: Integer; const bytes: array of Byte): Integer;
+var c: Word; i: Integer;
+  procedure Feed(b: Integer);
+  var j: Integer;
+  begin
+    c := c xor (Word(b and 255) shl 8);
+    for j := 1 to 8 do
+      if (c and $8000) <> 0 then c := Word((c shl 1) xor $1021) else c := Word(c shl 1);
+  end;
+begin
+  c := $FFFF;
+  Feed(doc); Feed(P shr 8); Feed(P and 255); Feed(G and 15);
+  for i := 0 to P - 1 do Feed(bytes[i]);
+  Result := c and $FFF;
+end;
+
+procedure SnAck(var s: TSender; now: LongWord; doc, P, G, hash: Integer);
+var i, lo: Integer;
+begin
+  if doc <> s.docId then Exit;
+  if (s.ackIgnore <> 0) and (LongInt(now - s.ackIgnore) < 0) then Exit;
+  { it must say something true about OUR text: otherwise the phone holds older text, or the frame was misread }
+  if (P > s.L) or (AckHash(doc, P, G, s.doc) <> hash) then
+  begin
+    s.heard := True; s.noAck := 0; s.waitAck := False;
+    if s.mismatch < 5 then
+    begin
+      Inc(s.mismatch);
+      lo := s.L - RECENT_BACK; if lo < 0 then lo := 0;
+      for i := lo to s.L - 1 do if (s.target > 1) and (s.sends[i] > s.target - 1) then s.sends[i] := s.target - 1;
+      if s.acked > lo then s.acked := lo;
+    end;
+    Exit;
+  end;
+  s.mismatch := 0;
+  s.heard := True;
+  s.noAck := 0;
+  s.waitAck := False;
+  if P > s.acked then s.acked := P;
+  if (G > 0) and (P < s.L) then
+  begin
+    s.repFrom := P;
+    s.repLen := G;
+    if s.repFrom + s.repLen > s.L then s.repLen := s.L - s.repFrom;
+  end
+  else s.repLen := 0;
+end;
+
+function SnDelivered(const s: TSender): Boolean;
+begin
+  Result := (s.L > 0) and (s.acked >= s.L);
 end;
 
 function SnWaiting(const s: TSender): Integer;
@@ -392,10 +473,30 @@ begin
     Result := True;
     Exit;
   end;
+  { a gap the phone asked for goes out at once }
+  if (s.repLen > 0) and (s.repFrom < s.L) then
+  begin
+    o := s.repFrom; n := s.repLen;
+    if n > REPAIR_MAX then n := REPAIR_MAX;
+    MakeFrame(s, o, n, Odd(s.sends[o]), f);
+    s.repFrom := o + n; Dec(s.repLen, n);
+    Result := True;
+    Exit;
+  end;
+  { after a frame the repeats wait for the acknowledgement (2 windows in a row without one: the phone does not
+    answer, and they stop waiting) }
+  if s.waitAck and (LongInt(now - s.lastEnd) >= ACK_WAIT_MS) then
+  begin
+    s.waitAck := False;
+    if s.L > s.acked then Inc(s.noAck);
+  end;
+  if s.waitAck and (s.noAck < 2) and (s.acked < s.L) then Exit;
   { a pause: the text that has gone out the fewest times goes out again, if it has been left alone long
     enough for that many sends (the 2nd after 0.4 s, the 3rd after 1.5 s, ...) }
   lo := s.L - RECENT_BACK;
   if lo < 0 then lo := 0;
+  if lo < s.acked then lo := s.acked;
+  if lo >= s.L then Exit;
   m := 255;
   for i := lo to s.L - 1 do if s.sends[i] < m then m := s.sends[i];
   if (m >= 1) and (m < s.target) and (m < MAX_SENDS) and (idle >= SEND_AFTER_MS[m]) then

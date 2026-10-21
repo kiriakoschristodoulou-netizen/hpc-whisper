@@ -35,6 +35,60 @@ public final class Hub implements Listener.Callback {
 
     private Hub() { }
 
+    // ---------- the return channel: a silent acknowledgement after each group of frames ----------
+    private static final long ACK_QUIET_MS = 700, ACK_MIN_GAP_MS = 1000, ACK_TAIL_MS = 150;
+    private final android.os.Handler ackHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private volatile long lastActivity = 0, lastAckAt = 0, muteUntil = 0;
+    private final Runnable ackDue = this::sendAck;
+
+    private void noteActivity() {
+        long now = System.currentTimeMillis();
+        lastActivity = now;
+        if (app == null || !Prefs.returnChannel(app)) return;
+        ackHandler.removeCallbacks(ackDue);
+        ackHandler.postDelayed(ackDue, ACK_QUIET_MS);
+    }
+
+    private void sendAck() {
+        if (app == null || !Prefs.returnChannel(app)) return;
+        long now = System.currentTimeMillis();
+        if (now < muteUntil) { ackHandler.postDelayed(ackDue, muteUntil - now + 50); return; }
+        if (now - lastActivity < ACK_QUIET_MS) { ackHandler.postDelayed(ackDue, ACK_QUIET_MS - (now - lastActivity) + 20); return; }
+        if (now - lastAckAt < ACK_MIN_GAP_MS) return;
+        final Ack.State st = Ack.of(mirror);
+        if (st == null) return;
+        lastAckAt = now;
+        final int[] sym = Ack.symbols(st.doc, st.p, st.g, st.hash);
+        final long len = Math.round((sym.length * Ack.SYMBOL_S + 0.04) * 1000);
+        muteUntil = now + len + ACK_TAIL_MS;
+        DiagLog.log("acknowledging: page " + st.doc + ", holds " + st.p + " bytes, " + st.g + " missing after");
+        new Thread(() -> play(sym), "whisper-ack").start();
+    }
+
+    private void play(int[] sym) {
+        android.media.AudioTrack t = null;
+        try {
+            final int rate = 48000;
+            short[] pcm = Ack.pcm(sym, rate, 0.8);
+            t = new android.media.AudioTrack.Builder()
+                    .setAudioAttributes(new android.media.AudioAttributes.Builder()
+                            .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC).build())
+                    .setAudioFormat(new android.media.AudioFormat.Builder()
+                            .setEncoding(android.media.AudioFormat.ENCODING_PCM_16BIT)
+                            .setSampleRate(rate).setChannelMask(android.media.AudioFormat.CHANNEL_OUT_MONO).build())
+                    .setBufferSizeInBytes(pcm.length * 2)
+                    .setTransferMode(android.media.AudioTrack.MODE_STATIC).build();
+            t.write(pcm, 0, pcm.length);
+            t.play();
+            Thread.sleep(pcm.length * 1000L / rate + 100);
+        } catch (Exception e) {
+            DiagLog.log("acknowledgement could not be played: " + e);
+        } finally {
+            if (t != null) { try { t.stop(); } catch (Exception ignored) { } t.release(); }
+        }
+    }
+
     /** Starts listening (if nobody was) and tells this client about everything heard. False when the microphone cannot be opened. */
     public synchronized boolean attach(Context ctx, Client c) {
         app = ctx.getApplicationContext();
@@ -58,6 +112,7 @@ public final class Hub implements Listener.Callback {
 
     @Override public void onFrame(Receiver.Frame f) {
         long now = System.currentTimeMillis();
+        if (now < muteUntil) return;                       // our own acknowledgement, heard by our own microphone
         long prev = lastFrameAt;
         boolean fresh = mirror.apply(f, now);
         frames++;
@@ -68,6 +123,7 @@ public final class Hub implements Listener.Callback {
             Sessions.update(app, mirror);
             if (Prefs.cue(app) && prev != 0 && now - prev > 5000) cue();
         }
+        noteActivity();
         for (Client c : copy()) c.onFrame(f);
     }
     /** A short buzz when text arrives after a pause (a setting). */
@@ -80,7 +136,7 @@ public final class Hub implements Listener.Callback {
         } catch (Exception ignored) { }
     }
 
-    @Override public void onUnreadable() { for (Client c : copy()) c.onUnreadable(); }
+    @Override public void onUnreadable() { if (System.currentTimeMillis() < muteUntil) return; noteActivity(); for (Client c : copy()) c.onUnreadable(); }
     @Override public void onLevels(float[] l) { for (Client c : copy()) c.onLevels(l); }
     @Override public void onProblem(String m) { problem = m; DiagLog.log("problem: " + m); for (Client c : copy()) c.onProblem(m); }
 }

@@ -92,6 +92,25 @@ Home, End, Delete, Tab, Esc, Ctrl+A/C/X/V/Z/Y as their own codes, Send, Back,
 phone Home, Recents), and 0x100 and 0x200 add Shift and Ctrl for movement and
 delete keys. A key is pressed once, when the bytes before it are known.
 
+## The return channel (acknowledgement)
+
+The phone answers the handheld, silently, so the handheld need not repeat what has arrived.
+
+- **Frame:** the same preamble, then one RS(15,11) block, in the band at 19000 Hz (tones 19.0 to 20.5 kHz),
+  32 ms a symbol (0.75 s in all). Nibbles of the block: type (1), page number (2), P (4), G (1), hash (3).
+- **P** is the number of bytes from the start of the page that the phone holds without a gap. **G** is how many
+  bytes are missing right after them (0 to 15). Bytes given up on do not count as held.
+- **Hash:** the low 12 bits of CRC-16 CCITT over page number, P (high, low), G (low 4 bits) and the first P bytes
+  of the page. The handheld checks it against its own text, so an acknowledgement of older text (an earlier page
+  or text since changed) is not believed; then it sends the last 300 bytes again.
+- **When:** about 700 ms after the last frame of a group was heard and nothing else is coming, at most once a
+  second; the phone ignores its own sound for that time and 150 ms more.
+- **Handheld:** after a frame it waits up to 2.6 s for the answer. Bytes below P are done and not repeated; a
+  gap of G bytes at P is sent at once. After two windows in a row without an answer it behaves as before
+  (every byte sent the set number of times), so phones without the return channel still work. The title bar
+  shows "Delivered" when P covers the whole text.
+- **Measured** (Mic Scan, Return Test): the handheld microphone decodes 19.0 to 20.5 kHz cleanly.
+
 ## Receiving, in brief
 
 - Measure each grid tone in 1 ms steps (a running complex sum per tone), so

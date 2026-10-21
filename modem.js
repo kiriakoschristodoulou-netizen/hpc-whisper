@@ -141,6 +141,15 @@
     return sym;
   }
 
+  // the return channel (docs/FORMAT.md): the phone tells the handheld what it has received
+  const ACK_BAND = 19000, ACK_SPEED = 0.032, ACK_TYPE = 1;
+  // hash: 12 bits, CRC-16 of doc, P (2 bytes), G and the received bytes 0 .. P-1 (docBytes: the first P bytes of the document)
+  function ackHash(doc, P, G, docBytes) { return crc16([doc & 255, (P >> 8) & 255, P & 255, G & 15].concat(Array.from(docBytes.slice(0, P)))) & 0xFFF; }
+  function ackSymbols(doc, P, G, hash) {
+    const w = rsEncode([ACK_TYPE, (doc >> 4) & 15, doc & 15, (P >> 12) & 15, (P >> 8) & 15, (P >> 4) & 15, P & 15, G & 15, (hash >> 8) & 15, (hash >> 4) & 15, hash & 15]);
+    return PREAMBLE.concat(w);
+  }
+
   // test signal: symbols -> samples (phase-continuous tones, soft ends)
   function synth(symbols, rate, band, speed, amp) {
     const n0 = Math.round(rate * 0.02);
@@ -523,6 +532,6 @@
   }
 
   const api = { GRID_START, GRID_STEP, BANDS, SPEEDS, PREAMBLE, VERSION, MAXLEN,
-                rsEncode, rsDecode, crc16, encodeFrame, synth, bodyBlocks, Receiver, Mirror };
+                rsEncode, rsDecode, crc16, encodeFrame, synth, ackSymbols, ackHash, ACK_BAND, ACK_SPEED, bodyBlocks, Receiver, Mirror };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Whisper = api;
 })(this);

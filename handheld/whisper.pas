@@ -23,10 +23,10 @@ program whisper;
 {$ifdef wince}{$define API:=cdecl}{$else}{$define API:=stdcall}{$endif}
 {$packrecords c}
 {$R whisper.res}
-uses Windows, wmodem;
+uses Windows, wmodem, wback;
 
 const
-  VERSION = '1.0';
+  VERSION = '1.1';
   CREATOR = 'Kyriakos Christodoulou';
   CLSNAME: UnicodeString = 'HPCWhisper';
   APPNAME: UnicodeString = 'HPC Whisper';
@@ -110,6 +110,8 @@ var
   Sends: Integer = DEFAULT_SENDS;  { every piece of text goes out this many times }
   TwoBands: Boolean = True;        { the repeats go on another band }
   ChipRate: Boolean = True;        { play at the chip's own 43,200 instead of 44,100 }
+  ReturnOn: Boolean = True;        { listen for the phone's acknowledgements (the return channel) }
+  LastAckSeq: LongInt = 0;
 
   { what you typed, as shown: characters, and keys as characters from the private area }
   Show: array[0..SHOWMAX - 1] of WideChar;
@@ -261,6 +263,7 @@ begin
     if (b[4] >= 2) and (b[4] <= MAX_SENDS) then Sends := b[4];
     TwoBands := b[5] <> 0;
     ChipRate := b[6] <> 0;
+    ReturnOn := b[7] = 0;
   end;
   CloseHandle(h);
 end;
@@ -271,7 +274,7 @@ begin
   h := CreateFileW(PWideChar(CfgPath), GENERIC_WRITE, 0, nil, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
   if h = INVALID_HANDLE_VALUE then Exit;
   b[0] := $59; b[1] := Band; b[2] := Speed; b[3] := Volume; b[4] := Sends;
-  b[5] := Ord(TwoBands); b[6] := Ord(ChipRate); b[7] := 0;
+  b[5] := Ord(TwoBands); b[6] := Ord(ChipRate); b[7] := Ord(not ReturnOn);
   got := 0;
   WriteFile(h, {$ifdef wince}@b{$else}b{$endif}, 8, {$ifdef wince}@got{$else}got{$endif}, nil);
   CloseHandle(h);
@@ -472,8 +475,26 @@ begin
     end;
     was := busy;
     busy := TmFill(Tm, Buf[k], BUF_N);
+    { the phone's acknowledgements (wback listens all the time) }
+    if BkSeq <> LastAckSeq then
+    begin
+      LastAckSeq := BkSeq;
+      if ReturnOn then
+      begin
+        EnterCriticalSection(Lock);
+        SnAck(Snd, GetTickCount, BkDoc, BkP, BkG, BkHash);
+        LeaveCriticalSection(Lock);
+        PostMessageW(hMain, WM_UPDATE, 0, 0);
+      end;
+    end;
     if was and not busy then
     begin
+      if ReturnOn and BkOn then
+      begin
+        EnterCriticalSection(Lock);
+        SnFrameDone(Snd, GetTickCount);
+        LeaveCriticalSection(Lock);
+      end;
       SendingN := 0; Inc(FramesSent);
       PostMessageW(hMain, WM_UPDATE, 0, 0);
     end;
@@ -719,7 +740,7 @@ begin
 end;
 
 function StatusText(out col, fg: COLORREF): UnicodeString;
-var waiting, sent: Integer;
+var waiting, sent: Integer; delivered: Boolean;
 begin
   fg := COL_NAVY;
   if not SoundOK then
@@ -731,6 +752,7 @@ begin
   EnterCriticalSection(Lock);
   waiting := SnWaiting(Snd);
   sent := SnSent(Snd);
+  delivered := SnDelivered(Snd);
   LeaveCriticalSection(Lock);
   if (SendingN > 0) or (waiting > 0) then
   begin
@@ -738,6 +760,7 @@ begin
     if waiting > 0 then Result := 'Sending, ' + IU(waiting) + ' waiting' else Result := 'Sending';
   end
   else if Snd.L = 0 then begin col := COL_PILL_IDLE; fg := COL_HEADKEY; Result := 'Ready'; end
+  else if delivered then begin col := COL_GREEN_ON_NAVY; Result := 'Delivered'; end
   else if sent >= Snd.target then begin col := COL_GREEN_ON_NAVY; Result := 'Sent ' + #$D7 + IU(sent); end
   else begin col := COL_AMBER; Result := 'Sent ' + #$D7 + IU(sent) + ' of ' + IU(Snd.target); end;
 end;
@@ -801,8 +824,8 @@ end;
 { ---- settings ---- }
 
 const
-  NSET = 8;
-  SET_NAME: array[0..NSET - 1] of UnicodeString = ('Repeats', 'Second band for repeats', 'Volume', 'Speed', 'Band', 'Sound rate', 'Test', 'About');
+  NSET = 9;
+  SET_NAME: array[0..NSET - 1] of UnicodeString = ('Repeats', 'Second band for repeats', 'Volume', 'Speed', 'Band', 'Sound rate', 'Return channel', 'Test', 'About');
 
 function SettingValue(i: Integer): UnicodeString;
 begin
@@ -813,8 +836,12 @@ begin
     3: Result := US(SPEED_NAME[Speed]) + ' (' + IU(SPEED_MS[Speed]) + ' ms a tone)';
     4: Result := BandName(Band);
     5: if ChipRate then Result := '43,200 (the chip''s own)' else Result := '44,100 (as Windows says)';
-    6: Result := 'Type a test sentence';
-    7: Result := 'HPC Whisper ' + VERSION;
+    6: if not ReturnOn then Result := 'Off'
+       else if BkOn then Result := 'On, the phone confirms'
+       else if BkErr <> '' then Result := 'On, but ' + US(BkErr)
+       else Result := 'On';
+    7: Result := 'Type a test sentence';
+    8: Result := 'HPC Whisper ' + VERSION;
   else Result := '';
   end;
 end;
@@ -828,8 +855,9 @@ begin
     3: Result := 'Normal is the surest; Fast shortens the wait for the text to appear.';
     4: Result := 'The phone finds the band by itself. Change it only if something else is making sound up there.';
     5: Result := 'Leave at 44,100 unless the phone struggles to read the handheld.';
-    6: Result := 'Sends a sentence to the phone, to try it.';
-    7: Result := 'Version, credits and how it works.';
+    6: Result := 'The phone confirms what it has received, silently (19.0 to 20.5 kHz); then nothing is repeated needlessly. Without an answer it repeats as set above.';
+    7: Result := 'Sends a sentence to the phone, to try it.';
+    8: Result := 'Version, credits and how it works.';
   else Result := '';
   end;
 end;
@@ -843,15 +871,16 @@ begin
     3: Speed := (Speed + dir + NSPEEDS) mod NSPEEDS;
     4: Band := (Band + dir + NBANDS) mod NBANDS;
     5: begin ChipRate := not ChipRate; if ChipRate then WantRate := RATE_CHIP else WantRate := RATE_WINDOWS; end;
-    6: if dir = 0 then begin TypeText(TEST_TEXT); Screen := SCR_TYPE; end;
-    7: if dir = 0 then Screen := SCR_ABOUT;
+    6: begin ReturnOn := not ReturnOn; if ReturnOn then BkStart else BkStop; end;
+    7: if dir = 0 then begin TypeText(TEST_TEXT); Screen := SCR_TYPE; end;
+    8: if dir = 0 then Screen := SCR_ABOUT;
   end;
-  if i < 6 then SaveCfg;
+  if i < 7 then SaveCfg;
 end;
 
 function SetRowRect(i: Integer): TRect;
 begin
-  Result := MkRect(PAD, HEAD_H + 4 + i * 19, CW - PAD, HEAD_H + 4 + i * 19 + 18);
+  Result := MkRect(PAD, HEAD_H + 3 + i * 15, CW - PAD, HEAD_H + 3 + i * 15 + 15);
 end;
 
 procedure DrawSettings(dc: HDC);
@@ -863,19 +892,18 @@ begin
     if i = SetSel then Rounded(dc, rc, COL_ROW_SEL, 8);
     Txt(dc, SET_NAME[i], MkRect(rc.left + 10, rc.top, rc.left + 230, rc.bottom), fBold, COL_INK, DT_LEFT or DT_SINGLELINE or DT_VCENTER);
     Txt(dc, SettingValue(i), MkRect(rc.left + 240, rc.top, rc.right - 24, rc.bottom), fNorm, COL_NAVY, DT_LEFT or DT_SINGLELINE or DT_VCENTER);
-    if (i = SetSel) and (i < 6) then
+    if (i = SetSel) and (i < 7) then
     begin
       Txt(dc, '<', MkRect(rc.left + 226, rc.top, rc.left + 240, rc.bottom), fBold, COL_MUTED, DT_LEFT or DT_SINGLELINE or DT_VCENTER);
       Txt(dc, '>', MkRect(rc.right - 20, rc.top, rc.right - 4, rc.bottom), fBold, COL_MUTED, DT_LEFT or DT_SINGLELINE or DT_VCENTER);
     end;
   end;
-  Txt(dc, SettingHint(SetSel), MkRect(PAD + 10, HEAD_H + 4 + NSET * 19 + 4, CW - PAD - 10, CH - FOOT_H - 2), fNorm, COL_MUTED, DT_LEFT or DT_WORDBREAK);
   rc := BtnRect(NBTN - 1);
   Rounded(dc, rc, COL_LINE, 8);
   Rounded(dc, MkRect(rc.left + 1, rc.top + 1, rc.right - 1, rc.bottom - 1), COL_CARD, 8);
   Txt(dc, 'Back', MkRect(rc.left, rc.top + 2, rc.right, rc.top + 17), fBold, COL_NAVY, DT_CENTER or DT_SINGLELINE);
   Txt(dc, 'Esc', MkRect(rc.left, rc.top + 16, rc.right, rc.bottom), fSmall, COL_MUTED, DT_CENTER or DT_SINGLELINE);
-  Txt(dc, 'Up and Down choose, Left and Right change, Enter does', MkRect(PAD, CH - FOOT_H + 4, BtnRect(NBTN - 1).left - 8, CH - 4), fSmall, COL_MUTED, DT_LEFT or DT_VCENTER or DT_SINGLELINE);
+  Txt(dc, SettingHint(SetSel), MkRect(PAD, CH - FOOT_H + 4, BtnRect(NBTN - 1).left - 8, CH - 4), fSmall, COL_MUTED, DT_LEFT or DT_VCENTER or DT_WORDBREAK);
 end;
 
 { ---- the list of keys ---- }
@@ -968,6 +996,7 @@ var n: Integer;
 begin
   SaveCfg;
   Quit := True;
+  BkStop;
   n := 0;
   if hThread <> 0 then
     while (WaitForSingleObject(hThread, 100) <> WAIT_OBJECT_0) and (n < 30) do Inc(n);
@@ -1062,7 +1091,7 @@ begin
       if c = 27 then GoScreen(SCR_TYPE)
       else if (c = 13) or (c = 32) then
       begin
-        if SetSel >= 6 then ChangeSetting(SetSel, 0) else ChangeSetting(SetSel, 1);
+        if SetSel >= 7 then ChangeSetting(SetSel, 0) else ChangeSetting(SetSel, 1);
       end;
     SCR_KEYS:
       if (c = 27) or (c = 13) then GoScreen(SCR_TYPE);
@@ -1107,7 +1136,7 @@ begin
       if (y >= rc.top) and (y < rc.bottom) then
       begin
         SetSel := i;
-        if i >= 6 then ChangeSetting(i, 0)
+        if i >= 7 then ChangeSetting(i, 0)
         else if x > CW div 2 + 60 then ChangeSetting(i, 1)
         else if x > CW div 2 - 20 then ChangeSetting(i, -1);
         Exit;
@@ -1196,6 +1225,7 @@ begin
   hThread := CreateThread(nil, 0, @SoundThread, nil, 0, tid);
   if hThread <> 0 then SetThreadPriority(hThread, THREAD_PRIORITY_ABOVE_NORMAL);   { sound must never wait for drawing }
   if hThread = 0 then begin SoundErr := 'The sound thread could not start.'; InvalidateRect(hMain, nil, False); end;
+  if ReturnOn then BkStart;
   while GetMessageW(@m, 0, 0, 0) do
   begin
     TranslateMessage(@m);

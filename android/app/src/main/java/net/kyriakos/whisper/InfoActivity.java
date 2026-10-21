@@ -49,7 +49,9 @@ public class InfoActivity extends BaseActivity {
                 + "one-line fields without it.").setPadding(0, ui.dp(8), 0, 0);
 
         LinearLayout m = box("If text goes missing");
-        ui.text(m, "Every piece of text is sent several times, a little later each time, on two different bands, so a piece "
+        ui.text(m, "The keyboard confirms silently (a sound above 19 kHz) what it has received, so the handheld stops repeating what "
+                + "arrived and sends only what is missing (Settings, Confirm to the handheld). Without a confirmation "
+                + "every piece of text is sent several times, a little later each time, on two different bands, so a piece "
                 + "lost on the way fills in by itself. If the keyboard says \"Waiting for a missing piece\", wait a few seconds; "
                 + "if it does not fill in, press Alt+R on the handheld. Move the phone closer if it says \"Weak signal\". "
                 + "Text still missing after half a minute is given up so it cannot hold up what you type next. Everything that "

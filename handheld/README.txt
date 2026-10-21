@@ -1,4 +1,4 @@
-HPC Whisper 1.0
+HPC Whisper 1.1
 by Kyriakos Christodoulou
 
 Type on this handheld and the text appears in any app on your phone,
@@ -23,5 +23,9 @@ KEYS
   helper). Alt+R send again, Alt+N new page, Alt+K keys, Alt+O settings,
   Alt+Q quit.
 
-Each text is sent several times, on two bands, because the phone cannot
-answer. The title bar says how many times it has gone out.
+The phone answers silently (19.0 to 20.5 kHz, the "Return channel" in
+Settings) with what it has received. The title bar then says "Delivered";
+what arrived is not sent again, and only what is missing is sent again.
+If the phone does not answer (an older keyboard, no microphone on this
+handheld, too far away) every text goes out several times, on two bands,
+as before. The title bar says how many times it has gone out.

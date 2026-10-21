@@ -44,6 +44,11 @@ jobs:
           fpc -O2 -Fu../handheld -FUlinux -oretsim retsim.pas
           node test_scan.js
           node test_return.js
+          fpc -O2 -Fu../handheld -FUlinux -oacksim acksim.pas
+          fpc -O2 -Fu../handheld -FUlinux -ohashsim hashsim.pas
+          node test_ack.js
+          node test_ack_java.js
+          ./losssim 10 0 100 6 10
           mkdir -p writer/cls && javac -d writer/cls $(find writer/stubs -name "*.java") ../android/app/src/main/java/net/kyriakos/whisper/{Writer,Mirror,Keys,Receiver,DiagLog}.java writer/WriterTest.java
           java -cp writer/cls WriterTest writer/writer-frames.txt
 
@@ -75,7 +80,7 @@ jobs:
         run: |
           mkdir out
           cp android/app/build/outputs/apk/release/app-release.apk out/HPC-Whisper.apk
-          cp handheld/HPC-Whisper-10.zip handheld/Mic-Scan-13.zip out/
+          cp handheld/HPC-Whisper-11.zip handheld/Mic-Scan-13.zip out/
 
       - uses: actions/upload-artifact@v4
         with:
@@ -89,7 +94,7 @@ jobs:
           make_latest: 'true'
           body: |
             **HPC-Whisper.apk** – the Android keyboard: what you type on the handheld appears in any app.
-            **HPC-Whisper-10.zip** – the program for Windows CE handhelds with an ARM processor, such as the HP Jornada 720 (copy the folder to the handheld and run HPCWhisper.exe).
+            **HPC-Whisper-11.zip** – the program for Windows CE handhelds with an ARM processor, such as the HP Jornada 720 (copy the folder to the handheld and run HPCWhisper.exe).
             **Mic-Scan-13.zip** – a separate tool for the handheld that measures how its microphone hears sound (test sound: https://kiriakoschristodoulou-netizen.github.io/hpc-whisper/scan.html) and whether it can decode data sent by the phone (https://kiriakoschristodoulou-netizen.github.io/hpc-whisper/return.html).
             On an iPhone (Apple does not let keyboards use the microphone) or any other phone, use the receiver page: https://kiriakoschristodoulou-netizen.github.io/hpc-whisper/
           files: out/*
