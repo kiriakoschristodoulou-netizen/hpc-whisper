@@ -112,7 +112,6 @@ public final class Hub implements Listener.Callback {
 
     @Override public void onFrame(Receiver.Frame f) {
         long now = System.currentTimeMillis();
-        if (now < muteUntil) return;                       // our own acknowledgement, heard by our own microphone
         long prev = lastFrameAt;
         boolean fresh = mirror.apply(f, now);
         frames++;

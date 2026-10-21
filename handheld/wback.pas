@@ -20,6 +20,7 @@ var
   BkWant: Boolean = False;               { the program wants the microphone open (it is closed while the handheld plays) }
   BkOk: Boolean = False;                 { the microphone has opened at least once and the last try worked }
   BkFails: Integer = 0;                  { openings in a row that failed }
+  BkRate: Integer = 0;                   { the rate the speaker was opened at (0 = not yet): the microphone must use the same }
 
 procedure BkStart;
 procedure BkStop;
@@ -116,16 +117,16 @@ begin
   pAdd(hIn, @Hdr[k], SizeOf(THdr));
 end;
 
-{ The sound chip of the Jornada cannot play and record at the same time, so the program opens one or the other:
-  the microphone is open while the handheld is quiet (BkWant), and closed while it plays. }
-function OpenMic: Boolean;
+{ The Jornada can play and record at the same time (Duplex Test), in either order, but the chip has one clock: the
+  microphone must be opened at the same rate as the speaker (BkRate), or it will not open. }
+function OpenMic(rate: Integer): Boolean;
 var fmt: TFmt; k: Integer;
 begin
   Result := False;
   if not Resolve then begin BkErr := 'No microphone functions.'; Exit; end;
   if pNum() = 0 then begin BkErr := 'No microphone found.'; Exit; end;
   FillChar(fmt, SizeOf(fmt), 0);
-  fmt.tag := 1; fmt.channels := 1; fmt.rate := IN_RATE; fmt.bits := 16; fmt.align := 2; fmt.bytesPerSec := IN_RATE * 2;
+  fmt.tag := 1; fmt.channels := 1; fmt.rate := rate; fmt.bits := 16; fmt.align := 2; fmt.bytesPerSec := rate * 2;
   if pOpen(hIn, WAVE_MAPPER_, @fmt, 0, 0, 0) <> 0 then begin BkErr := 'The microphone would not open.'; Exit; end;
   AckInit(Rx^, BK_RATE);
   for k := 0 to IN_NBUF - 1 do
@@ -149,20 +150,23 @@ begin
 end;
 
 function ListenThread(param: Pointer): DWORD; API;
-var k, i, pk, v: Integer; open: Boolean;
+var k, i, pk, v, openRate: Integer; open: Boolean;
 begin
   Result := 0;
-  open := False;
+  open := False; openRate := 0;
   k := 0;
   while not StopReq do
   begin
-    if open and not BkWant then
+    { the speaker's rate changed (Settings): open again at the same one }
+    if open and ((not BkWant) or (BkRate <> openRate)) then
     begin
       CloseMic; open := False; BkOn := False;
     end;
-    if (not open) and BkWant then
+    if (not open) and BkWant and (BkRate <> 0) then
     begin
-      if OpenMic then
+      openRate := BkRate;
+      { the sound chip has one clock: the microphone is asked for the same rate as the speaker, and failing that the other usual one }
+      if OpenMic(openRate) or ((openRate <> IN_RATE) and OpenMic(IN_RATE)) then
       begin
         open := True; BkOn := True; BkOk := True; BkFails := 0; BkErr := ''; k := 0;
       end
@@ -202,7 +206,7 @@ begin
   if hThread <> 0 then Exit;
   if Rx = nil then New(Rx);
   StopReq := False;
-  BkErr := ''; BkFails := 0;
+  BkErr := ''; BkFails := 0; BkWant := True;
   hThread := CreateThread(nil, 0, @ListenThread, nil, 0, tid);
   if hThread = 0 then BkErr := 'The listening thread could not start.';
 end;

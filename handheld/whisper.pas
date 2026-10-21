@@ -405,28 +405,13 @@ begin
   end;
   pSetVol(0, $FFFFFFFF);
   pSetVol(hWave, $FFFFFFFF);
+  BkRate := rate;                      { the microphone follows the speaker's rate }
   Result := True;
 end;
 
-{ the phone's acknowledgements (wback listens whenever the handheld is quiet) }
-procedure PollAck;
-begin
-  if BkSeq <> LastAckSeq then
-  begin
-    LastAckSeq := BkSeq;
-    if ReturnOn then
-    begin
-      EnterCriticalSection(Lock);
-      SnAck(Snd, GetTickCount, BkDoc, BkP, BkG, BkHash);
-      LeaveCriticalSection(Lock);
-      PostMessageW(hMain, WM_UPDATE, 0, 0);
-    end;
-  end;
-end;
-
 function SoundThread(param: Pointer): DWORD; API;
-var k, i, quietBufs: Integer; playing: array[0..NBUF - 1] of Boolean; busy, was: Boolean;
-    f: TFrame; got, have, listening: Boolean; rate: Integer;
+var k, i: Integer; playing: array[0..NBUF - 1] of Boolean; busy, was: Boolean;
+    f: TFrame; got: Boolean; rate: Integer;
 begin
   Result := 0;
   rate := WantRate;
@@ -440,33 +425,10 @@ begin
   if not SoundOK then Exit;
   TmInit(Tm, rate);
   for i := 0 to NBUF - 1 do playing[i] := False;
-  busy := False; have := False; listening := False; quietBufs := 0;
+  busy := False;
   k := 0;
   while not Quit do
   begin
-    { quiet: the speaker is closed and the microphone listens for the phone's acknowledgement; the speaker opens
-      again as soon as there is something to send (the chip cannot play and record at once) }
-    if listening then
-    begin
-      Sleep(10);
-      PollAck;
-      if WantRate <> rate then begin rate := WantRate; TmInit(Tm, rate); end;
-      EnterCriticalSection(Lock);
-      have := SnNext(Snd, GetTickCount, f);
-      LeaveCriticalSection(Lock);
-      if (not have) and ReturnOn and (BkFails < 3) then Continue;
-      BkRelease;
-      SoundOK := OpenSound(rate);
-      if (not SoundOK) and (rate <> RATE_WINDOWS) then
-      begin
-        rate := RATE_WINDOWS; WantRate := rate; ChipRate := False;
-        SoundOK := OpenSound(rate);
-      end;
-      PostMessageW(hMain, WM_UPDATE, 0, 0);
-      if not SoundOK then Exit;
-      TmInit(Tm, rate);
-      listening := False; quietBufs := 0; k := 0;
-    end;
     if playing[k] then
     begin
       while ((Hdr[k].flags and WHDR_DONE_) = 0) and not Quit do Sleep(5);
@@ -500,14 +462,9 @@ begin
       text at once, repeats during pauses) }
     if not busy then
     begin
-      if have then got := True
-      else
-      begin
-        EnterCriticalSection(Lock);
-        got := SnNext(Snd, GetTickCount, f);
-        LeaveCriticalSection(Lock);
-      end;
-      have := False;
+      EnterCriticalSection(Lock);
+      got := SnNext(Snd, GetTickCount, f);
+      LeaveCriticalSection(Lock);
       if got then
       begin
         if f.alt then Tm.band := AltBand else Tm.band := Band;
@@ -519,10 +476,21 @@ begin
     end;
     was := busy;
     busy := TmFill(Tm, Buf[k], BUF_N);
-    PollAck;
+    { the phone's acknowledgements (wback listens all the time) }
+    if BkSeq <> LastAckSeq then
+    begin
+      LastAckSeq := BkSeq;
+      if ReturnOn then
+      begin
+        EnterCriticalSection(Lock);
+        SnAck(Snd, GetTickCount, BkDoc, BkP, BkG, BkHash);
+        LeaveCriticalSection(Lock);
+        PostMessageW(hMain, WM_UPDATE, 0, 0);
+      end;
+    end;
     if was and not busy then
     begin
-      if ReturnOn and BkOk then
+      if ReturnOn and BkOn then
       begin
         EnterCriticalSection(Lock);
         SnFrameDone(Snd, GetTickCount);
@@ -538,24 +506,10 @@ begin
       if pWrite(hWave, @Hdr[k], SizeOf(TWaveHdr)) = 0 then playing[k] := True;
     if not playing[k] then Sleep(100);           { writing failed: do not spin }
     k := (k + 1) mod NBUF;
-    if busy then quietBufs := 0 else Inc(quietBufs);
-    { nothing to play for a while: close the speaker and listen }
-    if (not busy) and (quietBufs >= NBUF) and ReturnOn and (BkFails < 3) then
-    begin
-      pReset(hWave);
-      for i := 0 to NBUF - 1 do
-        if playing[i] then begin pUnprepare(hWave, @Hdr[i], SizeOf(TWaveHdr)); playing[i] := False; end;
-      pClose(hWave);
-      listening := True; quietBufs := 0;
-      BkWant := True;
-    end;
   end;
-  if not listening then
-  begin
-    pReset(hWave);
-    for k := 0 to NBUF - 1 do if playing[k] then pUnprepare(hWave, @Hdr[k], SizeOf(TWaveHdr));
-    pClose(hWave);
-  end;
+  pReset(hWave);
+  for k := 0 to NBUF - 1 do if playing[k] then pUnprepare(hWave, @Hdr[k], SizeOf(TWaveHdr));
+  pClose(hWave);
   if HaveOldVol then pSetVol(0, OldVol);
 end;
 
@@ -884,8 +838,8 @@ begin
     4: Result := BandName(Band);
     5: if ChipRate then Result := '43,200 (the chip''s own)' else Result := '44,100 (as Windows says)';
     6: if not ReturnOn then Result := 'Off'
-       else if BkOk then Result := 'On, listens between sends'
-       else if (BkErr <> '') and (BkFails >= 3) then Result := 'On, but ' + US(BkErr)
+       else if BkOn then Result := 'On, the phone confirms'
+       else if BkErr <> '' then Result := 'On, but ' + US(BkErr)
        else Result := 'On';
     7: Result := 'Type a test sentence';
     8: Result := 'HPC Whisper ' + VERSION;
