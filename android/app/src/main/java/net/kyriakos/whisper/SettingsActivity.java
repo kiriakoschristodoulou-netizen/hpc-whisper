@@ -45,7 +45,7 @@ public class SettingsActivity extends BaseActivity {
         ui.toggle(k, "Keep the screen on", "While the keyboard is open", Prefs.screenOn(this), v -> Prefs.screenOn(this, v));
         ui.toggle(k, "Buzz when text arrives", "After a pause of a few seconds", Prefs.cue(this), v -> Prefs.cue(this, v));
 
-        ui.toggle(k, "Confirm to the handheld", "A silent sound (above 19 kHz) tells it what arrived, so it stops repeating", Prefs.returnChannel(this), v -> Prefs.returnChannel(this, v));
+        ui.toggle(k, "Confirm to the handheld", "Experimental: a silent sound (above 19 kHz) tells it what arrived, so it stops repeating", Prefs.returnChannel(this), v -> Prefs.returnChannel(this, v));
 
         LinearLayout a = ui.fold(ui.card(null), "Look", null);
         String[] themes = {"As the phone", "Light", "Dark"};

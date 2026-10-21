@@ -110,7 +110,7 @@ var
   Sends: Integer = DEFAULT_SENDS;  { every piece of text goes out this many times }
   TwoBands: Boolean = True;        { the repeats go on another band }
   ChipRate: Boolean = True;        { play at the chip's own 43,200 instead of 44,100 }
-  ReturnOn: Boolean = True;        { listen for the phone's acknowledgements (the return channel) }
+  ReturnOn: Boolean = False;       { listen for the phone's acknowledgements (the return channel) }
   LastAckSeq: LongInt = 0;
 
   { what you typed, as shown: characters, and keys as characters from the private area }
@@ -263,7 +263,7 @@ begin
     if (b[4] >= 2) and (b[4] <= MAX_SENDS) then Sends := b[4];
     TwoBands := b[5] <> 0;
     ChipRate := b[6] <> 0;
-    ReturnOn := b[7] = 0;
+    ReturnOn := b[7] = 1;
   end;
   CloseHandle(h);
 end;
@@ -274,7 +274,7 @@ begin
   h := CreateFileW(PWideChar(CfgPath), GENERIC_WRITE, 0, nil, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
   if h = INVALID_HANDLE_VALUE then Exit;
   b[0] := $59; b[1] := Band; b[2] := Speed; b[3] := Volume; b[4] := Sends;
-  b[5] := Ord(TwoBands); b[6] := Ord(ChipRate); b[7] := Ord(not ReturnOn);
+  b[5] := Ord(TwoBands); b[6] := Ord(ChipRate); b[7] := Ord(ReturnOn);
   got := 0;
   WriteFile(h, {$ifdef wince}@b{$else}b{$endif}, 8, {$ifdef wince}@got{$else}got{$endif}, nil);
   CloseHandle(h);

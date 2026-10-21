@@ -30,7 +30,7 @@ public final class Prefs {
     public static void editKeys(Context c, boolean v) { p(c).edit().putBoolean("editkeys", v).apply(); }
 
     /** Tell the handheld, silently, what has arrived (the return channel). */
-    public static boolean returnChannel(Context c) { return p(c).getBoolean("return", true); }
+    public static boolean returnChannel(Context c) { return p(c).getBoolean("return", false); }
     public static void returnChannel(Context c, boolean v) { p(c).edit().putBoolean("return", v).apply(); }
 
     /** 0 = as the phone is set, 1 = light, 2 = dark. */
