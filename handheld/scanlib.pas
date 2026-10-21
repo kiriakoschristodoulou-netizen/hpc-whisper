@@ -93,7 +93,12 @@ type TLines = record n: Integer; s: array[0..MAXLINES - 1] of string[110]; end;
 procedure BuildReport(const r: TScanResult; var L: TLines);
 { a short version (about 1,300 characters) to type to the phone }
 procedure BuildCompact(const r: TScanResult; var L: TLines);
-function Following(const r: TScanResult): Boolean;   { true when the output level follows the input (no strong automatic gain) }
+function Following(const r: TScanResult): Boolean;
+{ for the return test (retlib): the same measuring tools }
+function ToneAmp(x: PSamples; start, len: LongInt; hz: Integer; rate100: LongInt): Double;
+procedure SetOffset(v: LongInt);
+function DbOf(a: Double): Integer;
+function FindMarkerAt(x: PSamples; a, b: LongInt; nominal: LongInt): LongInt;   { true when the output level follows the input (no strong automatic gain) }
 
 implementation
 
@@ -189,6 +194,26 @@ begin
       while (i + k < nb) and (lvl[i + k] >= thr * 0.5) do Inc(k);
       if k >= 12 then begin Result := a + i * blk; Exit; end;
     end;
+end;
+
+function ToneAmp(x: PSamples; start, len: LongInt; hz: Integer; rate100: LongInt): Double;
+begin
+  Result := Amp(x, start, len, hz, rate100);
+end;
+
+procedure SetOffset(v: LongInt);
+begin
+  DcI := v;
+end;
+
+function DbOf(a: Double): Integer;
+begin
+  Result := Db10(a);
+end;
+
+function FindMarkerAt(x: PSamples; a, b: LongInt; nominal: LongInt): LongInt;
+begin
+  Result := FindMarker(x, a, b, nominal);
 end;
 
 procedure SortInt(var a: array of Integer; n: Integer);

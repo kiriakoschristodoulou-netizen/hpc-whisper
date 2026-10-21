@@ -13,10 +13,10 @@ program micscan;
 {$ifdef wince}{$define API:=cdecl}{$else}{$define API:=stdcall}{$endif}
 {$packrecords c}
 {$R micscan.res}
-uses Windows, wmodem, scanlib;
+uses Windows, wmodem, scanlib, retlib;
 
 const
-  VERSION = '1.2';
+  VERSION = '1.3';
   CREATOR = 'Kyriakos Christodoulou';
   CLSNAME: UnicodeString = 'HPCMicScan';
   APPNAME: UnicodeString = 'Mic Scan';
@@ -106,6 +106,8 @@ var
 
   { results }
   Res: TScanResult;
+  RRes: TRetResult;
+  Mode: Integer = 0;                 { 0 = microphone scan, 1 = return test (phone to handheld) }
   Full, Compact: TLines;
   HaveRes: Boolean = False;
 
@@ -231,6 +233,11 @@ begin
   CloseHandle(h);
 end;
 
+function FileTag: string;
+begin
+  if Mode = 1 then Result := 'return' else Result := 'micscan';
+end;
+
 procedure SaveFiles;
 var hdr: array[0..43] of Byte; txt: AnsiString; i, j: Integer; n, rate: LongWord; h: THandle; got: DWORD; ok1, ok2: Boolean;
   procedure P4(at: Integer; v: LongWord); begin hdr[at] := v and $FF; hdr[at+1] := (v shr 8) and $FF; hdr[at+2] := (v shr 16) and $FF; hdr[at+3] := (v shr 24) and $FF; end;
@@ -238,16 +245,16 @@ begin
   if not HaveRes then begin Note := 'Nothing to save yet.'; Exit; end;
   txt := '';
   for i := 0 to Full.n - 1 do txt := txt + AnsiString(Full.s[i]) + #13#10;
-  ok1 := WriteAll('micscan-report.txt', @txt[1], Length(txt));
+  ok1 := WriteAll(FileTag + '-report.txt', @txt[1], Length(txt));
   { the recording as a WAV, at the rate it really had }
   n := RecN * 2;
-  rate := Res.rate100 div 100;
+  if Mode = 1 then rate := RRes.rate100 div 100 else rate := Res.rate100 div 100;
   if rate = 0 then rate := IN_RATE;
   Move(PAnsiChar('RIFF')^, hdr[0], 4); P4(4, 36 + n); Move(PAnsiChar('WAVEfmt ')^, hdr[8], 8); P4(16, 16);
   hdr[20] := 1; hdr[21] := 0; hdr[22] := 1; hdr[23] := 0; P4(24, rate); P4(28, rate * 2); hdr[32] := 2; hdr[33] := 0; hdr[34] := 16; hdr[35] := 0;
   Move(PAnsiChar('data')^, hdr[36], 4); P4(40, n);
   ok2 := False;
-  h := CreateFileW(PWideChar(DirPath + 'micscan.wav'), GENERIC_WRITE, 0, nil, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
+  h := CreateFileW(PWideChar(DirPath + FileTag + '.wav'), GENERIC_WRITE, 0, nil, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
   if h <> INVALID_HANDLE_VALUE then
   begin
     got := 0; j := 0;
@@ -255,8 +262,8 @@ begin
     if ok2 then ok2 := WriteFile(h, {$ifdef wince}Rec{$else}Rec^{$endif}, n, {$ifdef wince}@got{$else}got{$endif}, nil) and (got = n);
     CloseHandle(h);
   end;
-  if ok1 and ok2 then Note := 'Saved micscan-report.txt and micscan.wav next to the program.'
-  else if ok1 then Note := 'Saved micscan-report.txt; the recording (micscan.wav) did not fit.'
+  if ok1 and ok2 then Note := 'Saved ' + US(FileTag) + '-report.txt and ' + US(FileTag) + '.wav next to the program.'
+  else if ok1 then Note := 'Saved the report; the recording did not fit.'
   else Note := 'Could not save here (is the folder read-only?).';
 end;
 
@@ -266,9 +273,18 @@ procedure RunAnalysis(nominal: LongInt);
 begin
   State := ST_WORK;
   PostMessageW(hMain, WM_UPDATE, 0, 0);
-  Analyse(Rec, RecN, nominal, Res);
-  BuildReport(Res, Full);
-  BuildCompact(Res, Compact);
+  if Mode = 1 then
+  begin
+    AnalyseRet(Rec, RecN, nominal, RRes);
+    BuildRetReport(RRes, Full);
+    BuildRetCompact(RRes, Compact);
+  end
+  else
+  begin
+    Analyse(Rec, RecN, nominal, Res);
+    BuildReport(Res, Full);
+    BuildCompact(Res, Compact);
+  end;
   HaveRes := True;
   Page := 0; Scroll := 0;
   State := ST_RESULT;
@@ -347,8 +363,8 @@ end;
 procedure LoadRecording;
 var h: THandle; hdr: array[0..43] of Byte; got: DWORD; n: LongWord; tid: DWORD; rate: LongWord;
 begin
-  h := CreateFileW(PWideChar(DirPath + 'micscan.wav'), GENERIC_READ, FILE_SHARE_READ, nil, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
-  if h = INVALID_HANDLE_VALUE then begin Note := 'No micscan.wav next to the program.'; Exit; end;
+  h := CreateFileW(PWideChar(DirPath + FileTag + '.wav'), GENERIC_READ, FILE_SHARE_READ, nil, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+  if h = INVALID_HANDLE_VALUE then begin Note := 'No ' + US(FileTag) + '.wav next to the program.'; Exit; end;
   got := 0;
   if (not ReadFile(h, {$ifdef wince}@hdr{$else}hdr{$endif}, 44, {$ifdef wince}@got{$else}got{$endif}, nil)) or (got <> 44) then begin CloseHandle(h); Note := 'Not a WAV file.'; Exit; end;
   rate := hdr[24] or (LongWord(hdr[25]) shl 8) or (LongWord(hdr[26]) shl 16);
@@ -478,6 +494,16 @@ end;
 
 { ---------- drawing ---------- }
 
+function IfS(c: Boolean; const a, b: UnicodeString): UnicodeString;
+begin
+  if c then Result := a else Result := b;
+end;
+
+function NPg: Integer;
+begin
+  if Mode = 1 then Result := 2 else Result := PAGES;
+end;
+
 procedure Txt(dc: HDC; const s: UnicodeString; rc: TRect; f: HFONT; col: COLORREF; flags: UINT);
 var old: HGDIOBJ;
 begin
@@ -555,7 +581,7 @@ begin
   case State of
     ST_REC: begin col := COL_AMBER; s := 'Recording ' + IU((GetTickCount - RecStartTick) div 1000) + ' s'; end;
     ST_WORK: begin col := COL_AMBER; s := 'Measuring'; end;
-    ST_RESULT: if Res.ok then begin col := COL_GREEN_ON_NAVY; s := 'Done' end else begin col := COL_FAIL; fg := $FFFFFF; s := 'Failed'; end;
+    ST_RESULT: if ((Mode = 0) and Res.ok) or ((Mode = 1) and RRes.ok) then begin col := COL_GREEN_ON_NAVY; s := 'Done' end else begin col := COL_FAIL; fg := $FFFFFF; s := 'Failed'; end;
   else begin col := COL_PILL_IDLE; fg := COL_HEADKEY; s := 'Ready'; end;
   end;
   if SendActive then begin col := COL_AMBER; fg := COL_NAVY; s := 'Sending'; end;
@@ -576,11 +602,13 @@ procedure SetButtons;
 begin
   case State of
     ST_READY: begin
-      BtnN := 4;
+      BtnN := 5;
       BtnLabel[0] := 'Record'; BtnKey[0] := 'Enter';
-      BtnLabel[1] := 'Open wav'; BtnKey[1] := 'O';
-      BtnLabel[2] := 'About'; BtnKey[2] := 'A';
-      BtnLabel[3] := 'Quit'; BtnKey[3] := 'Q';
+      if Mode = 1 then BtnLabel[1] := 'Return test' else BtnLabel[1] := 'Mic scan';
+      BtnKey[1] := 'T';
+      BtnLabel[2] := 'Open wav'; BtnKey[2] := 'O';
+      BtnLabel[3] := 'About'; BtnKey[3] := 'A';
+      BtnLabel[4] := 'Quit'; BtnKey[4] := 'Q';
     end;
     ST_REC: begin
       BtnN := 2;
@@ -642,21 +670,36 @@ end;
 { ---- the screens ---- }
 
 procedure DrawReady(dc: HDC);
-var card: TRect; y: Integer;
+var card: TRect; y: Integer; pg: UnicodeString;
 begin
   card := CardRect;
   PaintCard(dc, card);
   y := card.top + 8;
-  Txt(dc, 'How does this handheld hear the phone?', MkRect(card.left + 16, y, card.right - 16, y + 22), fBig, COL_NAVY, DT_LEFT or DT_SINGLELINE);
+  if Mode = 1 then
+  begin
+    Txt(dc, 'Return test: can the handheld hear the phone''s data?', MkRect(card.left + 16, y, card.right - 16, y + 22), fBig, COL_NAVY, DT_LEFT or DT_SINGLELINE);
+    pg := 'return.html';
+  end
+  else
+  begin
+    Txt(dc, 'How does this handheld hear the phone?', MkRect(card.left + 16, y, card.right - 16, y + 22), fBig, COL_NAVY, DT_LEFT or DT_SINGLELINE);
+    pg := 'scan.html';
+  end;
   Txt(dc, '1.  Hold the phone''s speaker 2 to 5 cm from the handheld''s microphone, volume at maximum.',
       MkRect(card.left + 16, y + 26, card.right - 16, y + 44), fNorm, COL_INK, DT_LEFT or DT_SINGLELINE);
   Txt(dc, '2.  Press Enter here. On the phone open this page and tap Start:',
       MkRect(card.left + 16, y + 46, card.right - 16, y + 64), fNorm, COL_INK, DT_LEFT or DT_SINGLELINE);
-  Txt(dc, 'kiriakoschristodoulou-netizen.github.io/hpc-whisper/scan.html', MkRect(card.left + 36, y + 64, card.right - 16, y + 82), fBold, COL_KEYFG, DT_LEFT or DT_SINGLELINE);
-  Txt(dc, '3.  Keep quiet for a minute and a half. When the phone says Done, press Enter to measure.',
+  Txt(dc, 'kiriakoschristodoulou-netizen.github.io/hpc-whisper/' + pg, MkRect(card.left + 36, y + 64, card.right - 16, y + 82), fBold, COL_KEYFG, DT_LEFT or DT_SINGLELINE);
+  if Mode = 1 then
+    Txt(dc, '3.  Keep quiet for a minute. When the phone says Done, press Enter to measure.',
+      MkRect(card.left + 16, y + 84, card.right - 16, y + 102), fNorm, COL_INK, DT_LEFT or DT_SINGLELINE)
+  else
+    Txt(dc, '3.  Keep quiet for a minute and a half. When the phone says Done, press Enter to measure.',
       MkRect(card.left + 16, y + 84, card.right - 16, y + 102), fNorm, COL_INK, DT_LEFT or DT_SINGLELINE);
   if MicErr <> '' then
-    Txt(dc, MicErr, MkRect(card.left + 16, y + 112, card.right - 16, y + 130), fBold, COL_FAIL, DT_LEFT or DT_SINGLELINE);
+    Txt(dc, MicErr, MkRect(card.left + 16, y + 112, card.right - 16, y + 130), fBold, COL_FAIL, DT_LEFT or DT_SINGLELINE)
+  else
+    Txt(dc, 'Test now: ' + IfS(Mode = 1, 'Return test (press T for Mic scan)', 'Mic scan (press T for Return test)'), MkRect(card.left + 16, y + 112, card.right - 16, y + 130), fBold, COL_MUTED, DT_LEFT or DT_SINGLELINE);
 end;
 
 procedure DrawRec(dc: HDC);
@@ -824,11 +867,51 @@ begin
   end;
 end;
 
+function ErrCol(e: Integer): COLORREF;
+begin
+  if e = 0 then Result := COL_GOOD else if e <= 3 then Result := COL_AMBER else Result := COL_FAIL;
+end;
+
+procedure DrawRetSummary(dc: HDC; const card: TRect);
+var y, v, s, b: Integer;
+begin
+  y := card.top + 6;
+  if not RRes.ok then
+  begin
+    Txt(dc, 'The measurement did not work.', MkRect(card.left + 16, y + 2, card.right - 16, y + 26), fBig, COL_FAIL, DT_LEFT or DT_SINGLELINE);
+    Txt(dc, US(RRes.err), MkRect(card.left + 16, y + 32, card.right - 16, card.bottom - 6), fNorm, COL_INK, DT_LEFT or DT_WORDBREAK);
+    Exit;
+  end;
+  Txt(dc, 'Phone to handheld, 18.0-19.5 kHz: wrong symbols of 96', MkRect(card.left + 16, y, card.right - 60, y + 22), fBold, COL_NAVY, DT_LEFT or DT_SINGLELINE);
+  Txt(dc, '48 ms', MkRect(card.left + 150, y + 24, card.left + 220, y + 40), fSmall, COL_MUTED, DT_LEFT or DT_SINGLELINE);
+  Txt(dc, '32 ms', MkRect(card.left + 240, y + 24, card.left + 310, y + 40), fSmall, COL_MUTED, DT_LEFT or DT_SINGLELINE);
+  Txt(dc, '20 ms', MkRect(card.left + 330, y + 24, card.left + 400, y + 40), fSmall, COL_MUTED, DT_LEFT or DT_SINGLELINE);
+  for v := 0 to 2 do
+  begin
+    Txt(dc, IU(BlockVol(v * 3)) + ' % volume', MkRect(card.left + 16, y + 40 + v * 20, card.left + 140, y + 58 + v * 20), fNorm, COL_INK, DT_LEFT or DT_SINGLELINE);
+    for s := 0 to 2 do
+      Txt(dc, IU(RRes.errs[v * 3 + s]), MkRect(card.left + 150 + s * 90, y + 40 + v * 20, card.left + 220 + s * 90, y + 58 + v * 20), fBold, ErrCol(RRes.errs[v * 3 + s]), DT_LEFT or DT_SINGLELINE);
+  end;
+  Txt(dc, 'Other bands, 90 %, 32 ms:', MkRect(card.left + 16, y + 104, card.left + 170, y + 122), fNorm, COL_INK, DT_LEFT or DT_SINGLELINE);
+  for b := 0 to 2 do
+  begin
+    Txt(dc, US(ShortString(BandName(BlockBase(9 + b)))) + ': ' + IU(RRes.errs[9 + b]), MkRect(card.left + 176 + b * 145, y + 104, card.left + 320 + b * 145, y + 122), fBold, ErrCol(RRes.errs[9 + b]), DT_LEFT or DT_SINGLELINE);
+  end;
+end;
+
 procedure DrawResult(dc: HDC);
 var card: TRect;
 begin
   card := CardRect;
   PaintCard(dc, card);
+  if Mode = 1 then
+  begin
+    case Page of
+      0: DrawRetSummary(dc, card);
+      1: DrawReportText(dc, card);
+    end;
+  end
+  else
   case Page of
     0: DrawSummary(dc, card);
     1: if Res.ok then DrawResponse(dc, card);
@@ -836,7 +919,7 @@ begin
     3: if Res.ok then DrawLinear(dc, card);
     4: DrawReportText(dc, card);
   end;
-  Txt(dc, IU(Page + 1) + '/' + IU(PAGES), MkRect(card.right - 50, card.top + 4, card.right - 8, card.top + 20), fSmall, COL_MUTED, DT_RIGHT or DT_SINGLELINE);
+  Txt(dc, IU(Page + 1) + '/' + IU(NPg), MkRect(card.right - 50, card.top + 4, card.right - 8, card.top + 20), fSmall, COL_MUTED, DT_RIGHT or DT_SINGLELINE);
 end;
 
 procedure DrawAbout(dc: HDC);
@@ -849,7 +932,7 @@ begin
   Txt(dc, 'Part of HPC Whisper. Created by ' + CREATOR + '.', MkRect(card.left + 16, y + 24, card.right - 16, y + 42), fNorm, COL_MUTED, DT_LEFT or DT_SINGLELINE);
   Txt(dc, 'It records a test sound of about a minute and a half from the phone and measures how this handheld''s microphone hears it: ' +
       'which frequencies, how loud, whether the level follows the sound (automatic gain), the real sampling rate, ' +
-      'ghost tones and the shortest burst it notices. Press S on the results to type the report to the phone.',
+      'ghost tones and the shortest burst it notices. Press T on the first screen to switch to the Return test: it checks whether the handheld can decode data sent by the phone, at several volumes, speeds and frequency bands. Press S on the results to type the report to the phone.',
       MkRect(card.left + 16, y + 48, card.right - 16, y + 120), fNorm, COL_INK, DT_LEFT or DT_WORDBREAK);
   Txt(dc, 'Press any key to go back.', MkRect(card.left + 16, y + 126, card.right - 16, y + 144), fSmall, COL_MUTED, DT_LEFT or DT_SINGLELINE);
 end;
@@ -902,7 +985,7 @@ begin
   DestroyWindow(hMain);
 end;
 
-procedure Act(cmd: Integer);        { 0 = Enter, 1 = Left, 2 = Right, 3 = S, 4 = W, 5 = Q, 6 = Esc, 7 = A, 8 = Up, 9 = Down }
+procedure Act(cmd: Integer);        { 0 = Enter, 1 = Left, 2 = Right, 3 = S, 4 = W, 5 = Q, 6 = Esc, 7 = A, 8 = Up, 9 = Down, 10 = O, 11 = T }
 begin
   if ShowAbout then begin ShowAbout := False; Exit; end;
   if cmd = 5 then begin Leave; Exit; end;
@@ -912,6 +995,7 @@ begin
         0: StartRecording;
         7: ShowAbout := True;
         10: LoadRecording;
+        11: Mode := 1 - Mode;
       end;
     ST_REC:
       case cmd of
@@ -921,8 +1005,8 @@ begin
     ST_RESULT:
       case cmd of
         0: begin State := ST_READY; Note := ''; StartRecording; end;
-        1: begin Page := (Page + PAGES - 1) mod PAGES; Scroll := 0; end;
-        2: begin Page := (Page + 1) mod PAGES; Scroll := 0; end;
+        1: begin Page := (Page + NPg - 1) mod NPg; Scroll := 0; end;
+        2: begin Page := (Page + 1) mod NPg; Scroll := 0; end;
         3: SendReport;
         4: SaveFiles;
         8: if Scroll > 0 then Dec(Scroll);
@@ -946,6 +1030,7 @@ begin
     Ord('Q'): Act(5);
     Ord('A'): Act(7);
     Ord('O'): Act(10);
+    Ord('T'): Act(11);
   else if ShowAbout then ShowAbout := False;
   end;
 end;
@@ -962,7 +1047,7 @@ begin
     if (x >= rc.left) and (x < rc.right) then
     begin
       case State of
-        ST_READY: case i of 0: Act(0); 1: Act(10); 2: Act(7); 3: Act(5); end;
+        ST_READY: case i of 0: Act(0); 1: Act(11); 2: Act(10); 3: Act(7); 4: Act(5); end;
         ST_REC: case i of 0: Act(0); 1: Act(6); end;
         ST_RESULT: case i of 0: Act(1); 1: Act(2); 2: Act(3); 3: Act(4); 4: Act(0); 5: Act(5); end;
       end;

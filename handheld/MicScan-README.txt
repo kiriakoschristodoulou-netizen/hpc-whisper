@@ -1,4 +1,4 @@
-Mic Scan 1.2
+Mic Scan 1.3
 by Kyriakos Christodoulou (part of HPC Whisper)
 
 Finds out how a handheld's microphone really hears sound: which
@@ -18,3 +18,13 @@ HOW
   5. S types a short report to the phone (open any text field with the
      HPC Whisper keyboard). W saves micscan-report.txt and micscan.wav
      next to the program. O measures a saved micscan.wav again.
+
+RETURN TEST (phone to handheld)
+  On the first screen press T to switch from Mic scan to Return test, then
+  record as above, but open return.html on the phone instead of scan.html:
+  https://kiriakoschristodoulou-netizen.github.io/hpc-whisper/return.html
+  The phone plays 12 blocks of data tones (volumes 90, 45 and 22 %, symbols
+  of 48, 32 and 20 ms, four frequency bands). The results show how many
+  symbols of 96 were heard wrong in each block, and the report gives margins
+  and how fast the automatic gain settles. S, W and O work as before; the
+  recording is saved as return.wav.

@@ -1,10 +1,10 @@
 #!/bin/bash
-# usage: ./zip-scan.sh   ->  Mic-Scan-12.zip with the folder Mic-Scan (build first: ./build.sh micscan.pas)
+# usage: ./zip-scan.sh   ->  Mic-Scan-13.zip with the folder Mic-Scan (build first: ./build.sh micscan.pas)
 set -e
-rm -rf Mic-Scan Mic-Scan-12.zip
+rm -rf Mic-Scan Mic-Scan-13.zip
 mkdir Mic-Scan
 cp micscan.exe Mic-Scan/MicScan.exe
 cp MicScan-README.txt Mic-Scan/README.txt
-zip -qr Mic-Scan-12.zip Mic-Scan
+zip -qr Mic-Scan-13.zip Mic-Scan
 rm -rf Mic-Scan
-ls -l Mic-Scan-12.zip
+ls -l Mic-Scan-13.zip

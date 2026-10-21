@@ -28,7 +28,7 @@ Made on, and for, the HP Jornada 720. Created by Kyriakos Christodoulou.
 - **Handheld:** `HPC-Whisper-10.zip` from the same release. Copy the folder to
   the handheld and run `HPCWhisper.exe`.
 
-- **Mic Scan** (`Mic-Scan-12.zip`, separate tool): records a test sound played by
+- **Mic Scan** (`Mic-Scan-13.zip`, separate tool): records a test sound played by
   [scan.html](https://kiriakoschristodoulou-netizen.github.io/hpc-whisper/scan.html) and measures how the handheld's
   microphone hears it: frequency response, automatic gain, real sampling rate, ghost tones, shortest burst.
 
