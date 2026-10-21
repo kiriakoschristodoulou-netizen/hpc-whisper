@@ -34,3 +34,6 @@ tests/scansim
 tests/acksim
 tests/hashsim
 gateway/tests/lx/
+gateway/handheld/armu/
+gateway/handheld/w64/
+*.res
