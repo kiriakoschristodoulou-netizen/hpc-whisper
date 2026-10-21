@@ -31,3 +31,5 @@ tests/writer/cls/
 tests/losssim
 handheld/micscan.exe
 tests/scansim
+tests/acksim
+tests/hashsim
