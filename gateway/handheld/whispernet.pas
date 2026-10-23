@@ -22,7 +22,7 @@ program whispernet;
 uses Windows, whppp, wnframe, wnrx, wnlink, wnstack, wnturn;
 
 const
-  VERSION_TEXT: UnicodeString = 'Whisper Net 1.0';
+  VERSION_TEXT: UnicodeString = 'Whisper Net 1.1';
   CLSNAME: UnicodeString = 'WhisperNet';
   REGKEY: UnicodeString = 'Drivers\HPCWhisper';
   KEEPKEY: UnicodeString = 'Software\HPCWhisper\WhisperNet';
@@ -723,25 +723,43 @@ const
 var
   BigBuf, BigBuf2: array[0..8191] of Byte;
 
+procedure Pump;
+var m: TMsg;
+begin
+  while PeekMessageW(@m, 0, 0, 0, PM_REMOVE) do
+  begin
+    if m.message = WM_QUIT then begin QuitReq := True; PostQuitMessage(0); Exit; end;
+    TranslateMessage(@m);
+    DispatchMessageW(@m);
+  end;
+end;
+
 function MakeEntry: Boolean;
 const REC = 104;
-var size, n, e, got: DWORD; i: Integer; nm, ty, back: UnicodeString; found: Boolean;
+var size, n, e, got: DWORD; i, tries: Integer; nm, ty, back: UnicodeString; found: Boolean;
 begin
   Result := False;
   if not (Assigned(pRasEnumDevices) and Assigned(pRasSetEntryProperties) and Assigned(pRasGetEntryProperties)) then
   begin Problem := 'Dial-up networking functions are missing.'; Exit; end;
-  FillChar(BigBuf, SizeOf(BigBuf), 0);
-  PutDW(@BigBuf, 0, REC);
-  size := 40 * REC; n := 0;
-  e := pRasEnumDevices(@BigBuf, @size, @n);
-  if e <> 0 then begin Problem := 'RasEnumDevices: ' + ErrU(e); Exit; end;
   found := False;
-  if n > 40 then n := 40;
-  for i := 0 to Integer(n) - 1 do
+  for tries := 0 to 14 do
   begin
-    ty := WStr(PWideChar(@BigBuf[i * REC + 4]), 17);
-    nm := WStr(PWideChar(@BigBuf[i * REC + 38]), 33);
-    if SameU(nm, DEVICE_NAME) then begin found := True; RasDevType := ty; end;
+    FillChar(BigBuf, SizeOf(BigBuf), 0);
+    PutDW(@BigBuf, 0, REC);
+    size := 40 * REC; n := 0;
+    e := pRasEnumDevices(@BigBuf, @size, @n);
+    if e <> 0 then begin Problem := 'RasEnumDevices: ' + ErrU(e); Exit; end;
+    if n > 40 then n := 40;
+    for i := 0 to Integer(n) - 1 do
+    begin
+      ty := WStr(PWideChar(@BigBuf[i * REC + 4]), 17);
+      nm := WStr(PWideChar(@BigBuf[i * REC + 38]), 33);
+      if SameU(nm, DEVICE_NAME) then begin found := True; RasDevType := ty; end;
+    end;
+    if found or CancelReq then Break;
+    StageText := 'Waiting for the modem to appear (' + IU(tries + 1) + ')...';
+    InvalidateRect(hMain, nil, False);
+    for i := 1 to 25 do begin Pump; Sleep(40); end;
   end;
   if not found then begin Problem := 'The HPC Whisper modem is not listed for dial-up networking.'; Exit; end;
   size := 0;
@@ -768,17 +786,6 @@ begin
 end;
 
 { ---------- start and stop ---------- }
-
-procedure Pump;
-var m: TMsg;
-begin
-  while PeekMessageW(@m, 0, 0, 0, PM_REMOVE) do
-  begin
-    if m.message = WM_QUIT then begin QuitReq := True; PostQuitMessage(0); Exit; end;
-    TranslateMessage(@m);
-    DispatchMessageW(@m);
-  end;
-end;
 
 procedure StartEngine;
 begin
