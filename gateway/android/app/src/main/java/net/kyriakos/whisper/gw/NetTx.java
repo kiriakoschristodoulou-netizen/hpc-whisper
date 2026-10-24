@@ -21,7 +21,7 @@ public final class NetTx {
         int fade = rate / 200;
         if (leadMs > 0) {
             int len = (int) ms(rate, leadMs);
-            tone(out, pos, len, leadHz, rate, volume / 4, fade, ph);
+            tone(out, pos, len, leadHz, rate, volume, fade, ph);
             pos += len + (int) ms(rate, 50);
         }
         for (int[] f : frames) {

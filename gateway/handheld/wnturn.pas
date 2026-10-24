@@ -37,6 +37,7 @@ var
   NtTurns, NtFramesIn, NtEmptyTurns: LongWord;
   NtLastHeard: LongWord;                { PfNow when a frame last came }
   NtIdle: Integer;
+  NtUnread, NtFixed: LongInt;           { frames heard but unreadable; symbols the code corrected }
 
 procedure NtRun;
 
@@ -85,6 +86,7 @@ begin
   begin
     if not PfMicRead(@Mic[0], mc) then Break;
     NrPush(Rx, Mic[0], mc);
+    NtUnread := Rx.unreadable; NtFixed := Rx.corrected;
     while NrTake(Rx, f) do
     begin
       Inc(heard);

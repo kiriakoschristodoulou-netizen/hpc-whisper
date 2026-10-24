@@ -1,7 +1,7 @@
 MAINICON ICON "whispernet.ico"
 1 VERSIONINFO
-FILEVERSION 1,1,0,0
-PRODUCTVERSION 1,1,0,0
+FILEVERSION 1,2,0,0
+PRODUCTVERSION 1,2,0,0
 BEGIN
   BLOCK "StringFileInfo"
   BEGIN
@@ -9,7 +9,7 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "Kyriakos Christodoulou\0"
       VALUE "FileDescription", "Whisper Net\0"
-      VALUE "FileVersion", "1.1\0"
+      VALUE "FileVersion", "1.2\0"
       VALUE "ProductName", "Whisper Net\0"
       VALUE "LegalCopyright", "\251 2026 Kyriakos Christodoulou\0"
       VALUE "OriginalFilename", "whispernet.exe\0"

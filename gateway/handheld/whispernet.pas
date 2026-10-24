@@ -22,7 +22,7 @@ program whispernet;
 uses Windows, whppp, wnframe, wnrx, wnlink, wnstack, wnturn;
 
 const
-  VERSION_TEXT: UnicodeString = 'Whisper Net 1.1';
+  VERSION_TEXT: UnicodeString = 'Whisper Net 1.2';
   CLSNAME: UnicodeString = 'WhisperNet';
   REGKEY: UnicodeString = 'Drivers\HPCWhisper';
   KEEPKEY: UnicodeString = 'Software\HPCWhisper\WhisperNet';
@@ -1078,7 +1078,7 @@ begin
     else heard := 'last heard ' + Ago(NtLastHeard);
     if NtLastHeard = 0 then col := COL_AMBER else col := COL_GOOD;
     Row(mdc, y, 'Phone gateway', heard, col); Inc(y, 17);
-    Row(mdc, y, 'Sound', IU(NtTurns) + ' turns, ' + IU(NtFramesIn) + ' frames heard, volume ' + IU(Volume) + '%, mic level ' + IU(Peak * 100 div 32768) + '%', COL_INK); Inc(y, 17);
+    Row(mdc, y, 'Sound', IU(NtTurns) + ' turns, ' + IU(NtFramesIn) + ' frames heard, ' + IU(NtUnread) + ' unreadable, volume ' + IU(Volume) + '%, mic level ' + IU(Peak * 100 div 32768) + '%', COL_INK); Inc(y, 17);
     Row(mdc, y, 'Internet', IU(StConns) + ' open, ' + IU(St.tcpOpened) + ' made, names ' + IU(St.dnsAsked) + ' asked / ' + IU(St.dnsCached) + ' remembered', COL_INK); Inc(y, 17);
     Row(mdc, y, 'Bytes', IU(St.bytesUp) + ' sent up, ' + IU(St.bytesDown) + ' received', COL_INK); Inc(y, 17);
   end

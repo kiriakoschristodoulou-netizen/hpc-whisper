@@ -18,7 +18,7 @@ public final class Session implements Link.Listener, NetRx.Listener {
         public int rate = 48000;
         public int upHz = 19000, downHz = 18000, symMs = 20;
         public double volume = 0.8;
-        public int leadHz = 19800, leadMs = 150;
+        public int leadHz = 19800, leadMs = 700;
         public int replyDelayMs = 500, quietMs = 1200, afterMs = 150;
     }
 
