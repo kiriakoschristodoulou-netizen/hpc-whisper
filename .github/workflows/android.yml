@@ -82,6 +82,7 @@ jobs:
           mkdir out
           cp android/app/build/outputs/apk/release/app-release.apk out/HPC-Whisper.apk
           cp handheld/HPC-Whisper-12.zip handheld/Mic-Scan-13.zip handheld/Duplex-Test-10.zip out/
+          (cd out && sha256sum * > SHA256SUMS.txt)
 
       - uses: actions/upload-artifact@v4
         with:

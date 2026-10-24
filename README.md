@@ -4,9 +4,11 @@
 
 Type on a Windows CE handheld PC and the text appears in any app on your phone
 (an email, a message, a note), with arrows, Shift selection, Tab and
-Ctrl+A, C, X, V, Z, Y. It travels as sound too high to hear (20 to 21.5 kHz): no
+Ctrl+A, C, X, V, Z, Y. It travels as sound too high for most people to hear (about 18 to 21.5 kHz): no
 cable, no network, no extra hardware. Every piece of text is sent several times,
-on two bands, so it arrives even when some of the sound is lost.
+on two bands, so it arrives even when some of the sound is lost. With the optional
+return channel the phone confirms silently what it has, so nothing is repeated
+needlessly, and the handheld checks the whole page every 30 seconds.
 
 Made on, and for, the HP Jornada 720. Created by Kyriakos Christodoulou.
 
@@ -32,6 +34,10 @@ Made on, and for, the HP Jornada 720. Created by Kyriakos Christodoulou.
   [scan.html](https://kiriakoschristodoulou-netizen.github.io/hpc-whisper/scan.html) and measures how the handheld's
   microphone hears it: frequency response, automatic gain, real sampling rate, ghost tones, shortest burst.
 
+## Guides
+
+[User guide](docs/release/USER-GUIDE.md) · [Troubleshooting](docs/release/TROUBLESHOOTING.md) · [Privacy and safety](docs/release/PRIVACY-AND-SAFETY.md) · [Release notes](docs/release/RELEASE-NOTES.md) · [Report a bug](docs/release/BUG-REPORT-TEMPLATE.md) · [Sound protocol for developers](docs/SOUND-PROTOCOL.md)
+
 ## Which handhelds
 
 ARM processors with Windows CE 3.0 or later. Tested: HP Jornada 720. Will not
@@ -54,8 +60,8 @@ own shortcuts are on Alt, so every Ctrl key reaches the phone:
 | Alt+K, Alt+O, Alt+Q | Keys list, Settings, Quit |
 
 Settings (defaults are the ones that worked best: 6 repeats, Fast, band 19.0 to 20.5 kHz,
-sound rate 43,200): repeats (2 to 8), second band, volume, speed, band, sound rate, and an
-About page. The phone finds band and speed by itself.
+sound rate 43,200): repeats (2 to 8), second band, volume, speed, band, sound rate, return channel
+(off by default), Enter key (new line, or send the message) and an About page. The phone finds band and speed by itself.
 
 ## How it works
 

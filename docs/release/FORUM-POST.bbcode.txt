@@ -1,0 +1,47 @@
+[b][size=5]HPC Whisper 1.2: type on your Windows CE handheld, text appears on your phone[/size][/b]
+
+[i]Free, no ads, made on and for the HP Jornada 720.[/i]
+
+[b]What it is[/b]
+Run a small program on your handheld, open the HPC Whisper keyboard on an Android phone, and everything you type on the handheld appears in any app on the phone (messages, email, notes, search boxes). It travels as sound at 18 to 21.5 kHz, too high for most adults to hear: no cable, no Bluetooth, no network, no extra hardware. Arrows, Shift selection, Tab, Backspace and Ctrl+A/C/X/V/Z/Y work too, and the handheld can press Send in a chat app.
+
+[b]What you need[/b]
+[list]
+[*]An ARM handheld with Windows CE 3.0 or later (tested: HP Jornada 720; it will not run on MIPS or SH3 machines such as the Jornada 680 and 690)
+[*]An Android 7.0+ phone (on an iPhone or other phone there is a web page that receives, with Copy and Share; Apple does not allow keyboards to use the microphone)
+[*]The phone within about a metre of the handheld
+[/list]
+
+[b]How it works, briefly[/b]
+The handheld plays short bursts of tones. Each frame says "the document is L bytes long, and from offset o it reads these bytes", with Reed-Solomon error correction and a CRC, so repeats are harmless and gaps fill themselves in. Every piece of text goes out several times, on two bands. In 1.2 the phone can also answer, silently, with what it holds: then nothing is repeated needlessly, missing pieces are sent at once, the handheld shows "Delivered", and every 30 seconds it checks the whole page. The full format is published so you can write your own sender or receiver: [url=https://github.com/kiriakoschristodoulou-netizen/hpc-whisper/blob/main/docs/SOUND-PROTOCOL.md]SOUND-PROTOCOL.md[/url].
+
+[b]Getting it[/b]
+Download from the latest release: [url=https://github.com/kiriakoschristodoulou-netizen/hpc-whisper/releases/latest]github.com/kiriakoschristodoulou-netizen/hpc-whisper/releases/latest[/url]
+[list]
+[*][b]HPC-Whisper.apk[/b] (Android keyboard)
+[*][b]HPC-Whisper-12.zip[/b] (copy the folder to the handheld and run HPCWhisper.exe)
+[*]User guide, troubleshooting and a bug report template are in the repository's [i]docs/release[/i] folder
+[/list]
+iPhone and other phones: [url=https://kiriakoschristodoulou-netizen.github.io/hpc-whisper/]receiver page[/url].
+
+[b]Honest limits[/b]
+[list]
+[*]Speed: the sound carries a few characters per second; typing keeps up, long pasted text takes time
+[*]Text only; it does not carry files or images
+[*]Anyone near the phone with a microphone and the (published) format could read the text: do not type passwords
+[*]Some young people, dogs and cats can hear the top of the range; the volume is adjustable
+[*]Tested so far on the HP Jornada 720 and [fill in: phones]. Other devices need testing
+[/list]
+
+[b]Help me test[/b]
+If you try it, please report: handheld model, phone make and Android version, distance, and what happened. A phone log (Settings, Troubleshooting, Share the log) right after a problem helps most. Report template: [url=https://github.com/kiriakoschristodoulou-netizen/hpc-whisper/blob/main/docs/release/BUG-REPORT-TEMPLATE.md]BUG-REPORT-TEMPLATE.md[/url].
+
+[b]Also in the release[/b]
+[list]
+[*][b]Mic Scan[/b]: measures how a handheld's microphone hears sound and whether it can decode data from a phone
+[*][b]Duplex Test[/b]: can the sound chip play and record at once?
+[/list]
+
+Created by Kyriakos Christodoulou. Free; if you like it, there is a tip link in the app, and it is entirely optional.
+
+[i][attach a photo of the two devices and a short video here][/i]
