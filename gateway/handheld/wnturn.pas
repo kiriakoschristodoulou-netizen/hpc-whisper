@@ -28,7 +28,7 @@ var
   NtRate: Integer = 43200;            { what the sound is made at }
   NtRxRate: Integer = 0;              { what the microphone really runs at (0 = NtRate) }
   NtUpHz: Integer = 19000;
-  NtDownHz: Integer = 18000;
+  NtDownHz: Integer = 19000;
   NtSymMs: Integer = 20;
   NtVolume: Integer = 80;
   NtStop: Boolean = False;

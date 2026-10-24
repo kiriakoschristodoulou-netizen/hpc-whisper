@@ -32,7 +32,7 @@ GF(16) per block; header block and body blocks interleaved.
 | Direction | Band | Symbol |
 | --- | --- | --- |
 | handheld → phone ("up") | 19.0 – 20.5 kHz | 20 ms |
-| phone → handheld ("down") | 18.0 – 19.5 kHz | 20 ms |
+| phone → handheld ("down") | 19.0 – 20.5 kHz (same as up; half-duplex; was 18.0–19.5 until 1.3) | 20 ms |
 
 Both can be changed in the programs' settings (the two sides must agree).
 The handheld synthesises at the rate its chip really runs at (43,200).
@@ -113,7 +113,7 @@ The handheld leads.
   brings them back to at once.
 - **Phone:** speaks only after a handheld frame with TURN (500 ms after its
   end), or after handheld frames without one followed by 1.2 s of quiet.
-  Before its frames: a 150 ms tone at 19.8 kHz (wakes its amplifier and
+  Before its frames: a 700 ms tone at 18.7 kHz (wakes its amplifier and
   settles the handheld's microphone gain), 50 ms of quiet. It ignores its own
   microphone while it plays and for 150 ms after.
 

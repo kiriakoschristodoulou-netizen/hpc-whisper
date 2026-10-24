@@ -22,7 +22,7 @@ program whispernet;
 uses Windows, whppp, wnframe, wnrx, wnlink, wnstack, wnturn;
 
 const
-  VERSION_TEXT: UnicodeString = 'Whisper Net 1.2';
+  VERSION_TEXT: UnicodeString = 'Whisper Net 1.3';
   CLSNAME: UnicodeString = 'WhisperNet';
   REGKEY: UnicodeString = 'Drivers\HPCWhisper';
   KEEPKEY: UnicodeString = 'Software\HPCWhisper\WhisperNet';
@@ -798,7 +798,7 @@ begin
   PfPlayStart := @FPlayStart; PfPlayChunk := @FPlayChunk; PfPlayEnd := @FPlayEnd;
   PfMicStart := @FMicStart; PfMicStop := @FMicStop; PfMicRead := @FMicRead;
   PfPoll := @FPoll; PfNow := @FNow; PfSleep := @FSleep;
-  NtRate := 43200; NtRxRate := 43210; NtUpHz := 19000; NtDownHz := 18000; NtSymMs := 20;
+  NtRate := 43200; NtRxRate := 43210; NtUpHz := 19000; NtDownHz := 19000; NtSymMs := 20;
   NtVolume := Volume;
   NtStop := False; NtTurns := 0; NtFramesIn := 0; NtLastHeard := 0;
   StInit(GetTickCount * 2654435761 + 12345);
