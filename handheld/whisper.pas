@@ -1,14 +1,16 @@
 program whisper;
 { HPC Whisper: type on a Windows CE handheld PC (made on an HP Jornada 720),
   and the text appears in any app on your phone, carried by tones too high to
-  hear (20 to 21.5 kHz by default).
+  hear (19.0 to 20.5 kHz by default, repeats at 18.0 to 19.5).
 
   The phone listens with the HPC Whisper keyboard (or the receiver page, see
   README). It finds the band and speed by itself, so only the handheld has
   settings.
 
-  There is no way back from the phone, so every piece of text is sent several
-  times, a little later each time, and on two different bands (wmodem.pas).
+  Every piece of text is sent several times, a little later each time, and on
+  two different bands (wmodem.pas). With the Return channel on, the phone
+  answers silently with what it holds (wback.pas listens for it), and nothing
+  is repeated needlessly.
 
   Sound is made in a second thread as a continuous stream (silence between
   messages), so there is no click when a message starts. What you type goes
@@ -841,7 +843,8 @@ begin
     4: Result := BandName(Band);
     5: if ChipRate then Result := '43,200 (the chip''s own)' else Result := '44,100 (as Windows says)';
     6: if not ReturnOn then Result := 'Off'
-       else if BkOn then Result := 'On, the phone confirms'
+       else if BkOn and Snd.heard then Result := 'On, the phone confirms'
+       else if BkOn then Result := 'On, listening for the phone'
        else if BkErr <> '' then Result := 'On, but ' + US(BkErr)
        else Result := 'On';
     7: if EnterSends then Result := 'Sends the message' else Result := 'New line';
@@ -859,8 +862,8 @@ begin
     2: Result := 'Loudness of the tones. The phone can be a metre away; louder only helps in a noisy room.';
     3: Result := 'Normal is the surest; Fast shortens the wait for the text to appear.';
     4: Result := 'The phone finds the band by itself. Change it only if something else is making sound up there.';
-    5: Result := 'Leave at 44,100 unless the phone struggles to read the handheld.';
-    6: Result := 'The phone confirms what it has received, silently (19.0 to 20.5 kHz); then nothing is repeated needlessly. Without an answer it repeats as set above.';
+    5: Result := 'Leave at 43,200, the chip''s own rate. Try 44,100 only if the sound or the microphone will not open.';
+    6: Result := 'The phone confirms silently what it received (turn on Confirm to the handheld on the phone too). Without an answer it repeats as set above.';
     7: Result := 'Enter presses Send on the phone (chat apps need the phone helper, or a field whose key says Send). Shift+Enter is always a new line. Alt+S also sends.';
     8: Result := 'Sends a sentence to the phone, to try it.';
     9: Result := 'Version, credits and how it works.';
@@ -922,7 +925,7 @@ const
   KEYS_B: array[0..NKEYS - 1] of UnicodeString = (
     'Move the cursor; Shift selects, Ctrl jumps a word', 'Start and end of the line; Ctrl: of the whole text',
     'Delete; Ctrl deletes a word', 'Select all, copy, cut, paste', 'Undo, redo', 'Next field (Shift: previous), Esc',
-    'Press Send in the app (needs the helper)', 'Back, phone Home, Recent apps (need the helper)',
+    'Press Send in the app (Enter can too: Settings)', 'Back, phone Home, Recent apps (need the helper)',
     'Send the last text again; start a new page');
 
 procedure DrawKeys(dc: HDC);
@@ -952,9 +955,8 @@ begin
   y := card.top + 10;
   Txt(dc, APPNAME + '  ' + VERSION, MkRect(card.left + 16, y, card.right - 16, y + 24), fBig, COL_NAVY, DT_LEFT or DT_SINGLELINE);
   Txt(dc, 'Created by ' + CREATOR + '. Made on, and for, the HP Jornada 720.', MkRect(card.left + 16, y + 24, card.right - 16, y + 42), fNorm, COL_MUTED, DT_LEFT or DT_SINGLELINE);
-  Txt(dc, 'What you type here appears in any app on your phone, carried by sound too high to hear. ' +
-      'The phone cannot answer, so every text is sent several times, on two bands. ' +
-      'Install the HPC Whisper keyboard on the phone, and keep it near the handheld.',
+  Txt(dc, 'What you type here appears in any app on your phone, carried by sound too high to hear. Each text is ' +
+      'repeated on two bands, or confirmed by the phone (Return channel). Keep the phone near the handheld.',
       MkRect(card.left + 16, y + 46, card.right - 16, y + 90), fNorm, COL_INK, DT_LEFT or DT_WORDBREAK);
   Txt(dc, 'A tip will be appreciated:  paypal.com/paypalme/byinnovodesign', MkRect(card.left + 16, y + 92, card.right - 16, y + 110), fBold, COL_KEYFG, DT_LEFT or DT_SINGLELINE);
   Txt(dc, 'github.com/kiriakoschristodoulou-netizen/hpc-whisper', MkRect(card.left + 16, y + 112, card.right - 16, y + 128), fSmall, COL_MUTED, DT_LEFT or DT_SINGLELINE);

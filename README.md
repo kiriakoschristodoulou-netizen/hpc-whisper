@@ -7,8 +7,9 @@ Type on a Windows CE handheld PC and the text appears in any app on your phone
 Ctrl+A, C, X, V, Z, Y. It travels as sound too high for most people to hear (about 18 to 21.5 kHz): no
 cable, no network, no extra hardware. Every piece of text is sent several times,
 on two bands, so it arrives even when some of the sound is lost. With the optional
-return channel the phone confirms silently what it has, so nothing is repeated
-needlessly, and the handheld checks the whole page every 30 seconds.
+return channel (off until you turn it on, on both sides) the phone confirms silently
+what it has, so nothing is repeated needlessly, and the handheld checks the whole
+page every 30 seconds.
 
 Made on, and for, the HP Jornada 720. Created by Kyriakos Christodoulou.
 
@@ -30,6 +31,8 @@ Made on, and for, the HP Jornada 720. Created by Kyriakos Christodoulou.
 - **Handheld:** `HPC-Whisper-12.zip` from the same release. Copy the folder to
   the handheld and run `HPCWhisper.exe`.
 
+- **Duplex Test** (`Duplex-Test-10.zip`, separate tool): checks whether a handheld's sound chip can play and record
+  at the same time (the return channel needs it).
 - **Mic Scan** (`Mic-Scan-13.zip`, separate tool): records a test sound played by
   [scan.html](https://kiriakoschristodoulou-netizen.github.io/hpc-whisper/scan.html) and measures how the handheld's
   microphone hears it: frequency response, automatic gain, real sampling rate, ghost tones, shortest burst.
@@ -54,6 +57,7 @@ own shortcuts are on Alt, so every Ctrl key reaches the phone:
 | Bksp, Del | Delete; Ctrl deletes a word |
 | Ctrl+A C X V, Ctrl+Z, Ctrl+Y | Select all, copy, cut, paste, undo, redo |
 | Tab, Shift+Tab, Esc | As on a computer |
+| Enter | A new line, or Send (Settings, Enter key; Shift+Enter is then a new line) |
 | Alt+S, Alt+B, Alt+H, Alt+W | Send, Back, phone Home, Recent apps (need the helper) |
 | Alt+R | Send the last text again |
 | Alt+N | A new page: the phone starts fresh |

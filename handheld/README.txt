@@ -18,23 +18,27 @@ HANDHELD
 KEYS
   Everything you type goes to the phone. Arrows, Home, End: move (Shift
   selects, Ctrl jumps a word). Bksp, Del (Ctrl: a word). Ctrl+A C X V Z Y.
-  Tab, Esc.
+  Tab, Esc. Enter: a new line, or Send (Settings, Enter key).
   Alt+S Send, Alt+B Back, Alt+H phone Home, Alt+W Recent apps (need the
   helper). Alt+R send again, Alt+N new page, Alt+K keys, Alt+O settings,
   Alt+Q quit.
 
-The phone answers silently (19.0 to 20.5 kHz, the "Return channel" in
-Settings) with what it has received. The title bar then says "Delivered";
-what arrived is not sent again, and only what is missing is sent again.
-If the phone does not answer (an older keyboard, no microphone on this
-handheld, too far away) every text goes out several times, on two bands,
-as before. The title bar says how many times it has gone out.
+SENDING AND REPEATS
+  Every text goes out several times, on two bands, so a piece lost on the
+  way fills in by itself. The title bar says how many times it has gone out.
 
-CHECKS AND SENDING (1.2)
-  With the Return channel on, the handheld asks the phone every 30 seconds
-  (when you have stopped typing) what it holds. If the phone's copy of the
-  page differs anywhere, the whole page is sent again, and the keyboard also
-  corrects text it had already written if the page changed after that.
-  Settings, Enter key: "Sends the message" makes Enter press Send on the
-  phone (Shift+Enter is a new line). Chat apps need the phone helper (Set up
-  in the app) unless the field's key says Send. Alt+S always sends.
+RETURN CHANNEL (off until you turn it on)
+  Turn on Settings, Return channel here, and Settings, Confirm to the
+  handheld in the phone app. The phone then answers silently with what it
+  has received: the title bar says "Delivered", what arrived is not sent
+  again, and a missing piece is sent again at once. Every 30 seconds after
+  you stop typing, the handheld checks that the phone holds the whole page;
+  if anything differs, the whole page is sent again. If the phone does not
+  answer (its setting is off, or it is too far away) the handheld repeats
+  as above.
+
+SENDING A MESSAGE
+  Alt+S presses Send on the phone. Settings, Enter key: "Sends the message"
+  makes Enter do the same (Shift+Enter is then a new line). In chat apps
+  this needs the phone helper (Set up, in the phone app) unless the field's
+  own key says Send.

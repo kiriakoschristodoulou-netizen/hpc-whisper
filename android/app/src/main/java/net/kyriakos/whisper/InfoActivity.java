@@ -41,6 +41,7 @@ public class InfoActivity extends BaseActivity {
         row(k, "Ctrl+A C X V", "Select all, Copy, Cut, Paste");
         row(k, "Ctrl+Z, Ctrl+Y", "Undo, Redo");
         row(k, "Tab, Esc", "Next field (Shift: previous), Esc");
+        row(k, "Enter", "New line; or Send (handheld Settings, Enter key)*");
         row(k, "Alt+S", "Press Send in the app*");
         row(k, "Alt+B, H, W", "Back, Home screen, Recent apps*");
         row(k, "Alt+R", "Send the last text again");
@@ -49,14 +50,19 @@ public class InfoActivity extends BaseActivity {
                 + "one-line fields without it.").setPadding(0, ui.dp(8), 0, 0);
 
         LinearLayout m = box("If text goes missing");
-        ui.text(m, "The keyboard confirms silently (a sound above 19 kHz) what it has received, so the handheld stops repeating what "
-                + "arrived and sends only what is missing (Settings, Confirm to the handheld). Without a confirmation "
-                + "every piece of text is sent several times, a little later each time, on two different bands, so a piece "
+        ui.text(m, "Every piece of text is sent several times, a little later each time, on two different bands, so a piece "
                 + "lost on the way fills in by itself. If the keyboard says \"Waiting for a missing piece\", wait a few seconds; "
                 + "if it does not fill in, press Alt+R on the handheld. Move the phone closer if it says \"Weak signal\". "
                 + "Text still missing after half a minute is given up so it cannot hold up what you type next. Everything that "
-                + "did arrive is kept under Sessions. With the confirmation on, the handheld also checks every half minute that the "
-                + "phone holds the whole page, and the keyboard corrects text it had written that later changed.", 14, t().ink, false).setPadding(0, ui.dp(6), 0, 0);
+                + "did arrive is kept under Sessions.", 14, t().ink, false).setPadding(0, ui.dp(6), 0, 0);
+
+        LinearLayout rc = box("Confirming to the handheld");
+        ui.text(rc, "Turn on Settings, Confirm to the handheld here, and Settings, Return channel on the handheld. The keyboard then "
+                + "answers with a short silent sound (above 19 kHz) saying what has arrived: the handheld shows \"Delivered\", stops "
+                + "repeating what is here and sends a missing piece at once. Every half minute after you stop typing, the handheld "
+                + "checks that the phone holds the whole page and sends it again if anything differs, and the keyboard corrects text "
+                + "it had written that later changed. Keep the phone's media volume up. With either side off, everything works as "
+                + "before: the handheld simply repeats its text.", 14, t().ink, false).setPadding(0, ui.dp(6), 0, 0);
 
         LinearLayout i = box("iPhone, or any other phone");
         ui.text(i, "Apple does not let keyboards use the microphone, so an iPhone keyboard is impossible. On an iPhone, or any "
@@ -69,7 +75,8 @@ public class InfoActivity extends BaseActivity {
         ui.text(p, "This app has no internet access. The microphone is used only while the HPC Whisper keyboard is open, and "
                 + "what it hears is read on the phone and not kept, apart from the last 30 seconds in the troubleshooting log "
                 + "(Settings), which stays on the phone until you share it. Saved sessions are on the phone only; you can turn "
-                + "them off or delete them in Settings. If another app is using the microphone (a call), the handheld cannot "
+                + "them off or delete them in Settings. With Confirm to the handheld on, the phone also plays a short sound "
+                + "above 19 kHz after text arrives. If another app is using the microphone (a call), the handheld cannot "
                 + "be heard until it is free.", 14, t().ink, false).setPadding(0, ui.dp(6), 0, 0);
 
         LinearLayout a = box("About");

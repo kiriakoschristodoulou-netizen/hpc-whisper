@@ -102,12 +102,16 @@ The phone answers the handheld, silently, so the handheld need not repeat what h
   bytes are missing right after them (0 to 15). Bytes given up on do not count as held.
 - **Hash:** the low 12 bits of CRC-16 CCITT over page number, P (high, low), G (low 4 bits) and the first P bytes
   of the page. The handheld checks it against its own text, so an acknowledgement of older text (an earlier page
-  or text since changed) is not believed; then it sends the last 300 bytes again.
+  or text since changed) is not believed; then it sends the last 300 bytes again, and after a second mismatch in
+  a row the whole page.
+- **Check:** when the page has been left alone for 30 s, the handheld sends an empty frame (no text) every 30 s;
+  the phone answers it like any frame, so a difference anywhere in the page is found and repaired.
 - **When:** about 700 ms after the last frame of a group was heard and nothing else is coming, at most once a
-  second; the phone ignores its own sound for that time and 150 ms more.
-- **Handheld:** it listens only between its own transmissions (the chip cannot play and record at once: the speaker is closed when it is quiet and the microphone opens, and the reverse when there is something to send). After a frame it waits up to 2.6 s for the answer. Bytes below P are done and not repeated; a
+  second. While it plays (and 150 ms more) the phone ignores "unreadable frame" events, which its own sound
+  causes; frames that decode are still accepted.
+- **Handheld:** its microphone is open all the time, also while it plays, at the same sample rate as the speaker (the chip has one clock; at another rate the microphone will not open). After a frame it waits up to 2.6 s for the answer. Bytes below P are done and not repeated; a
   gap of G bytes at P is sent at once. After two windows in a row without an answer it behaves as before
-  (every byte sent the set number of times), so phones without the return channel still work. The title bar
+  (every byte sent the set number of times), so phones without the return channel (or with it switched off) still work. The title bar
   shows "Delivered" when P covers the whole text.
 - **Measured** (Mic Scan, Return Test): the handheld microphone decodes 19.0 to 20.5 kHz cleanly.
 

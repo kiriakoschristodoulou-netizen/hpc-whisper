@@ -9,8 +9,9 @@
 | Handheld: "No sound device found" | The sound device could not be opened. Close other programs that play or record sound and start again. |
 | Handheld: "The sound device would not open at ... samples/s" | Settings, Sound rate: try 44,100. |
 | Return channel: "On, but No microphone found" | This handheld has no microphone it can use. Everything still works as with the return channel off. |
-| Return channel: "On, but The microphone would not open" | Another program has the microphone, or the sound rate does not match; try Settings, Sound rate: 44,100, and restart the program. |
-| The handheld does not show "Delivered" | The phone is not answering: check that Confirm to the handheld is on, the keyboard is open on the phone, and the phone is close. Without answers the handheld simply repeats as set. |
+| Return channel: "On, but The microphone would not open" | Another program may have the microphone: close it and restart HPC Whisper. If it persists, try Settings, Sound rate: 44,100. |
+| Return channel: "On, listening for the phone" for a long time | The phone is not answering: turn on Settings, Confirm to the handheld in the phone app, keep the keyboard open, the phone close and its media volume up. |
+| The handheld does not show "Delivered" | Delivered appears only with the return channel on, on both sides. Check that Confirm to the handheld is on in the phone app, the keyboard is open, the phone is close and its media volume is up. Without answers the handheld simply repeats as set. |
 | Enter does not send a message | Set Settings, Enter key to "Sends the message" and turn on the helper in the phone's accessibility settings, or use Alt+S. The app's field may have no Send key. |
 | Send / Back / Home do nothing | They need the helper (the phone's accessibility settings). |
 | Sound is audible or annoying | Lower Volume in Settings. Some people, children and pets hear the top of the range. |

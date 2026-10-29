@@ -13,7 +13,7 @@ Run a small program on your handheld, open the HPC Whisper keyboard on an Androi
 [/list]
 
 [b]How it works, briefly[/b]
-The handheld plays short bursts of tones. Each frame says "the document is L bytes long, and from offset o it reads these bytes", with Reed-Solomon error correction and a CRC, so repeats are harmless and gaps fill themselves in. Every piece of text goes out several times, on two bands. In 1.2 the phone can also answer, silently, with what it holds: then nothing is repeated needlessly, missing pieces are sent at once, the handheld shows "Delivered", and every 30 seconds it checks the whole page. The full format is published so you can write your own sender or receiver: [url=https://github.com/kiriakoschristodoulou-netizen/hpc-whisper/blob/main/docs/SOUND-PROTOCOL.md]SOUND-PROTOCOL.md[/url].
+The handheld plays short bursts of tones. Each frame says "the document is L bytes long, and from offset o it reads these bytes", with Reed-Solomon error correction and a CRC, so repeats are harmless and gaps fill themselves in. Every piece of text goes out several times, on two bands. In 1.2 the phone can also answer, silently, with what it holds (an option, switched on in both apps): then nothing is repeated needlessly, missing pieces are sent at once, the handheld shows "Delivered", and every 30 seconds it checks the whole page. The full format is published so you can write your own sender or receiver: [url=https://github.com/kiriakoschristodoulou-netizen/hpc-whisper/blob/main/docs/SOUND-PROTOCOL.md]SOUND-PROTOCOL.md[/url].
 
 [b]Getting it[/b]
 Download from the latest release: [url=https://github.com/kiriakoschristodoulou-netizen/hpc-whisper/releases/latest]github.com/kiriakoschristodoulou-netizen/hpc-whisper/releases/latest[/url]

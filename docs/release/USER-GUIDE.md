@@ -54,8 +54,8 @@ The phone's keyboard also has touch edit keys (arrows, select, copy, paste, undo
 | Volume | Loudness of the tones. | 50 % |
 | Speed | Normal is the surest; Fast shortens the wait for the text to appear. | Fast |
 | Band | The phone finds the band by itself; change this only if something else makes sound up there. | 19.0 to 20.5 kHz |
-| Sound rate | The Jornada's own 43,200 or Windows' 44,100. Leave it unless the phone struggles. | 43,200 |
-| Return channel | The phone confirms what it received, silently; then nothing is repeated needlessly. | Off |
+| Sound rate | The Jornada's own 43,200 or Windows' 44,100. Leave it at 43,200; try 44,100 only if the sound or the microphone will not open. | 43,200 |
+| Return channel | The phone confirms what it received, silently; then nothing is repeated needlessly (turn on Confirm to the handheld on the phone too). | Off |
 | Enter key | New line, or "Sends the message" (Shift+Enter is always a new line). | New line |
 | Test | Sends a sentence to the phone, to try it. | |
 | About | Version and credits. | |
@@ -68,7 +68,9 @@ With **Settings, Return channel** on (handheld) and **Settings, Confirm to the h
 - a missing piece is sent again at once;
 - about every 30 seconds, when you have stopped typing, the handheld asks the phone what it holds. If the phone's copy differs anywhere, the whole page is sent again, and the keyboard corrects text it had already written if the page changed after that.
 
-If the phone does not answer, the handheld repeats everything as set under Repeats. Both sides work without the return channel, and the return channel works with only one side switched on (it just does nothing).
+If the phone does not answer, the handheld repeats everything as set under Repeats. With only one side switched on, nothing changes: the handheld simply repeats as usual. The receiver page (iPhone and other phones) cannot answer, so it always works this way.
+
+On the handheld, the Return channel row in Settings shows what is happening: "On, listening for the phone" (no answer yet), "On, the phone confirms" (answers are arriving), or "On, but ..." with the reason the microphone could not be used.
 
 ## Sending a message in a chat app
 

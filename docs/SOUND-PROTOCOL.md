@@ -34,8 +34,9 @@ a gap; the sender then stops repeating that part and resends only what is
 missing. Without any answer the sender simply repeats everything a fixed
 number of times, so a receiver that cannot talk back still works.
 
-Everything is **one-way and stateless per frame**: any frame can be decoded
-alone, in any order, any number of times.
+Every data frame is **self-contained**: any frame can be decoded alone, in
+any order, any number of times. The acknowledgement only saves needless
+repeats; nothing depends on it.
 
 ---
 
@@ -359,8 +360,8 @@ On an acknowledgement with `doc == its current document id` and not within
 1. **Verify:** `P ≤ L_sender` and the hash equals the hash of the *sender's*
    own first P bytes (same formula). If not (the phone holds older text, an
    earlier page, or the frame was misread) → do **not** believe it: lower the
-   send counts of the last 300 bytes so they are sent again, allow it up to
-   5 times in a row, and treat as "no useful answer".
+   send counts of the last 300 bytes so they are sent again. A **second**
+   mismatch in a row sends the whole page again (7.4b).
 2. **Believe:** `acked = max(acked, P)`. Bytes below `acked` need no more
    sending (stop repeating them). If `G > 0` and `P < L`, **send the gap
    `[P, P+G)` again at once** (frame length ≤ G).
@@ -389,20 +390,21 @@ On an acknowledgement with `doc == its current document id` and not within
 - **Receiver:** send an acknowledgement about **700 ms after the last frame of
   a group** was heard and nothing else is arriving (no frame, no unreadable
   frame since); at most once per second; never while its own sound is
-  playing. Mute its own receiver during playback plus **150 ms**, because its
-  microphone hears its own speaker.
+  playing. Its microphone hears its own acknowledgement, which looks like a
+  frame that cannot be read: during playback plus **150 ms** such "unreadable
+  frame" events are ignored (they must not delay the next acknowledgement or
+  show as a weak signal). Frames that *do* decode are still accepted then.
 - **Sender:** after each frame ends, wait up to **2.6 s** (`ACK_WAIT_MS`) for
   an acknowledgement before sending repeats (new text is still sent at once).
   After **two windows in a row without one**, stop waiting and repeat on the
   old schedule (a receiver that cannot or does not answer). Any acknowledgement
   that arrives resets this.
-- The sender listens **between its own transmissions**, not while it plays. The
-  Jornada's sound chip cannot play and record at the same time (opening the
-  microphone while the speaker is open fails), so the reference sender closes
-  its speaker when it has been quiet for about 0.3 s, opens the microphone,
-  and switches back (closing the microphone first) as soon as it has something
-  to send. If the microphone cannot be opened three times in a row it stays
-  in speaker-only mode and falls back as above.
+- The sender keeps its **microphone open all the time**, also while it plays
+  (measured with Duplex Test on the HP Jornada 720: speaker and microphone open
+  together in either order). The sound chip has one clock, so the microphone
+  must be opened at the **same sample rate as the speaker**; at a different
+  rate it will not open. If it cannot be opened, the sender simply works
+  without acknowledgements (as above).
 
 Simulated gain (10 % frame loss, 100 runs): 64 frames and ~132 s instead of
 104 frames and ~256 s; with every acknowledgement lost the sender still
