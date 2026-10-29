@@ -1,4 +1,4 @@
-HPC Whisper 1.2: type on a Jornada 720 (or other ARM Windows CE handheld), and the text appears in any app on your Android phone. It travels as near-ultrasound (18 to 21.5 kHz): no cable, Bluetooth or network. Arrows, selection, Ctrl+C/V and a Send key work too. Optionally the phone confirms silently what arrived, so nothing is repeated needlessly. Free, no ads.
+HPC Whisper 1.2: type on a Jornada 720 (or other ARM Windows CE handheld), and the text appears in any app on your Android phone. It travels as near-ultrasound (18 to 21.5 kHz): no cable, Bluetooth or network. Arrows, selection, Ctrl+C/V and a Send key work too. Optionally the phone confirms silently what arrived, so nothing is repeated needlessly. Freeware (free to use and share unchanged, not for sale), no ads.
 
 Download: https://github.com/kiriakoschristodoulou-netizen/hpc-whisper/releases/latest (APK for the phone, zip for the handheld).
 Needs: ARM Windows CE 3.0+, Android 7+, phone within about a metre. iPhone: receiver web page only.

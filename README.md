@@ -76,6 +76,11 @@ fill when a repeat arrives. The receiver scans every band and speed and learns t
 Jornada chip's "ghost" tones. Sender, receivers and the typing logic are tested
 against each other, including lost frames.
 
+## Licence
+
+Freeware: free to use and to pass on unchanged, not to be sold, no warranty.
+See [LICENSE.txt](LICENSE.txt).
+
 ## Files
 
 | Folder | What |

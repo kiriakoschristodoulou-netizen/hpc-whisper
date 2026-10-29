@@ -47,7 +47,7 @@ Fill in as you go. Mark each line OK / FAIL / n.a. and write what you saw. Run t
 ## H. Before you post
 - [ ] H1 The release has the APK, the handheld zip, the checksums and the version number everywhere the same (About, app Settings, file names)
 - [ ] H2 README, user guide and troubleshooting are on the repository's front page
-- [ ] H3 Decide the licence for the code and add a LICENSE file
+- [x] H3 Licence: freeware (LICENSE.txt in the repository and a line in the handheld README)
 - [ ] H4 A demo video or GIF recorded
 - [ ] H5 Read the forum's rules for posting software
 - [ ] H6 Screenshots taken (see SCREENSHOTS-AND-VIDEO.md)

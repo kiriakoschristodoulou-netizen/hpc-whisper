@@ -1,0 +1,25 @@
+HPC Whisper - freeware licence
+
+Copyright (c) 2026 Kyriakos Christodoulou
+
+HPC Whisper (the Android app, the handheld program, the receiver web page,
+the Duplex Test and the documents) is freeware.
+
+You may:
+  - use it, for any personal or non-commercial purpose, at no cost;
+  - copy it and give it to others, free of charge, as long as it is passed
+    on complete and unchanged, with this notice;
+  - read the source code, learn from it, and build it for your own use.
+
+You may not:
+  - sell it, or charge for it or for access to it;
+  - pass on changed versions under the name HPC Whisper, or claim you wrote
+    it. (Ask first about using the sound format or code in your own
+    program; a short note is usually all that is needed.)
+
+There is no warranty of any kind. The software is provided "as is". Use it
+at your own risk; the author is not responsible for any loss or damage. It
+is not private (anyone nearby can record the sound), so do not use it for
+passwords or other secrets.
+
+Contact: https://github.com/kiriakoschristodoulou-netizen/hpc-whisper

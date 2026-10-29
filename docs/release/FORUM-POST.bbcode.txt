@@ -1,6 +1,6 @@
 [b][size=5]HPC Whisper 1.2: type on your Windows CE handheld, text appears on your phone[/size][/b]
 
-[i]Free, no ads, made on and for the HP Jornada 720.[/i]
+[i]Freeware, no ads, made on and for the HP Jornada 720.[/i]
 
 [b]What it is[/b]
 Run a small program on your handheld, open the HPC Whisper keyboard on an Android phone, and everything you type on the handheld appears in any app on the phone (messages, email, notes, search boxes). It travels as sound at 18 to 21.5 kHz, too high for most adults to hear: no cable, no Bluetooth, no network, no extra hardware. Arrows, Shift selection, Tab, Backspace and Ctrl+A/C/X/V/Z/Y work too, and the handheld can press Send in a chat app.
@@ -42,6 +42,6 @@ If you try it, please report: handheld model, phone make and Android version, di
 [*][b]Duplex Test[/b]: can the sound chip play and record at once?
 [/list]
 
-Created by Kyriakos Christodoulou. Free; if you like it, there is a tip link in the app, and it is entirely optional.
+Created by Kyriakos Christodoulou. Freeware (free to use and share unchanged, not for sale); if you like it, there is a tip link in the app, and it is entirely optional.
 
 [i][attach a photo of the two devices and a short video here][/i]

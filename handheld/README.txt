@@ -42,3 +42,7 @@ SENDING A MESSAGE
   makes Enter do the same (Shift+Enter is then a new line). In chat apps
   this needs the phone helper (Set up, in the phone app) unless the field's
   own key says Send.
+
+LICENCE
+  Freeware: free to use and to pass on complete and unchanged; not to be
+  sold. No warranty. Full text: LICENSE.txt in the repository.
